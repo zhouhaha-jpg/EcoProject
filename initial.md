@@ -1,603 +1,362 @@
-# 氯碱智慧生态系统 — 项目技术文档与重构指南
+﻿# EcoProject — 记忆注入文档（现状版）
 
-> **定位：** 本文档面向即将接手重构的 AI Agent / 开发者。阅读后应能全面理解当前项目的技术选型、架构设计、代码组织方式以及存在的主要问题，并据此制定完整的重构方案。
-
----
-
-## 一、项目概述
-
-**项目名称：** chlor-alkali-smart-eco-system（智慧氯碱化工节能减排系统）
-
-**核心功能：** 面向 1920×1080 大屏的工业数字孪生可视化系统，包含：
-- 多策略（低碳 / 经济 / 综合最优）下的运行态势总览
-- 电力能源平衡、碳排放趋势实时监控
-- 电解槽设备健康诊断
-- 物料与生产工艺流程可视化（Sankey 图、工艺动画）
-- HSE 安全环保（气体泄漏、污水指标）
-- AI 智能调度助手（接入 Gemini / DeepSeek / OpenAI）
-
+> **新 Agent 必须在开始开发前完整阅读此文档。**  
+> 本文档记录了项目完整架构、所有历史决策、已完成工作和当前状态，确保开发连续性。  
+> 生成日期：2026-02-25
 
 ---
 
-## 二、技术选型
+## 1. 项目概述
 
-### 2.1 核心框架
+**项目名称**：氯碱制氢数字孪生 · 功率对比分析平台  
+**工程目录**：`e:\科研绘图\EcoProject`  
+**参考原型**：`e:\科研绘图\power_dashboard.html`（独立 HTML，是所有 UI 风格的最终参照标准）  
+**开发服务器**：`npm run dev -- --port 3006`（vite.config 默认 3005，须显式指定 3006）  
+**构建命令**：`npm run build`（`tsc && vite build`，当前可无错误完成）
 
-| 技术 | 版本 | 用途 |
-|------|------|------|
-| React | 18.3 | UI 框架 |
-| TypeScript | 5.4 | 类型安全 |
-| Vite | 5.2 | 构建工具 + 开发服务器 |
-| React Router DOM | 7.13 | 客户端路由 |
+### 业务背景
 
-### 2.2 样式
-
-| 技术 | 版本 | 备注 |
-|------|------|------|
-| Tailwind CSS | **4.1.18** | ⚠️ v4 但使用 v3 风格的 `tailwind.config.cjs` |
-| PostCSS | 8.5 | 通过 `@tailwindcss/postcss` 插件集成 |
-
-### 2.3 可视化
-
-| 技术 | 版本 | 用途 |
-|------|------|------|
-| ECharts | 6.0 | 主力图表库（雷达图、堆叠面积图、折线图、Sankey）|
-| Recharts | 2.12 | 辅助图表（根 `App.tsx` 旧版使用）|
-| Three.js | 0.164 | 3D 场景渲染 |
-| @react-three/fiber | 8.16 | React Three.js 绑定 |
-| @react-three/drei | 9.105 | Three.js 辅助工具 |
-
-### 2.4 状态管理
-
-| 技术 | 版本 | 备注 |
-|------|------|------|
-| zustand | 5.0 | 已安装但 **未使用**，实际用 React Context |
-| React Context | — | `StrategyContext` 管理策略切换 |
-
-### 2.5 其他依赖
-
-| 技术 | 用途 |
-|------|------|
-| lucide-react | 图标库 |
-| @fontsource/orbitron | 赛博朋克展示字体 |
-| @fontsource/rajdhani | 辅助正文字体 |
-| @google/genai | Gemini AI SDK |
-| react-use-measure | 容器尺寸测量 |
-| suspend-react | React Suspense 辅助 |
+模拟氯碱制氢工业系统中 6 种优化调度方案（UCI / CICOS / CICAR / CICOM / PV / ES）在 24 小时时序下的功率、制氢量、碳排放等关键指标对比分析。数据来源于 `output.xlsx`，已完整硬编码进 `src/data/realData.ts`。
 
 ---
 
-## 三、项目架构
+## 2. 技术栈
 
-### 3.1 目录结构
+| 类型 | 技术 | 版本 |
+|---|---|---|
+| UI 框架 | React | 18.3.1 |
+| 类型系统 | TypeScript | 5.5.3 |
+| 构建工具 | Vite | 5.4.8 |
+| 样式系统 | Tailwind CSS | **v3**.4.13（非 v4）|
+| 图表库 | ECharts | 5.5.1（core 按需引入）|
+| 路由 | React Router DOM | 7.1.1 |
+| 图标 | Lucide React | 0.441.0 |
+| 状态 | Zustand | 5.0.1（已安装，**未实际使用**，用 React Context 代替）|
 
-```
-chlor-alkali-smart-eco-system/
-├── index.html                  # HTML 入口，引入 Google Fonts (Inter)
-├── index.tsx                   # React 入口（ErrorBoundary + BrowserRouter + StrategyProvider）
-├── App.tsx                     # ⚠️ 旧版 App（"智慧园区"主题，独立UI，未被新路由使用）
-├── constants.ts                # ⚠️ 旧版常量（carbonData / energyData / alerts / SYSTEM_INSTRUCTION）
-├── types.ts                    # ⚠️ 旧版类型（ChartDataPoint / AlertItem / SimulationMode）
-├── metadata.json               # 项目元数据
-├── components/                 # ⚠️ 旧版组件目录（与 src/components 并存）
-│   ├── Card.tsx                #   Card + MiniStat（命名导出）
-│   ├── Charts.tsx              #   CarbonTrendChart / ProductionBarChart / EnergyPriceChart（Recharts）
-│   ├── GeminiAdvisor.tsx       #   AI 助手 UI 组件
-│   ├── GlassCard.tsx           #   GlassCard + MetricItem（毛玻璃卡片）
-│   ├── ProcessFlowDiagram.tsx  #   工艺流程图（SVG 手绘）
-│   └── Scene3D.tsx             #   Three.js 3D 工厂场景
-├── services/
-│   └── geminiService.ts        # AI API 调用（Gemini → DeepSeek → OpenAI 级联）
-├── src/
-│   ├── App.tsx                 # ✅ 当前主 App（路由入口）
-│   ├── index.css               # 全局样式 + 字体导入 + 扫描线/发光动画
-│   ├── api/
-│   │   ├── mock.ts             # 数据生成函数（HSE/设备/桑基/产量等）
-│   │   ├── mockData.ts         # ⚠️ 旧版策略数据（与 strategyData.ts 结构不同、已废弃）
-│   │   └── strategyData.ts     # ✅ 当前使用的策略数据（StrategyMode / STRATEGY_DATA / STRATEGY_CONFIG）
-│   ├── context/
-│   │   └── StrategyContext.tsx  # 策略上下文（mode / data / config / setMode）
-│   ├── layout/
-│   │   └── MainLayout.tsx      # 主布局（Header + ScaleContainer + Footer 导航）
-│   ├── pages/
-│   │   ├── Overview.tsx        # 首页概览（KPI + 雷达 + 能源平衡 + 电流曲线）
-│   │   ├── Production.tsx      # 物料与生产（工艺流程 Canvas + Sankey）
-│   │   ├── Energy.tsx          # 智慧能源（电力平衡 + 碳趋势 + 占位符）
-│   │   ├── HSE.tsx             # 安全环保（气体泄漏 + 污水指标）
-│   │   └── Equipment.tsx       # 设备健康（电流曲线 + 设备状态卡 + 储氢液位）
-│   ├── components/
-│   │   ├── PanelBox.tsx        # 通用面板容器（赛博朋克边框 + 标题栏）
-│   │   ├── StatusBadge.tsx     # 状态徽章（success/warning/error）
-│   │   ├── StatusTag.tsx       # 状态标签
-│   │   ├── StrategySwitcher.tsx# 策略切换器（低碳/综合最优/成本最小）
-│   │   ├── DigitalNumber.tsx   # 数字显示组件
-│   │   ├── SystemLog.tsx       # 系统日志终端
-│   │   ├── charts/             # ECharts 图表组件（10个）
-│   │   │   ├── StrategyRadar.tsx    # 策略雷达图
-│   │   │   ├── PowerBalance.tsx     # 电力平衡堆叠面积图
-│   │   │   ├── CurrentCurve.tsx     # 电解槽电流曲线
-│   │   │   ├── CarbonTrend.tsx      # 碳排放趋势
-│   │   │   ├── AreaCO2.tsx          # CO2 区域图
-│   │   │   ├── BarInventory.tsx     # 库存柱状图
-│   │   │   ├── GaugeDual.tsx        # 双仪表盘
-│   │   │   ├── Pie3DPower.tsx       # 3D 饼图
-│   │   │   ├── SankeyMaterial.tsx    # Sankey 物料流
-│   │   │   └── TrendLines.tsx       # 趋势折线图
-│   │   └── twin/               # 数字孪生组件
-│   │       ├── PlantModel.tsx       # 工厂 3D 模型
-│   │       └── ProcessFlowCanvas.tsx# 工艺流程 Canvas
-│   └── styles/                 # ⚠️ 空目录
-├── tailwind.config.cjs         # Tailwind 主题配置
-├── vite.config.ts              # Vite 配置
-├── tsconfig.json               # TypeScript 配置
-├── postcss.config.cjs          # PostCSS 配置
-├── .env.local                  # API 密钥
-└── package.json                # 依赖清单
-```
+---
 
-### 3.2 路由结构
+## 3. 目录结构
 
 ```
-/ (MainLayout wraps all routes)
-├── /              → Overview.tsx     (首页概览)
-├── /production    → Production.tsx   (物料与生产)
-├── /energy        → Energy.tsx       (智慧能源)
-├── /hse           → HSE.tsx          (HSE安全环保)
-└── /equipment     → Equipment.tsx    (设备健康)
+EcoProject/
+├── index.html
+├── package.json
+├── tailwind.config.cjs         ← Tailwind v3 配置（必须是 .cjs，因为 package.json "type":"module"）
+├── vite.config.ts              ← @/ 别名指向 ./src
+├── tsconfig.json
+├── initial.md                  ← 本文档
+└── src/
+    ├── main.tsx                ← React 入口，挂载 StrategyProvider + BrowserRouter
+    ├── App.tsx                 ← Routes 定义（5个路由）
+    ├── index.css               ← 全局样式（@layer base/components）
+    ├── types/
+    │   └── index.ts            ← 所有 TS 类型（StrategyKey, EcoDataset 等）
+    ├── data/
+    │   └── realData.ts         ← 真实数据 + STRATEGY_META + DATASET + getHours()
+    ├── context/
+    │   └── StrategyContext.tsx ← 全局 Context（activeStrategy / dataset / currentTime）
+    ├── layout/
+    │   └── MainLayout.tsx      ← 顶栏 + 导航 Tab + <Outlet />
+    ├── pages/
+    │   ├── Overview.tsx        ← 总览（主图 + 3个右侧联动面板 + 区间统计占位）
+    │   ├── Energy.tsx          ← 能源
+    │   ├── Production.tsx      ← 生产
+    │   ├── Equipment.tsx       ← 装备
+    │   └── HSE.tsx             ← HSE
+    └── components/
+        ├── charts/
+        │   ├── useEChart.ts            ← ECharts 通用 Hook（含全局 BASE_THEME）
+        │   ├── PowerBalanceChart.tsx   ← 核心多策略功率曲线图（6策略同时显示）
+        │   ├── CarbonTrendChart.tsx    ← 碳排放时序图
+        │   ├── WaterfallChart.tsx      ← 瀑布/柱状对比图（metric: 'combined'|'cost'|'carbon'）
+        │   ├── HydrogenChart.tsx       ← 制氢量堆叠图
+        │   └── StrategyRadarChart.tsx  ← 策略雷达图
+        └── ui/
+            ├── PanelBox.tsx            ← 通用面板容器
+            ├── StrategySwitcher.tsx    ← 顶部导航栏右侧策略按钮组
+            ├── DigitalNumber.tsx       ← KPI 数字展示
+            ├── StatusBadge.tsx         ← 状态标签（success/warning/info/idle）
+            └── SystemLog.tsx           ← 系统日志列表
 ```
 
-### 3.3 数据流
+---
 
-```
-┌────────────────────┐
-│  StrategyProvider   │   ← 包裹整个应用
-│  (React Context)    │
-├────────────────────┤
-│  mode: StrategyMode │   ← 'lowCost' | 'lowCarbon' | 'optimal'
-│  data: STRATEGY_DATA│   ← 来自 strategyData.ts
-│  config: STRATEGY_CONFIG │
-│  setMode: (m) => {} │
-└────────┬───────────┘
-         │ useStrategy() hook
-         ├──► Overview.tsx   → 获取 data.kpi / data.radar
-         ├──► StrategyRadar  → data.radar.economic/environmental/...
-         ├──► PowerBalance   → data.powerBalance.grid/pv/turbine/pemfc
-         ├──► CurrentCurve   → data.electrolyzerCurrent
-         ├──► CarbonTrend    → data.carbonTrend
-         └──► Equipment.tsx  → data.hydrogenLevel
+## 4. 数据架构
 
-独立数据源（不走 Context）：
-  mock.ts → getEquipmentData()  → Equipment.tsx (设备健康状态卡)
-  mock.ts → getHSEData()        → HSE.tsx (气体泄漏/污水)
-  mock.ts → getSankeyData()     → Production.tsx (Sankey 图)
-```
-
-### 3.4 分辨率适配策略
-
-当前使用 `ScaleContainer` 组件进行硬编码缩放：
+### 4.1 核心类型（`src/types/index.ts`）
 
 ```typescript
-// MainLayout.tsx 中的 ScaleContainer
-// 设计分辨率: 1920 × 952 (1080 - header 64px - footer 64px)
-// 缩放方式: Math.min(viewportWidth/1920, viewportHeight/1080)
-// 通过 CSS transform: scale(ratio) 实现
+type StrategyKey = 'uci' | 'cicos' | 'cicar' | 'cicom' | 'pv' | 'es'
+
+interface EcoDataset {
+  summary: Record<StrategyKey, { cost: number; carbon: number; combined: number }>
+  P_CA:    Record<StrategyKey, number[]>   // 电解槽功率 (kW)，24h
+  P_PV:    Record<StrategyKey, number[]>   // 光伏功率
+  P_GM:    Record<StrategyKey, number[]>   // 燃气轮机
+  P_PEM:   Record<StrategyKey, number[]>   // PEM 制氢功率
+  P_G:     Record<StrategyKey, number[]>   // 电网功率
+  P_es_es: number[]                        // 储能功率（仅 es 方案有意义）
+  ef_g:    number[]                        // 碳排放因子 (tCO2/kWh)
+  H_CA:    Record<StrategyKey, number[]>   // 氯碱制氢 (kg/s)
+  H_PEM:   Record<StrategyKey, number[]>   // PEM 制氢 (kg/s)
+  H_CH:    Record<StrategyKey, number[]>   // 压缩储氢 (kg/s)
+}
 ```
+
+> ⚠️ **重要**：数据访问模式必须是 `dataset.P_CA[activeStrategy]`，**不是** `dataset[activeStrategy]`。
+
+### 4.2 策略元数据颜色
+
+```
+uci   → '#4E9EFF'  统一控制综合（基准方案，24h 恒定 9020.51 kW）
+cicos → '#FF7043'  成本优化集成
+cicar → '#29D4FF'  碳排优化集成
+cicom → '#CE93D8'  综合优化集成
+pv    → '#C6F135'  光伏优先优化
+es    → '#FFD740'  储能综合优化
+```
+
+### 4.3 全局 Context（`src/context/StrategyContext.tsx`）
+
+- `activeStrategy`：当前激活策略，默认 `'uci'`
+- `setActiveStrategy`：切换策略
+- `dataset`：完整静态 `DATASET` 对象
+- `strategyMeta`：`STRATEGY_META`
+- `currentTime`：`new Date()`，每秒更新（保留用于时钟）
 
 ---
 
-## 四、设计系统
+## 5. 颜色系统 & 设计规范
 
-### 4.1 颜色体系
+完全对齐 `power_dashboard.html` CSS 变量：
 
-```
-cyber-black:  #050B14 (Deep Void / 主背景)
-cyber-blue:   #091833 (Deep Sea / 面板背景)
-neon-cyan:    #00F3FF (Primary / 主色调)
-neon-pink:    #FF0099 (Secondary / 警告)
-neon-yellow:  #F3E600 (Accent / 强调)
-matrix-green: #00FF41 (Matrix / 低碳模式)
-```
+| CSS 变量 | Tailwind key | 值 | 用途 |
+|---|---|---|---|
+| `--bg0` | `bg0` | `#070c14` | 全局背景 |
+| `--bg1` | `bg1` | `#0d1422` | 面板背景 |
+| `--bg2` | `bg2` | `#111b2e` | 次级面板 |
+| `--bg3` | `bg3` | `#172240` | 进度条底色 |
+| `--border` | `border-cyber` | `#1e3256` | 所有边框 |
+| `--glow` | `glow` | `#00d4ff` | 高亮/发光色 |
+| `--text0` | `text-primary` | `#e8f4ff` | 主文本 |
+| `--text1` | `text-secondary` | `#8ba9cc` | 次要文本 |
+| `--text2` | `text-muted` | `#3d6080` | 三级/标签文本 |
 
-### 4.2 字体
-
-```
-display: Orbitron        (标题、数字 — 赛博朋克几何字体)
-body:    Rajdhani        (正文、标签)
-```
-
-> ⚠️ `index.html` 中还通过 Google CDN 加载了 `Inter` 字体，但实际未使用。
-
-### 4.3 核心 UI 组件
-
-- **PanelBox** — 所有面板的统一容器（赛博朋克切角边框 + 霓虹发光标题栏 + 网格背景）
-- **StatusBadge** — 圆形状态指示器（success/warning/error + 呼吸动画）
-- **StatusTag** — 文字状态标签
-- **DigitalNumber** — 带发光效果的数字显示
-- **SystemLog** — 模拟终端日志滚动
-- **StrategySwitcher** — 策略模式切换按钮组
-
-### 4.4 视觉效果
-
-```css
-/* CRT 扫描线 (body::before) */
-background: linear-gradient(to bottom, transparent 50%, rgba(0,0,0,0.25) 50%);
-animation: scanline-move 10s linear infinite;
-
-/* 赛博朋克切角 (clip-cyber) */
-clip-path: polygon(20px 0, 100% 0, 100% calc(100%-20px), calc(100%-20px) 100%, 0 100%, 0 20px);
-
-/* 霓虹发光 */
-text-shadow: 0 0 10px currentColor;
-box-shadow: 0 0 10px #00F3FF, 0 0 20px #00F3FF;
-
-/* 入场动画 */
-animation: fade-in-up 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-```
+**字体**（Google Fonts，HTML `<head>` 已配置）：
+- `Rajdhani`：标题、数字、按钮
+- `Noto Sans SC`：正文
+- `Share Tech Mono`：坐标轴标签、Tooltip、序号
 
 ---
 
-## 五、当前存在的问题与重构建议
+## 6. CSS 系统（`src/index.css`）
 
-### 5.1 🔴 架构问题 — 必须优先解决
+所有样式在 `@layer components` 中定义，与 `power_dashboard.html` 完全对应：
 
-#### 问题 1：双版本 App 并存
+| CSS 类 | 对应参考 HTML | 用途 |
+|---|---|---|
+| `.scanlines` | `body::before` | 全局扫描线背景纹理 |
+| `.panel` | `.panel` | 面板容器（`bg:#0d1422`，顶部渐变光线，`border:#1e3256`）|
+| `.panel-title-bar` | `.panel-title` | 面板标题条（Rajdhani，大写，letter-spacing:2px）|
+| `.stat-grid` / `.stat-cell` / `.stat-label` / `.stat-value` / `.stat-unit` | `.stat-*` | 2×2 统计卡片网格 |
+| `.rank-list` / `.rank-item` / `.rank-num` / `.rank-dot` / `.rank-name` / `.rank-bar-wrap` / `.rank-bar` / `.rank-val` | `.rank-*` | 方案排行列表 |
+| `.diff-panel-body` / `.diff-item` / `.diff-name` / `.diff-num` / `.diff-pos` / `.diff-neg` | `.diff-*` | 差值面板（pos=绿，neg=红）|
+| `.brush-result` / `.brush-hint` | `.brush-*` | 区间统计占位区 |
+| `.hud-header` | `header` | 顶栏背景渐变 |
+| `.hud-nav-link` / `.hud-nav-link.active` | `.vtab` / `.vtab.active` | 导航链接（active 时 `border-bottom: 2px solid #00d4ff`）|
+| `.hud-chip` / `.hud-chip.live` | `.tag` / `.tag.live` | 顶栏右侧标签芯片 |
+| `.strategy-btn` | — | 策略切换按钮 |
+| `.logo-pulse` | `.logo-pulse` | 顶栏左侧脉冲圆点 |
 
-**现状：** 项目同时包含两个 `App.tsx`：
-- **根目录 `App.tsx`**（244 行）— "智慧园区运营服务中心"版本，包含完整的 3D Scene、GIS 地图切换、GeminiAdvisor、GlassCard 面板等。这是项目的最初版本，拥有更丰富的 UI（12 列栅格布局、浮动 HUD、3D 工厂模型、AI 智能调度助手），但**当前未被任何路由引用**。
-- **`src/App.tsx`**（24 行）— "氯碱节能减排"版本，包含 5 个页面的路由，是当前实际运行的版本。
+---
 
-**建议：**
-- 明确选择一个方向并移除另一个
-- 如果保留新版（`src/App.tsx`），将根 `App.tsx` 中的有价值功能（3D 场景、AI 助手、GIS 视图）迁移为可复用模块
-- 同时清理根 `components/`、`constants.ts`、`types.ts` 这些旧版文件
+## 7. 关键组件规范
 
-#### 问题 2：重复且分裂的组件目录
+### 7.1 `useEChart` Hook（`src/components/charts/useEChart.ts`）
 
-**现状：**
+```typescript
+// 已注册的 ECharts 组件（全部必须，勿删）：
+// BarChart, LineChart, RadarChart, ScatterChart
+// GridComponent, TooltipComponent, LegendComponent, TitleComponent
+// RadarComponent, MarkLineComponent, DataZoomComponent
+// ToolboxComponent, BrushComponent   ← 后期补加，Overview 的 Brush 功能依赖
+// CanvasRenderer
+
+// BASE_THEME（合并到所有图表 setOption 中）：
+const BASE_THEME = {
+  backgroundColor: 'transparent',
+  textStyle: { color: '#8BA9CC', fontFamily: 'Rajdhani, Noto Sans SC, sans-serif' },
+  animation: false,                                    // 禁用初始加载动画（静态直接显示完整图）
+  stateAnimation: { duration: 300, easing: 'cubicOut' }, // 保留 hover 过渡动画
+}
 ```
-根 components/       → 6 个文件（GlassCard / Charts / Scene3D / ProcessFlowDiagram / GeminiAdvisor / Card）
-src/components/      → 6 个文件 + charts/ (10个) + twin/ (2个)
+
+### 7.2 `PowerBalanceChart`（`src/components/charts/PowerBalanceChart.tsx`）
+
+```typescript
+// Props：
+interface PowerBalanceChartProps {
+  onHourHover?: (hourIdx: number, values: { key: StrategyKey; val: number }[]) => void
+}
+// ✅ 无 strategies / playbackHour / topColor 等旧 props
 ```
 
-两套组件之间存在功能重叠（如 `ProcessFlowDiagram.tsx` 和 `src/components/twin/ProcessFlowCanvas.tsx` 都是流程图）。
+- 同时显示全部 6 种策略的 `P_CA` 数据
+- UCI：蓝色虚线 + 圆形标记点，无面积填充
+- 其余 5 策略：实线 + 渐变半透明面积填充（`hexToRgba(color, 0.18)` → `0`）
+- **Hover Emphasis**：`emphasis.focus:'series'` + `blurScope:'coordinateSystem'`，悬停时该线加粗（width:3），其余变暗
+- `onHourHover` 在 Tooltip `formatter` 内调用，用于驱动 Overview 右侧三个面板实时更新
 
-**建议：**
-- 统一到 `src/components/` 下
-- 按功能域分模块：`src/components/ui/`、`src/components/charts/`、`src/components/3d/`、`src/components/ai/`
+### 7.3 `PanelBox`（`src/components/ui/PanelBox.tsx`）
 
-#### 问题 3：三份 Mock 数据文件，结构互不兼容
+```typescript
+// Props：
+interface PanelBoxProps {
+  title?: string
+  children: ReactNode
+  className?: string
+  topColor?: string   // 接受但不渲染，保留仅为不破坏旧页面调用
+  footer?: ReactNode  // 底部内容，带上边框分割线
+}
+// 渲染：<div className={`panel flex flex-col ${className}`}>
+```
 
-**现状：**
-| 文件 | 状态 | 访问路径差异 |
-|------|------|-------------|
-| `src/api/strategyData.ts` | ✅ **当前使用** | `data.powerBalance.grid` / `data.electrolyzerCurrent` |
-| `src/api/mockData.ts` | ❌ **已废弃** | `data.charts.gridPower` / `data.charts.electrolyzerCurrent` |
-| `src/api/mock.ts` | ⚠️ **部分使用** | 独立函数导出：`getEquipmentData()` / `getHSEData()` 等 |
+### 7.4 页面布局规范
 
-`StrategySwitcher.tsx` 仍然 import `mockData.ts` 中的 `StrategyType` 类型（虽然实际类型相同）。
+**Energy / Equipment / Production / HSE**（固定三行网格）：
 
-**建议：**
-- 删除 `mockData.ts`，统一使用 `strategyData.ts` 作为策略数据源
-- 将 `mock.ts` 中的独立数据函数（HSE / 设备 / Sankey）也纳入策略数据体系，或者拆分为独立的领域数据模块
-- 建立统一的 `types/` 目录管理所有接口类型
-- 根目录 `constants.ts` 和 `types.ts` 的内容应迁移到 `src/` 下或删除
+```tsx
+<div className="h-full grid grid-cols-12 gap-3" style={{ gridTemplateRows: '72px 1fr 1fr' }}>
+  {/* 第1行 72px：KPI 卡片（col-span-3 × 4）*/}
+  {/* 第2行 1fr：主图表（col-span-8）+ 辅助面板（col-span-4）*/}
+  {/* 第3行 1fr：对比图表（col-span-6 × 2）*/}
+</div>
+```
 
-#### 问题 4：StrategyContext 向后兼容冗余
+**Overview**（2行，弹性高度）：
 
-**现状：** `StrategyContext` 同时暴露 `mode`/`setMode` 和 `strategy`/`setStrategy`（后者仅为向后兼容的别名）。
+```tsx
+<div className="h-full" style={{ display:'grid', gridTemplateRows:'1fr auto', gap:12, minHeight:0 }}>
+  {/* 第1行 1fr：内部再 grid "1fr 280px"，左侧主图 + 右侧3面板 */}
+  {/* 第2行 auto（minHeight:80）：区间统计占位 */}
+</div>
+```
 
-**建议：** 重构后统一为单一 API（`mode`/`setMode`），删除冗余别名。
-
----
-
-### 5.2 🟡 代码质量问题 — 重构时应一并解决
-
-#### 问题 5：ECharts 使用模式不够 React 化
-
-**现状：** 所有 ECharts 图表组件都采用 `useRef` + `useEffect` + 手动 `init/dispose` 模式，存在：
-- 大量重复的 resize 监听 / dispose 清理逻辑
-- 没有使用 `echarts-for-react` 这类封装库
-- 每个组件都是 100+ 行的模板代码
-
-**建议：**
-- 创建一个 `useEChart(ref, option, deps)` 自定义 Hook 封装生命周期管理
-- 或直接使用 `echarts-for-react` 库
-- 将通用的赛博朋克主题（颜色、字体、轴线样式）抽取为 ECharts 全局主题
-
-#### 问题 6：静态写死的 Mock 数据
-
-**现状：** `strategyData.ts` 中所有数据（24 小时趋势、KPI 值）都是硬编码的数字数组，而 `mock.ts` 中虽然有随机生成函数，但自身结构也有问题（每次渲染重新生成随机数据，无持久化）。
-
-**建议：**
-- 设计统一的数据工厂模式：`createMockData(strategy, seed?)` 支持可重现的伪随机
-- 建立清晰的数据接口类型，用 TypeScript 接口驱动数据生成
-- 预留真实 API 接入层（WebSocket / REST），Mock 数据仅作为开发阶段 fallback
-- 考虑引入 MSW (Mock Service Worker) 作为 API Mock 方案
-
-#### 问题 7：zustand 已安装但未使用
-
-**现状：** `package.json` 中依赖了 `zustand@5.0.10`，但项目实际使用 React Context 管理状态。
-
-**建议：**
-- 如果状态管理需求简单（当前仅策略切换），保持 Context 并移除 zustand 依赖
-- 如果未来需扩展（多数据源、缓存、计算值），考虑替换为 zustand 或 jotai
-
-#### 问题 8：ScaleContainer 硬编码分辨率
-
-**现状：** `MainLayout.tsx` 中的 `ScaleContainer` 硬编码了 `1920×952` 作为设计分辨率，通过 CSS `transform: scale()` 实现缩放。这种方式存在：
-- 文字在非标准分辨率下可能模糊
-- 无法支持移动端适配
-- 缩放计算逻辑混乱（同时使用 `sw` 和 `window.innerHeight / baseH`，注释与代码不一致）
-
-**建议：**
-- 采用 CSS `vw` / `vh` + `clamp()` 实现更优雅的响应式适配
-- 或使用 `autofit.js` 等大屏自适应方案
-- 如需固定比例缩放，封装为通用的 `<BigScreenLayout designWidth={1920} designHeight={1080}>` 组件
-
-#### 问题 9：PanelBox 标题样式残留 `uppercase`
-
-**现状：** `PanelBox.tsx` 的标题仍带有 `uppercase` CSS 类（第 23 行），但标题已全部改为中文。`uppercase` 对中文无效但属于不合理的样式残留。
-
-**建议：** 从 PanelBox 中移除 `uppercase` 类，上层组件根据语言环境决定文本变换方式。
+**MainLayout**：
+- `<div className="scanlines min-h-screen w-full flex flex-col overflow-hidden">`
+- `<header>` → shrink-0，固定高度
+- 导航 tab 栏 → shrink-0
+- `<main className="flex-1 min-h-0 overflow-hidden p-5">` → `<Outlet />`（Outlet 的 h-full 可铺满）
 
 ---
 
-### 5.3 🟢 优化建议 — 提升项目品质
+## 8. 各页面说明
 
-#### 建议 1：页面完成度不一
+### Overview（总览）`/`
+| 区域 | 内容 |
+|---|---|
+| 左侧（1fr） | `PowerBalanceChart`（`onHourHover` 联动右侧面板）|
+| 右侧（280px） | ① 实时统计：max/min/avg/range ② 方案排行：带进度条 ③ 差值面板：与UCI对比 |
+| 底部（auto） | 区间统计占位（Brush 选区结果表格，**尚未实现**，仅有 hint 文字）|
 
-**现状：** 5 个页面中，部分页面仍有大量占位符或功能缺失：
-- `Energy.tsx` — "蒸汽管网监控" 和 "余热回收效率" 两个面板仅有占位符文本
-- `Production.tsx` — 功能较完整（Sankey + ProcessFlowCanvas）
-- `HSE.tsx` — 仅展示静态数据列表，无图表可视化
-- `Equipment.tsx` — 核心功能可用但设备健康圈形进度条样式待优化
+### Energy（能源）`/energy`
+- KPI：光伏总出力 / 电网购电量 / 燃气轮机发电 / 氯碱耗电
+- 图表：PowerBalanceChart（col-8）+ CarbonTrendChart（col-4）
+- 对比：WaterfallChart综合目标（col-6）+ WaterfallChart运营成本（col-6）
 
-**建议：** 所有页面应达到一致的完成度水平。占位符应替换为实际功能组件。
+### Production（生产）`/production`
+- KPI：氢气总产量 / 氯碱制氢 / PEM制氢 / PEM功耗
+- 图表：HydrogenChart（col-8）+ CarbonTrendChart（col-4）
+- 对比：WaterfallChart综合（col-6）+ WaterfallChart碳排（col-6）
 
-#### 建议 2：引入 AI 助手到新版本
+### Equipment（装备）`/equipment`
+- KPI：4个设备状态卡（氯碱/PEM/光伏/燃气轮机）
+- 图表：PowerBalanceChart关键出力（col-8）+ 峰值统计 DigitalNumber（col-4）
+- 底部：2个设备卡（电网/储能）+ PowerBalanceChart实时监控（col-6）
 
-**现状：** 旧版根 `App.tsx` 中集成了 `GeminiAdvisor` AI 智能调度助手，`services/geminiService.ts` 实现了完整的多 API 级联（Gemini → DeepSeek → OpenAI）。但新版 5 页路由系统中完全未使用这些功能。
-
-**建议：**
-- 将 AI 助手迁移到新版本，作为全局悬浮面板或专属页面
-- `geminiService.ts` 的级联逻辑可以简化：使用策略模式替代深度嵌套的 try-catch
-
-#### 建议 3：3D 数字孪生集成
-
-**现状：** 根 `components/Scene3D.tsx`（10623 字节）实现了完整的 Three.js 3D 工厂场景（含 GIS/3D 视图切换）。`src/components/twin/PlantModel.tsx` 和 `ProcessFlowCanvas.tsx` 也提供了孪生相关功能，但集成不完整。
-
-**建议：**
-- 设计专门的数字孪生页面或集成到 Overview
-- 充分利用已有的 Three.js 和 @react-three/fiber 生态
-- 数据应与策略切换联动（不同模式下 3D 场景呈现不同运行状态）
-
-#### 建议 4：实时时间和数据刷新
-
-**现状：** Header 中显示的时间是写死的 `2026-10-24 14:30:00`，不会动态更新。Mock 数据也是静态的。
-
-**建议：**
-- 时间显示应使用实时时钟
-- 图表数据应支持定时刷新（setInterval 或 WebSocket 模拟）
-- 添加数据更新动画以增强实时感
-
-#### 建议 5：国际化体系
-
-**现状：** 文本分散在各组件的 JSX 中，混杂中英文。虽然主要 UI 元素已中文化，但一些图表坐标轴标签（如 ECharts 的 AxisName）和系统日志（SystemLog）仍然是英文。
-
-**建议：**
-- 引入 `react-i18next` 建立统一的国际化体系
-- 或至少创建一个集中的 `locale.ts` 文件管理所有文本常量
-
-#### 建议 6：字体体系优化
-
-**现状：**
-- `@fontsource/orbitron` 和 `@fontsource/rajdhani` 通过 npm 包引入
-- `index.html` 中通过 Google CDN 还引入了 `Inter` 字体（冗余且未使用）
-- Orbitron 不支持中文字符，中文依赖系统 fallback 字体
-
-**建议：**
-- 删除 `index.html` 中的 Google Fonts CDN 链接
-- 增加中文显示字体的引入（如 `Noto Sans SC` 或 `ZCOOL QingKe HuangYou`，后者更有赛博朋克感）
-- 在 Tailwind 中配置完整的中英双语字体栈：`fontFamily: { display: ['Orbitron', 'ZCOOL QingKe HuangYou', 'sans-serif'] }`
+### HSE `/hse`
+- KPI：日碳排放 / 碳配额剩余 / 配额使用率 / 碳因子峰谷
+- 图表：CarbonTrendChart（col-8）+ 安全状态列表+进度条（col-4）
+- 底部：WaterfallChart碳排（col-6）+ SystemLog（col-6）
 
 ---
 
-### 5.4 ⚙️ 工程化改进
+## 9. 历史决策记录（极其重要）
 
-#### 改进 1：Tailwind CSS v4 配置
+### 9.1 已解决的重大 Bug
 
-**现状：** 项目安装的是 Tailwind **v4.1.18**，但配置文件 `tailwind.config.cjs` 使用的是 v3 风格的 JS 配置。`src/index.css` 中使用了 v4 的 `@config` 指令桥接。
+| 问题 | 根因 | 修复 |
+|---|---|---|
+| 页面白屏崩溃 | 数据访问写成 `dataset[activeStrategy]` | 改为 `dataset.P_CA[activeStrategy]` |
+| Energy/Equipment 控制台报 prop 错误 | PowerBalanceChart 重写后移除了 `strategies`/`playbackHour` props | 移除调用方的这些 props |
+| Brush/Toolbox 图标不响应 | 未注册 `BrushComponent`/`ToolboxComponent` | `useEChart.ts` 的 `echarts.use()` 中补充注册 |
+| 图表无法随容器 resize | 无监听 | `useEChart` 中用 `ResizeObserver` |
 
-**建议：**
-- 要么降级到 Tailwind v3（更稳定，社区生态更好）
-- 要么全面迁移到 v4 的 CSS-first 配置方式（用 `@theme` 替代 JS config）
+### 9.2 已完成的所有改动（按时间顺序）
 
-#### 改进 2：路径别名
+1. **初始版构建**：React 18 + TS + Vite + Tailwind v3，5页路由，完整真实数据
+2. **颜色体系重写**：完全对齐 `power_dashboard.html`，从"赛博朋克强蓝"改为"深色微蓝"
+3. **CSS 重写**：移除旧类（`.panel-cyber`、`.neon-text`），新增全套参考对应类
+4. **MainLayout 简化**：移除 EC Logo/时钟，改为 `logo-pulse` + 标题 + 3个 `hud-chip`
+5. **PowerBalanceChart 完全重写**：单策略多指标 → 全策略单指标(P_CA)，移除所有 playback 逻辑
+6. **Overview 重写**：加入右侧三个联动面板，底部区间统计占位
+7. **滚动播放功能完全移除**：`isPlaying`/`playHour`/`timerRef`/footer 播放控件全部清除
+8. **图表初始动画禁用**：`BASE_THEME` 中 `animation: false`（静态完整显示，无逐帧绘制）
+9. **Hover Emphasis 效果**：`emphasis.focus:'series'` + `blurScope:'coordinateSystem'`，悬停高亮，其余变暗
+10. **保留 hover 过渡**：`stateAnimation: { duration: 300 }` 保留 hover 状态平滑切换
+11. **布局高度固定化**：所有页面从 `grid-rows-[auto_1fr_1fr]` 改为 `style={{ gridTemplateRows: '72px 1fr 1fr' }}`，组件高度不随内容撑开
 
-**现状：** `tsconfig.json` 和 `vite.config.ts` 配置了 `@/*` 别名指向项目根目录 `./`。但代码中几乎全部使用相对路径 `../../../`。
+### 9.3 严禁操作（"不要做"清单）
 
-**建议：** 统一使用 `@/src/components/...` 格式的绝对路径导入。如果将所有代码统一到 `src/` 下，别名应改为 `@` → `./src`。
-
-#### 改进 3：环境变量
-
-**现状：** `vite.config.ts` 中通过 `define` 注入 `process.env.API_KEY` / `process.env.GEMINI_API_KEY` 等。Vite 原生推荐使用 `import.meta.env.VITE_*` 方式。
-
-**建议：** 迁移为 Vite 原生环境变量方案，使用 `VITE_GEMINI_API_KEY` 前缀。
-
-#### 改进 4：缺少代码质量工具
-
-**现状：** 项目没有：
-- ESLint 配置
-- Prettier 配置
-- 单元测试
-- 任何 CI/CD 配置
-
-**建议：**
-- 添加 `eslint` + `@typescript-eslint` + `eslint-plugin-react-hooks`
-- 添加 `prettier` + `.prettierrc`
-- 考虑 `vitest` 做基本的组件测试
-- 添加 `husky` + `lint-staged` 做 Git 提交检查
+- ❌ 不要将 `animation: false` 和 `stateAnimation` 一并删除，前者禁初始动画，后者保留 hover 交互
+- ❌ 不要给 `PowerBalanceChart` 传 `strategies`/`playbackHour`/`topColor` 等已删除的 props
+- ❌ 不要从 `useEChart.ts` 的 `echarts.use()` 中移除 `BrushComponent`/`ToolboxComponent`
+- ❌ 不要用 `dataset[activeStrategy]` 访问数据，正确是 `dataset.P_CA[activeStrategy]`
+- ❌ 不要修改 `tailwind.config.cjs` 的后缀（必须是 `.cjs`）
+- ❌ 任何视觉/样式修改前，先对照 `power_dashboard.html` 对应实现，以其为准
 
 ---
 
-## 六、重构路线图建议
+## 10. 当前功能状态
 
-下面是建议的重构执行顺序，按优先级排列：
-
-### Phase 1：清理与统一（基础性工作）
-
-1. **删除废弃文件**
-   - 删除根 `App.tsx`（保存其中有价值的功能代码供迁移参考）
-   - 删除根 `components/` 目录（可回收的组件先迁移到 `src/components/`）
-   - 删除根 `constants.ts`、`types.ts`
-   - 删除 `src/api/mockData.ts`
-   - 删除 `src/styles/` 空目录
-
-2. **统一入口和别名**
-   - 将 `index.tsx` 移入 `src/main.tsx`（Vite 标准）
-   - 更新 `vite.config.ts` 别名为 `@` → `./src`
-   - 更新 `index.html` 的 script 引用
-
-3. **整理组件目录**
-   ```
-   src/components/
-   ├── ui/          # PanelBox, StatusBadge, StatusTag, DigitalNumber, SystemLog
-   ├── charts/      # 所有 ECharts 图表组件
-   ├── 3d/          # Scene3D, PlantModel, ProcessFlowCanvas
-   ├── ai/          # GeminiAdvisor
-   └── layout/      # StrategySwitcher (或保留在 layout/ 下)
-   ```
-
-4. **统一导出方式**
-   - 单组件文件：`export default`
-   - 多组件文件：具名导出
-   - 每个子目录添加 `index.ts` barrel 文件
-
-### Phase 2：数据层重构
-
-5. **统一数据类型**
-   ```
-   src/types/
-   ├── strategy.ts    # StrategyMode, StrategyKPI, RadarData 等
-   ├── equipment.ts   # EquipmentHealth, HSEData 等
-   ├── production.ts  # SankeyData, ProductionRate 等
-   └── index.ts       # 统一导出
-   ```
-
-6. **统一数据源**
-   ```
-   src/data/
-   ├── strategyData.ts     # 策略相关数据
-   ├── equipmentData.ts    # 设备相关数据
-   ├── productionData.ts   # 生产相关数据
-   ├── hseData.ts          # HSE 相关数据
-   └── index.ts
-   ```
-
-7. **重构 StrategyContext**
-   - 删除向后兼容的 `strategy`/`setStrategy` 别名
-   - 考虑将设备/HSE 数据也纳入 Context 或创建独立 Context
-
-### Phase 3：UI 与体验优化
-
-8. **抽取 ECharts 通用 Hook**
-   ```typescript
-   // useEChart.ts
-   function useEChart(options: EChartsOption, deps: any[]) {
-     // 封装 init, setOption, resize, dispose
-   }
-   ```
-
-9. **ECharts 全局主题**
-   ```typescript
-   // echarts-theme-cyber.ts
-   echarts.registerTheme('cyber', {
-     backgroundColor: 'transparent',
-     textStyle: { color: '#00F3FF', fontFamily: 'Rajdhani' },
-     // ...
-   });
-   ```
-
-10. **完善页面内容**
-    - Energy：实现蒸汽管网可视化和余热回收图表
-    - HSE：增加 ECharts 可视化（趋势图、报警热力图）
-    - Equipment：优化圆形进度条样式
-
-11. **集成 AI 助手**
-    - 将 GeminiAdvisor 迁移到新版中
-    - 简化 `geminiService.ts` 的级联逻辑
-
-12. **大屏适配优化**
-    - 替换 ScaleContainer 为更健壮的方案
-    - 实现实时时钟
-
-### Phase 4：工程化完善
-
-13. **代码质量工具**
-    - 配置 ESLint + Prettier
-    - 添加 Vitest 基础测试
-
-14. **字体与样式**
-    - 清理冗余的 Google Fonts CDN
-    - 引入中文赛博朋克字体
-    - 解决 Tailwind v4 配置问题
-
-15. **性能优化**
-    - React.lazy 路由级懒加载
-    - ECharts 按需引入（减小打包体积）
-    - Three.js 按需加载
+| 功能 | 状态 | 备注 |
+|---|---|---|
+| 5 个页面基本结构 | ✅ 完成 | |
+| 颜色体系与参考一致 | ✅ 完成 | |
+| 图表静态显示（无初始动画） | ✅ 完成 | |
+| 图表 Hover 高亮/变暗 emphasis 效果 | ✅ 完成 | |
+| Overview 右侧 3 面板 Tooltip 联动 | ✅ 完成 | |
+| 所有页面固定高度铺满屏幕 | ✅ 完成 | |
+| Brush 区间选择 UI（工具箱图标） | ✅ 有入口 | |
+| Brush 区间统计结果表格 | ⏳ 未实现 | 仅有 hint 文字占位 |
+| 3D 瀑布图（参考 HTML 第2个 tab） | ⏳ 未实现 | Three.js，参考 HTML §3 节 |
+| 竞速排行动画（参考 HTML 第3个 tab） | ⏳ 未实现 | 参考 HTML §4 节 |
 
 ---
 
-## 七、关键文件速查表
+## 11. 启动步骤
 
-下面列出每个文件的变更优先级以便重构时快速定位：
+```powershell
+# 1. 进入项目目录
+cd "e:\科研绘图\EcoProject"
 
-| 文件 | 状态 | 重构动作 |
-|------|------|---------|
-| `/App.tsx` | ❌ 废弃 | 提取有价值代码后**删除** |
-| `/constants.ts` | ❌ 废弃 | 迁移 `SYSTEM_INSTRUCTION` 后**删除** |
-| `/types.ts` | ❌ 废弃 | 合并到 `src/types/` 后**删除** |
-| `/components/*` | ⚠️ 半废弃 | 有价值的迁移到 `src/components/`，其余**删除** |
-| `/services/geminiService.ts` | ⚠️ 有价值 | 迁移到 `src/services/` 并简化 |
-| `/index.tsx` | ⚠️ 需重构 | 移至 `src/main.tsx`，删除内联 ErrorBoundary |
-| `/index.html` | ⚠️ 需清理 | 删除 Google Fonts CDN 引用 |
-| `src/api/mockData.ts` | ❌ 废弃 | **删除** |
-| `src/api/mock.ts` | ⚠️ 需重构 | 拆分为领域数据模块 |
-| `src/api/strategyData.ts` | ✅ 使用中 | 重构为 `src/data/strategyData.ts` |
-| `src/context/StrategyContext.tsx` | ✅ 使用中 | 删除向后兼容 API |
-| `src/layout/MainLayout.tsx` | ✅ 使用中 | 优化 ScaleContainer + 实时时钟 |
-| `src/components/PanelBox.tsx` | ✅ 使用中 | 移除 `uppercase` 类 |
-| `src/components/charts/*.tsx` | ✅ 使用中 | 抽取 useEChart Hook |
-| `src/pages/*.tsx` | ✅ 使用中 | 补全占位符、增强功能 |
-| `tailwind.config.cjs` | ⚠️ 需决策 | 决定 v3 降级 or v4 全面迁移 |
+# 2. 开发模式（必须显式指定 3006）
+npm run dev -- --port 3006
 
----
-
-## 八、启动项目
-
-```bash
-# 安装依赖
-npm install
-
-# 启动开发服务器（默认端口 3005）
-npm run dev
-
-# 构建生产包
+# 3. 构建验证
 npm run build
-
-# 预览生产包
-npm run preview
 ```
 
-**API 密钥配置**（可选，用于 AI 助手功能）：
-```bash
-# 在项目根目录创建 .env.local
-GEMINI_API_KEY=your_key     # 推荐
-DEEPSEEK_API_KEY=your_key   # 备选
-OPENAI_API_KEY=your_key     # 备选
-```
+访问：`http://localhost:3006`
 
 ---
 
-> **最后提示：** 本项目的核心价值在于大屏 UI 设计和策略切换联动机制。重构的重点应放在代码结构整理和功能完善上，尽量保留和增强现有的视觉效果。
+## 12. 参考文件
+
+| 文件 | 用途 |
+|---|---|
+| `e:\科研绘图\power_dashboard.html` | **UI 设计最终参照**，所有视觉效果均以此为准 |
+| `e:\科研绘图\EcoProject\src\data\realData.ts` | 所有真实数据的唯一来源 |
+
+> **核心原则**：视觉上的一切以 `power_dashboard.html` 为最终标准，不要自行发挥。功能扩展（如 Brush 统计、3D 视图）也应对照参考 HTML 的对应实现逻辑。
+

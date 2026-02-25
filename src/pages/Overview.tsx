@@ -37,9 +37,9 @@ export default function Overview() {
   }, [])
 
   return (
-    <div className="h-full" style={{ display: 'grid', gridTemplateRows: '1fr auto', gap: 12, minHeight: 0 }}>
+    <div className="h-full min-h-0" style={{ display: 'grid', gridTemplateRows: 'minmax(0, 1fr) auto', gap: 12, minHeight: 0 }}>
       {/* ── 主区域：图表 + 侧面板（与参考 .chart-row 一致） ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 16, minHeight: 0 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 280px', gap: 16, minHeight: 0, overflow: 'hidden' }}>
         {/* 主图 */}
         <div className="panel" style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
           <div className="panel-title-bar">功率时序曲线 · 鼠标移入见详情 · 拖拽方框选择区间统计</div>

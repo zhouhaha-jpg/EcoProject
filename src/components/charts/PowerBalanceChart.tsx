@@ -1,7 +1,7 @@
-import { useRef, useMemo, useCallback } from 'react'
+import { useRef, useMemo } from 'react'
 import { useStrategy } from '@/context/StrategyContext'
 import { useEChart } from './useEChart'
-import { getHours, STRATEGY_META } from '@/data/realData'
+import { getHours } from '@/data/realData'
 import type { StrategyKey } from '@/types'
 
 /** 与 power_dashboard.html SERIES 定义完全一致的策略颜色 */
@@ -22,6 +22,7 @@ function hexToRgba(hex: string, alpha: number): string {
 }
 
 const STRATEGY_ORDER: StrategyKey[] = ['uci', 'cicos', 'cicar', 'cicom', 'pv', 'es']
+const HOURS = getHours()
 
 interface PowerBalanceChartProps {
   /** 当 tooltip 指向某小时时回调 */
@@ -31,10 +32,10 @@ interface PowerBalanceChartProps {
 export default function PowerBalanceChart({ onHourHover }: PowerBalanceChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const { dataset } = useStrategy()
-  const hours = getHours()
 
   const onHourHoverRef = useRef(onHourHover)
   onHourHoverRef.current = onHourHover
+  const lastHoverHourRef = useRef(-1)
 
   const option = useMemo(() => {
     const series = STRATEGY_ORDER.map((sk) => {
@@ -67,10 +68,8 @@ export default function PowerBalanceChart({ onHourHover }: PowerBalanceChartProp
               },
             },
         emphasis: {
-          focus: 'series' as const,
           lineStyle: { width: 3 },
           disabled: false,
-          blurScope: 'coordinateSystem' as const,
         },
       }
     })
@@ -86,13 +85,15 @@ export default function PowerBalanceChart({ onHourHover }: PowerBalanceChartProp
         textStyle: { color: '#e8f4ff', fontSize: 11, fontFamily: "'Share Tech Mono', monospace" },
         formatter: (params: unknown) => {
           const arr = params as Array<{ seriesName: string; value: number; color: string; axisValue: string }>
-          const hourIdx = parseInt(arr[0].axisValue) - 1
+          const hourIdx = Number.parseInt(String(arr[0]?.axisValue ?? '1'), 10) - 1
           const vals = arr.map(p => ({
             key: p.seriesName.replace('P_CA_', '') as StrategyKey,
             val: p.value,
           }))
-          // callback to update side panels
-          if (onHourHoverRef.current) onHourHoverRef.current(hourIdx, vals)
+          if (onHourHoverRef.current && hourIdx !== lastHoverHourRef.current) {
+            lastHoverHourRef.current = hourIdx
+            onHourHoverRef.current(hourIdx, vals)
+          }
 
           const ref = 9020.51
           let s = `<div style="font-family:'Rajdhani',sans-serif;font-size:13px;color:#00d4ff;margin-bottom:6px;letter-spacing:1px">第 ${arr[0].axisValue} 小时</div>`
@@ -128,7 +129,7 @@ export default function PowerBalanceChart({ onHourHover }: PowerBalanceChartProp
       },
       xAxis: {
         type: 'category' as const,
-        data: hours.map(h => `${h}h`),
+        data: HOURS.map(h => `${h}h`),
         axisLine: { lineStyle: { color: '#1e3256' } },
         axisLabel: { color: '#3d6080', fontFamily: "'Share Tech Mono', monospace", fontSize: 10 },
         axisTick: { lineStyle: { color: '#1e3256' } },
@@ -150,7 +151,7 @@ export default function PowerBalanceChart({ onHourHover }: PowerBalanceChartProp
       },
       series,
     }
-  }, [dataset, hours])
+  }, [dataset])
 
   useEChart(containerRef, option, ['all-strategies'])
 

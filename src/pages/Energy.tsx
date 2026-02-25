@@ -12,7 +12,7 @@ export default function Energy() {
   const total = (key: 'P_PV' | 'P_G' | 'P_GM' | 'P_CA') => dataset[key][activeStrategy].reduce((a: number, b: number) => a + b, 0)
 
   return (
-    <div className="h-full grid grid-cols-12 gap-3" style={{ gridTemplateRows: '72px 1fr 1fr' }}>
+    <div className="h-full min-h-0 grid grid-cols-12 gap-3" style={{ gridTemplateRows: '72px minmax(0, 1fr) minmax(0, 1fr)' }}>
       {/* METRICS */}
       <PanelBox className="col-span-3">
         <div className="p-4"><DigitalNumber label="光伏总出力" value={total('P_PV').toFixed(0)} unit="kWh" color="#c6f135" size="md" /></div>

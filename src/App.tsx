@@ -8,7 +8,7 @@ import HSE from './pages/HSE'
 
 export default function App() {
   return (
-    <div className="scanlines">
+    <div className="h-full w-full">
       <Routes>
         <Route path="/" element={<MainLayout />}>
           <Route index element={<Overview />} />

@@ -31,7 +31,7 @@ export default function Equipment() {
   const maxPPV  = Math.max(...dataset.P_PV[activeStrategy])
 
   return (
-    <div className="h-full grid grid-cols-12 gap-3" style={{ gridTemplateRows: '72px 1fr 1fr' }}>
+    <div className="h-full min-h-0 grid grid-cols-12 gap-3" style={{ gridTemplateRows: '72px minmax(0, 1fr) minmax(0, 1fr)' }}>
       {/* Equipment cards */}
       {EQUIPMENT.slice(0,4).map(eq => (
         <PanelBox key={eq.name} className="col-span-3" topColor={eq.color}>

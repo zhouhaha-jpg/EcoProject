@@ -14,7 +14,7 @@ export default function MainLayout() {
   const location = useLocation()
 
   return (
-    <div className="scanlines min-h-screen w-full flex flex-col overflow-hidden" style={{ background: '#070c14' }}>
+    <div className="scanlines h-screen w-full flex flex-col overflow-hidden" style={{ background: '#070c14' }}>
       {/* ── 顶栏（与参考 header 一致） ── */}
       <header className="hud-header relative z-10 shrink-0 flex items-center gap-5 px-8 py-4">
         <div className="logo-pulse" />

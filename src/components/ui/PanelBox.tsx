@@ -10,7 +10,7 @@ interface PanelBoxProps {
 
 export default function PanelBox({ title, children, className = '', footer }: PanelBoxProps) {
   return (
-    <div className={`panel flex flex-col ${className}`}>
+    <div className={`panel min-h-0 flex flex-col ${className}`}>
       {title && <div className="panel-title-bar">{title}</div>}
       <div className="flex-1 min-h-0 overflow-hidden">{children}</div>
       {footer && (

@@ -22,8 +22,9 @@ echarts.use([
 const BASE_THEME: Partial<EChartsCoreOption> = {
   backgroundColor: 'transparent',
   textStyle: { color: '#8BA9CC', fontFamily: 'Rajdhani, Noto Sans SC, sans-serif' },
-  animation: false,
-  // 保留 hover emphasis 的过渡动画
+  animation: true,
+  animationDuration: 0,
+  animationDurationUpdate: 0,
   stateAnimation: { duration: 300, easing: 'cubicOut' },
 }
 
