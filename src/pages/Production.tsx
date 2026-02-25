@@ -7,10 +7,9 @@ import CarbonTrendChart from '@/components/charts/CarbonTrendChart'
 
 export default function Production() {
   const { activeStrategy, dataset, strategyMeta } = useStrategy()
-  const d = dataset[activeStrategy]
   const meta = strategyMeta[activeStrategy]
-  const totalH_CA  = (d.H_CA  as number[]).reduce((a: number,b: number)=>a+b,0)
-  const totalH_PEM = (d.H_PEM as number[]).reduce((a: number,b: number)=>a+b,0)
+  const totalH_CA  = dataset.H_CA[activeStrategy].reduce((a: number,b: number)=>a+b,0)
+  const totalH_PEM = dataset.H_PEM[activeStrategy].reduce((a: number,b: number)=>a+b,0)
   const totalH2    = totalH_CA + totalH_PEM
 
   return (
@@ -26,7 +25,7 @@ export default function Production() {
         <DigitalNumber label="PEM制氢" value={totalH_PEM.toFixed(1)} unit="kg" color="#FF7043" size="lg" />
       </PanelBox>
       <PanelBox className="col-span-3" topColor="#CE93D8">
-        <DigitalNumber label="PEM电解功耗" value={(d.P_PEM as number[]).reduce((a: number,b: number)=>a+b,0).toFixed(0)} unit="kWh" color="#CE93D8" size="lg" />
+        <DigitalNumber label="PEM电解功耗" value={dataset.P_PEM[activeStrategy].reduce((a: number,b: number)=>a+b,0).toFixed(0)} unit="kWh" color="#CE93D8" size="lg" />
       </PanelBox>
 
       {/* H2 stacked chart */}

@@ -5,7 +5,10 @@
 @layer base {
   html, body, #root {
     @apply w-full h-full m-0 p-0 overflow-hidden;
-    background: #050B14;
+    background:
+      radial-gradient(1200px 700px at 20% -10%, rgba(0, 212, 255, 0.08), transparent 55%),
+      radial-gradient(900px 500px at 90% 0%, rgba(78, 158, 255, 0.08), transparent 50%),
+      #050B14;
     color: #E8F4FF;
   }
 
@@ -52,13 +55,25 @@
       rgba(0, 243, 255, 0.012) 4px
     );
     pointer-events: none;
-    z-index: 9999;
+    z-index: 10;
+  }
+
+  .scanlines::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: linear-gradient(180deg, rgba(6, 14, 25, 0.25), rgba(6, 14, 25, 0));
+    pointer-events: none;
+    z-index: 9;
   }
 
   /* ── 面板通用样式 ── */
   .panel-cyber {
     @apply bg-cyber-blue border border-border-cyber relative overflow-hidden;
-    background-image: linear-gradient(135deg, rgba(0,243,255,0.04) 0%, transparent 60%);
+    background-image:
+      linear-gradient(135deg, rgba(0,243,255,0.06) 0%, transparent 62%),
+      repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(41, 212, 255, 0.02) 3px, rgba(41, 212, 255, 0.02) 4px);
+    box-shadow: inset 0 1px 0 rgba(0, 243, 255, 0.08);
   }
   .panel-cyber::before {
     content: '';
@@ -66,6 +81,43 @@
     top: 0; left: 0; right: 0;
     height: 1px;
     background: linear-gradient(90deg, transparent, rgba(0,243,255,0.6), transparent);
+  }
+
+  .hud-header {
+    background: linear-gradient(90deg, #0d1422 0%, #070c14 100%);
+    border-bottom: 1px solid #1e3256;
+    box-shadow: inset 0 -1px 0 rgba(0, 212, 255, 0.08);
+  }
+
+  .hud-nav-link {
+    @apply text-text-muted border border-transparent;
+    background: transparent;
+  }
+
+  .hud-nav-link:hover {
+    @apply text-text-primary;
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .hud-nav-link.active {
+    color: #00d4ff;
+    border-color: rgba(0, 212, 255, 0.4);
+    background: rgba(0, 212, 255, 0.08);
+    box-shadow: 0 0 10px rgba(0, 212, 255, 0.15);
+  }
+
+  .hud-chip {
+    @apply font-mono text-[10px] px-2.5 py-1 border rounded-sm;
+    border-color: #1e3256;
+    color: #8ba9cc;
+    letter-spacing: 0.08em;
+    line-height: 1;
+  }
+
+  .hud-chip.live {
+    border-color: rgba(0, 212, 255, 0.65);
+    color: #00d4ff;
+    box-shadow: 0 0 8px rgba(0, 212, 255, 0.2);
   }
 
   /* ── 按钮样式 ── */

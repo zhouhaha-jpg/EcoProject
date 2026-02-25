@@ -16,7 +16,7 @@ export default function WaterfallChart({ metric = 'cost' }: { metric?: 'cost' | 
   }
 
   const option = useMemo(() => {
-    const values = ALL_STRATEGIES.map(sk => dataset[sk].summary[metric])
+    const values = ALL_STRATEGIES.map(sk => dataset.summary[sk][metric])
     const colors = ALL_STRATEGIES.map(sk => strategyMeta[sk].color)
     const borderColors = ALL_STRATEGIES.map(sk => activeStrategy === sk ? '#fff' : strategyMeta[sk].color)
 
@@ -34,7 +34,7 @@ export default function WaterfallChart({ metric = 'cost' }: { metric?: 'cost' | 
       },
       xAxis: {
         type: 'category',
-        data: ALL_STRATEGIES.map(sk => strategyMeta[sk].shortLabel),
+        data: ALL_STRATEGIES.map(sk => strategyMeta[sk].label),
         axisLine: { lineStyle: { color: '#1A3350' } },
         axisLabel: { color: '#8BA9CC', fontSize: 11 },
       },

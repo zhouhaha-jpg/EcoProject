@@ -9,11 +9,10 @@ import type { StrategyKey } from '@/types'
 
 export default function Energy() {
   const { activeStrategy, dataset, strategyMeta } = useStrategy()
-  const d = dataset[activeStrategy]
   const meta = strategyMeta[activeStrategy]
   const [compareMode, setCompareMode] = useState(false)
 
-  const total = (key: string) => (d[key as keyof typeof d] as number[]).reduce((a: number,b: number)=>a+b,0)
+  const total = (key: 'P_PV' | 'P_G' | 'P_GM' | 'P_CA') => dataset[key][activeStrategy].reduce((a: number, b: number) => a + b, 0)
 
   return (
     <div className="h-full grid grid-cols-12 grid-rows-[auto_1fr_1fr] gap-3">

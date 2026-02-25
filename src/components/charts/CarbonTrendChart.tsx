@@ -9,11 +9,10 @@ export default function CarbonTrendChart() {
   const hours = getHours()
 
   const option = useMemo(() => {
-    const d = dataset[activeStrategy]
     const meta = strategyMeta[activeStrategy]
     // Hourly CO2 = ef_g * P_G
-    const ef = d.ef_g as number[]
-    const pg = d.P_G as number[]
+    const ef = dataset.ef_g
+    const pg = dataset.P_G[activeStrategy]
     const co2 = ef.map((e, i) => +(e * pg[i]).toFixed(4))
 
     return {

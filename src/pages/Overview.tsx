@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { useStrategy } from '@/context/StrategyContext'
 import PanelBox from '@/components/ui/PanelBox'
 import DigitalNumber from '@/components/ui/DigitalNumber'
@@ -9,20 +10,45 @@ import PowerBalanceChart from '@/components/charts/PowerBalanceChart'
 
 export default function Overview() {
   const { activeStrategy, dataset, strategyMeta } = useStrategy()
-  const d = dataset[activeStrategy]
   const meta = strategyMeta[activeStrategy]
-  const summary = d.summary
+  const summary = dataset.summary[activeStrategy]
+  const hPemSeries = dataset.H_PEM[activeStrategy]
+  const hCaSeries = dataset.H_CA[activeStrategy]
+  const pPvSeries = dataset.P_PV[activeStrategy]
+  const pGSeries = dataset.P_G[activeStrategy]
 
   const kpis = [
     { label: '运营成本', value: (summary.cost / 10000).toFixed(2), unit: '万元', color: meta.color, decimals: 2 },
     { label: '碳排放量', value: summary.carbon.toFixed(2),          unit: 'tCO₂', color: '#29D4FF' },
     { label: '综合目标', value: summary.combined.toFixed(3),         unit: '',     color: '#C6F135' },
-    { label: 'H₂总产量', value: ((d.H_PEM as number[]).reduce((a: number,b: number)=>a+b,0)+(d.H_CA as number[]).reduce((a: number,b: number)=>a+b,0)).toFixed(0),
+    { label: 'H₂总产量', value: (hPemSeries.reduce((a: number,b: number)=>a+b,0) + hCaSeries.reduce((a: number,b: number)=>a+b,0)).toFixed(0),
       unit: 'kg', color: '#CE93D8' },
   ]
 
-  const totalPV = ((d.P_PV as number[]).reduce((a: number,b: number)=>a+b,0)).toFixed(0)
-  const totalPG  = ((d.P_G  as number[]).reduce((a: number,b: number)=>a+b,0)).toFixed(0)
+  const totalPV = pPvSeries.reduce((a: number,b: number)=>a+b,0).toFixed(0)
+  const totalPG = pGSeries.reduce((a: number,b: number)=>a+b,0).toFixed(0)
+
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [playHour, setPlayHour] = useState(1)
+
+  useEffect(() => {
+    if (!isPlaying) return
+    const timer = setInterval(() => {
+      setPlayHour((prev) => {
+        if (prev >= 24) {
+          setIsPlaying(false)
+          return 24
+        }
+        return prev + 1
+      })
+    }, 900)
+    return () => clearInterval(timer)
+  }, [isPlaying])
+
+  const startPlay = () => {
+    if (playHour >= 24) setPlayHour(1)
+    setIsPlaying(true)
+  }
 
   return (
     <div className="h-full grid grid-cols-12 grid-rows-[auto_1fr_1fr] gap-3">
@@ -35,8 +61,44 @@ export default function Overview() {
 
       {/* ROW 2 */}
       {/* Power balance chart — 7 cols */}
-      <PanelBox title="电力平衡 · 24h趋势" className="col-span-7 row-span-1" topColor={meta.color}>
-        <PowerBalanceChart />
+      <PanelBox
+        title="电力平衡 · 24h趋势"
+        className="col-span-7 row-span-1"
+        topColor={meta.color}
+        footer={
+          <div className="flex items-center gap-2">
+            <button
+              className="btn-cyber !px-3 !py-1 text-[10px]"
+              onClick={() => (isPlaying ? setIsPlaying(false) : startPlay())}
+            >
+              {isPlaying ? '暂停播放' : '播放24h'}
+            </button>
+            <button
+              className="btn-cyber !px-3 !py-1 text-[10px]"
+              onClick={() => {
+                setIsPlaying(false)
+                setPlayHour(1)
+              }}
+            >
+              重置
+            </button>
+            <input
+              type="range"
+              min={1}
+              max={24}
+              value={playHour}
+              onChange={(e) => {
+                setIsPlaying(false)
+                setPlayHour(Number(e.target.value))
+              }}
+              className="ml-1 w-28 accent-neon-cyan"
+            />
+            <span className="font-mono text-[10px] text-text-muted">H{String(playHour).padStart(2, '0')}</span>
+            <span className="font-mono text-[10px] text-neon-cyan">默认静态展示，播放仅用于巡检游标</span>
+          </div>
+        }
+      >
+        <PowerBalanceChart playbackHour={isPlaying ? playHour : undefined} />
       </PanelBox>
 
       {/* Radar — 2 cols */}
@@ -47,7 +109,7 @@ export default function Overview() {
       {/* System info — 2 cols */}
       <PanelBox title="系统状态" className="col-span-2 row-span-1">
         <div className="space-y-3">
-          <StatusBadge variant="ok" label="系统运行正常" />
+          <StatusBadge variant="success" label="系统运行正常" />
           <DigitalNumber label="光伏总发电" value={totalPV} unit="kWh" color="#C6F135" size="sm" />
           <DigitalNumber label="电网购电" value={totalPG} unit="kWh" color="#CE93D8" size="sm" />
           <div className="pt-1">

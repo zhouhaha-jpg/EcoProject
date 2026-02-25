@@ -8,15 +8,14 @@ import SystemLog from '@/components/ui/SystemLog'
 
 export default function HSE() {
   const { activeStrategy, dataset, strategyMeta } = useStrategy()
-  const d = dataset[activeStrategy]
   const meta = strategyMeta[activeStrategy]
 
-  const totalCarbon = d.summary.carbon
+  const totalCarbon = dataset.summary[activeStrategy].carbon
   const quota = 310 // tonCO2 daily quota (rough)
   const remaining = quota - totalCarbon
   const pct = Math.max(0, Math.min(100, (remaining / quota) * 100))
 
-  const ef_g = d.ef_g as number[]
+  const ef_g = dataset.ef_g
   const maxEf = Math.max(...ef_g)
   const minEf = Math.min(...ef_g)
 

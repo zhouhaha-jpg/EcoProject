@@ -21,11 +21,12 @@ export default function MainLayout() {
   return (
     <div className="scanlines min-h-screen w-full flex flex-col bg-cyber-black text-text-primary overflow-hidden" style={{ fontFamily: 'Rajdhani, "Noto Sans SC", sans-serif' }}>
       {/* HEADER */}
-      <header className="shrink-0 h-14 flex items-center px-6 gap-6 border-b border-border-cyber bg-cyber-panel/60 backdrop-blur-sm z-50">
+      <header className="hud-header shrink-0 h-14 flex items-center px-6 gap-6 backdrop-blur-sm z-50">
         {/* Logo */}
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 clip-cyber-sm bg-neon-cyan/20 border border-neon-cyan flex items-center justify-center">
-            <span className="text-neon-cyan text-xs font-display font-bold">EC</span>
+          <div className="w-2 h-2 rounded-full bg-neon-cyan animate-pulse shadow-neon-cyan" />
+          <div className="w-8 h-8 clip-cyber-sm bg-neon-cyan/15 border border-neon-cyan/60 flex items-center justify-center">
+            <span className="text-neon-cyan text-xs font-display font-bold tracking-wide">EC</span>
           </div>
           <div className="leading-tight">
             <div className="text-xs font-display tracking-widest text-neon-cyan uppercase neon-text-sm">EcoSys</div>
@@ -41,10 +42,10 @@ export default function MainLayout() {
               <Link
                 key={to}
                 to={to}
-                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-display tracking-wider uppercase transition-all duration-200 rounded ${
+                className={`hud-nav-link flex items-center gap-1.5 px-3 py-1.5 text-xs font-display tracking-wider uppercase transition-all duration-200 rounded ${
                   active
-                    ? 'text-neon-cyan bg-neon-cyan/10 border border-neon-cyan/40'
-                    : 'text-text-muted hover:text-text-primary hover:bg-white/5 border border-transparent'
+                    ? 'active'
+                    : ''
                 }`}
               >
                 <Icon size={13} />
@@ -56,6 +57,11 @@ export default function MainLayout() {
 
         {/* Strategy switcher */}
         <div className="ml-auto flex items-center gap-4">
+          <div className="hidden xl:flex items-center gap-2">
+            <span className="hud-chip">24H</span>
+            <span className="hud-chip">6 STRATEGIES</span>
+            <span className="hud-chip live">● INTERACTIVE</span>
+          </div>
           <StrategySwitcher />
           <div className="text-right border-l border-border-cyber pl-4">
             <div className="font-mono text-sm text-neon-cyan" style={{ textShadow: '0 0 8px #00F3FF66' }}>{timeStr}</div>
@@ -65,10 +71,10 @@ export default function MainLayout() {
       </header>
 
       {/* MAIN CONTENT — ScaleContainer */}
-      <main className="flex-1 min-h-0 overflow-auto p-4">
+      <main className="flex-1 min-h-0 overflow-hidden p-4">
         <div
-          className="w-full h-full"
-          style={{ minHeight: 'calc(100vh - 3.5rem - 2rem)' }}
+          className="w-full min-h-0 overflow-hidden"
+          style={{ height: 'calc(100vh - 3.5rem - 2rem)' }}
         >
           <Outlet />
         </div>

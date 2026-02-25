@@ -57,12 +57,12 @@ export default function SystemLog() {
   }, [])
 
   return (
-    <div className="h-full overflow-y-auto space-y-1 font-mono text-xs">
+    <div className="h-full max-h-full min-h-0 overflow-y-auto overflow-x-hidden pr-1 space-y-1 font-mono text-xs">
       {logs.map(log => (
-        <div key={log.id} className="flex gap-2 opacity-90 animate-fade-in-up">
+        <div key={log.id} className="flex items-center gap-2 opacity-90 animate-fade-in-up min-w-0">
           <span className="text-text-muted shrink-0">{log.time}</span>
           <span className={`shrink-0 ${levelColor[log.level]}`}>{levelTag[log.level]}</span>
-          <span className="text-text-secondary truncate">{log.msg}</span>
+          <span className="text-text-secondary flex-1 min-w-0 truncate block">{log.msg}</span>
         </div>
       ))}
     </div>

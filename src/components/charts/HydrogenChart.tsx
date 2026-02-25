@@ -9,12 +9,11 @@ export default function HydrogenChart() {
   const hours = getHours()
 
   const option = useMemo(() => {
-    const d = dataset[activeStrategy]
     const meta = strategyMeta[activeStrategy]
-    const H_CA  = d.H_CA  as number[]
-    const H_PEM = d.H_PEM as number[]
-    const H_CH  = d.H_CH  as number[]
-    const H_HS  = d.H_HS  as number[]
+    const H_CA  = dataset.H_CA[activeStrategy]
+    const H_PEM = dataset.H_PEM[activeStrategy]
+    const H_CH  = dataset.H_CH[activeStrategy]
+    const H_HS  = dataset.H_HS[activeStrategy]
 
     return {
       grid: { top: 36, right: 16, bottom: 40, left: 60 },

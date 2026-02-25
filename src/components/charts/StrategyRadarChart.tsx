@@ -12,8 +12,7 @@ const INDICATORS = [
 ]
 
 function normalize(dataset: ReturnType<typeof useStrategy>['dataset'], key: StrategyKey) {
-  const d = dataset[key]
-  const summary = d.summary
+  const summary = dataset.summary[key]
   // flip cost & carbon (lower = better => higher score)
   const costs = [203969.81, 202486.53, 203172.75, 202905.61, 188709.77, 182010.89]
   const carbons = [297.06, 301.72, 295.84, 295.93, 284.25, 266.22]
@@ -21,9 +20,9 @@ function normalize(dataset: ReturnType<typeof useStrategy>['dataset'], key: Stra
   const carbon = 1 - (summary.carbon - Math.min(...carbons)) / (Math.max(...carbons) - Math.min(...carbons))
   const combined = 1 - (summary.combined - 0.91) / (1.02 - 0.91)
   // H2 total production from H_PEM
-  const h2 = ((d.H_PEM as number[]).reduce((a: number, b: number) => a + b, 0)) / 8000
+  const h2 = (dataset.H_PEM[key].reduce((a: number, b: number) => a + b, 0)) / 8000
   // PV ratio: P_PV / P_CA
-  const pv = Math.min((d.P_PV as number[]).reduce((a: number, b: number) => a + b, 0) / 140000, 1)
+  const pv = Math.min(dataset.P_PV[key].reduce((a: number, b: number) => a + b, 0) / 140000, 1)
   return [+eco.toFixed(3), +carbon.toFixed(3), +combined.toFixed(3), +h2.toFixed(3), +pv.toFixed(3)]
 }
 

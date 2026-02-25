@@ -14,7 +14,7 @@ type EquipSpec = {
 }
 
 const EQUIPMENT: EquipSpec[] = [
-  { name: '氯碱电解槽',  type: '用电负荷',   rated: '9020 kW',  status: 'ok' as 'success',  statusLabel: '满功率运行', color: '#00F3FF' },
+  { name: '氯碱电解槽',  type: '用电负荷',   rated: '9020 kW',  status: 'success',           statusLabel: '满功率运行', color: '#00F3FF' },
   { name: 'PEM电解槽',   type: '制氢装置',   rated: '8487 kW',  status: 'info',              statusLabel: '优化调度',   color: '#29D4FF' },
   { name: '光伏阵列',    type: '可再生能源', rated: '6000 kW',  status: 'success',           statusLabel: '正常发电',   color: '#C6F135' },
   { name: '燃气轮机',    type: '热电联供',   rated: '512.5 kW', status: 'idle',              statusLabel: '待机',       color: '#FFD740' },
@@ -24,12 +24,11 @@ const EQUIPMENT: EquipSpec[] = [
 
 export default function Equipment() {
   const { activeStrategy, dataset, strategyMeta } = useStrategy()
-  const d = dataset[activeStrategy]
   const meta = strategyMeta[activeStrategy]
 
-  const maxPCA  = Math.max(...(d.P_CA  as number[]))
-  const maxPPEM = Math.max(...(d.P_PEM as number[]))
-  const maxPPV  = Math.max(...(d.P_PV  as number[]))
+  const maxPCA  = Math.max(...dataset.P_CA[activeStrategy])
+  const maxPPEM = Math.max(...dataset.P_PEM[activeStrategy])
+  const maxPPV  = Math.max(...dataset.P_PV[activeStrategy])
 
   return (
     <div className="h-full grid grid-cols-12 grid-rows-[auto_1fr_1fr] gap-3">
