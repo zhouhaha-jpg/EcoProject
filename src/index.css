@@ -1,0 +1,102 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root {
+    @apply w-full h-full m-0 p-0 overflow-hidden;
+    background: #050B14;
+    color: #E8F4FF;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0,243,255,0.3) rgba(0,0,0,0.2);
+  }
+
+  *::-webkit-scrollbar { width: 4px; height: 4px; }
+  *::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); }
+  *::-webkit-scrollbar-thumb { background: rgba(0,243,255,0.3); border-radius: 2px; }
+}
+
+@layer components {
+  /* ── 赛博朋克切角边框 ── */
+  .clip-cyber-sm {
+    clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+  }
+  .clip-cyber {
+    clip-path: polygon(16px 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%, 0 16px);
+  }
+  .clip-cyber-lg {
+    clip-path: polygon(24px 0, 100% 0, 100% calc(100% - 24px), calc(100% - 24px) 100%, 0 100%, 0 24px);
+  }
+
+  /* ── 霓虹发光文字 ── */
+  .neon-text {
+    text-shadow: 0 0 8px currentColor, 0 0 20px currentColor;
+  }
+  .neon-text-sm {
+    text-shadow: 0 0 6px currentColor;
+  }
+
+  /* ── 全局 CRT 扫描线背景 ── */
+  .scanlines::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0, 243, 255, 0.012) 2px,
+      rgba(0, 243, 255, 0.012) 4px
+    );
+    pointer-events: none;
+    z-index: 9999;
+  }
+
+  /* ── 面板通用样式 ── */
+  .panel-cyber {
+    @apply bg-cyber-blue border border-border-cyber relative overflow-hidden;
+    background-image: linear-gradient(135deg, rgba(0,243,255,0.04) 0%, transparent 60%);
+  }
+  .panel-cyber::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(0,243,255,0.6), transparent);
+  }
+
+  /* ── 按钮样式 ── */
+  .btn-cyber {
+    @apply font-body font-semibold tracking-widest uppercase text-xs px-4 py-2 border transition-all duration-200 cursor-pointer;
+    @apply border-border-cyber text-text-secondary bg-cyber-panel;
+    clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+  }
+  .btn-cyber:hover, .btn-cyber.active {
+    @apply border-neon-cyan text-neon-cyan bg-neon-cyan-dim;
+    box-shadow: 0 0 10px rgba(0,243,255,0.2);
+  }
+
+  /* ── 数字闪烁动画 ── */
+  .digit-roll {
+    animation: digit-roll 0.4s ease-out;
+  }
+  @keyframes digit-roll {
+    0% { opacity: 0; transform: translateY(-8px); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ── 进度条发光 ── */
+  .progress-glow {
+    box-shadow: 0 0 6px currentColor, 0 0 12px currentColor;
+  }
+
+  /* ── 策略切换按钮 ── */
+  .strategy-tab {
+    @apply px-4 py-2 text-xs font-body font-semibold tracking-wider border-b-2 border-transparent cursor-pointer transition-all duration-200 text-text-muted whitespace-nowrap;
+  }
+  .strategy-tab:hover { @apply text-text-secondary; }
+  .strategy-tab.active { @apply text-neon-cyan border-neon-cyan; }
+}
