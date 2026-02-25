@@ -13,7 +13,7 @@ export default function Production() {
   const totalH2    = totalH_CA + totalH_PEM
 
   return (
-    <div className="h-full grid grid-cols-12 grid-rows-[auto_1fr_1fr] gap-3">
+    <div className="h-full grid grid-cols-12 gap-3" style={{ gridTemplateRows: '72px 1fr 1fr' }}>
       {/* KPIs */}
       <PanelBox className="col-span-3" topColor={meta.color}>
         <DigitalNumber label="氢气总产量" value={totalH2.toFixed(1)} unit="kg" color={meta.color} size="lg" />

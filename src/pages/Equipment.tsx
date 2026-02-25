@@ -31,7 +31,7 @@ export default function Equipment() {
   const maxPPV  = Math.max(...dataset.P_PV[activeStrategy])
 
   return (
-    <div className="h-full grid grid-cols-12 grid-rows-[auto_1fr_1fr] gap-3">
+    <div className="h-full grid grid-cols-12 gap-3" style={{ gridTemplateRows: '72px 1fr 1fr' }}>
       {/* Equipment cards */}
       {EQUIPMENT.slice(0,4).map(eq => (
         <PanelBox key={eq.name} className="col-span-3" topColor={eq.color}>
@@ -44,7 +44,7 @@ export default function Equipment() {
       ))}
 
       {/* Main power chart */}
-      <PanelBox title="关键设备出力曲线" className="col-span-8 row-span-1" topColor={meta.color}>
+      <PanelBox title="关键设备出力曲线" className="col-span-8 row-span-1">
         <PowerBalanceChart />
       </PanelBox>
 
@@ -67,7 +67,7 @@ export default function Equipment() {
           </div>
         </PanelBox>
       ))}
-      <PanelBox title="实时功率监控" className="col-span-6 row-span-1" topColor={meta.color}>
+      <PanelBox title="实时功率监控" className="col-span-6 row-span-1">
         <PowerBalanceChart />
       </PanelBox>
     </div>

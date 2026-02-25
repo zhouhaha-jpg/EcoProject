@@ -6,7 +6,7 @@ import {
 import {
   GridComponent, TooltipComponent, LegendComponent,
   TitleComponent, RadarComponent, MarkLineComponent,
-  DataZoomComponent,
+  DataZoomComponent, ToolboxComponent, BrushComponent,
 } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
 import type { EChartsCoreOption } from 'echarts/core'
@@ -15,13 +15,16 @@ echarts.use([
   BarChart, LineChart, RadarChart, ScatterChart,
   GridComponent, TooltipComponent, LegendComponent,
   TitleComponent, RadarComponent, MarkLineComponent,
-  DataZoomComponent,
+  DataZoomComponent, ToolboxComponent, BrushComponent,
   CanvasRenderer,
 ])
 
 const BASE_THEME: Partial<EChartsCoreOption> = {
   backgroundColor: 'transparent',
   textStyle: { color: '#8BA9CC', fontFamily: 'Rajdhani, Noto Sans SC, sans-serif' },
+  animation: false,
+  // 保留 hover emphasis 的过渡动画
+  stateAnimation: { duration: 300, easing: 'cubicOut' },
 }
 
 export function useEChart(

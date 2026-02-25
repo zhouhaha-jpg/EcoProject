@@ -20,7 +20,7 @@ export default function HSE() {
   const minEf = Math.min(...ef_g)
 
   return (
-    <div className="h-full grid grid-cols-12 grid-rows-[auto_1fr_1fr] gap-3">
+    <div className="h-full grid grid-cols-12 gap-3" style={{ gridTemplateRows: '72px 1fr 1fr' }}>
       {/* KPIs */}
       <PanelBox className="col-span-3" topColor={meta.color}>
         <DigitalNumber label="日碳排放量" value={totalCarbon.toFixed(2)} unit="tCO₂" color={meta.color} size="lg" />

@@ -2,153 +2,256 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ═════════════════════════════════════════════
+   完全对齐 power_dashboard.html 的全局样式
+   ═════════════════════════════════════════════ */
+
 @layer base {
   html, body, #root {
     @apply w-full h-full m-0 p-0 overflow-hidden;
-    background:
-      radial-gradient(1200px 700px at 20% -10%, rgba(0, 212, 255, 0.08), transparent 55%),
-      radial-gradient(900px 500px at 90% 0%, rgba(78, 158, 255, 0.08), transparent 50%),
-      #050B14;
-    color: #E8F4FF;
+    background: #070c14;
+    color: #e8f4ff;
+    font-family: 'Noto Sans SC', 'Rajdhani', sans-serif;
   }
 
-  * {
-    scrollbar-width: thin;
-    scrollbar-color: rgba(0,243,255,0.3) rgba(0,0,0,0.2);
-  }
-
+  * { scrollbar-width: thin; scrollbar-color: rgba(0,212,255,0.25) rgba(0,0,0,0.2); }
   *::-webkit-scrollbar { width: 4px; height: 4px; }
   *::-webkit-scrollbar-track { background: rgba(0,0,0,0.2); }
-  *::-webkit-scrollbar-thumb { background: rgba(0,243,255,0.3); border-radius: 2px; }
+  *::-webkit-scrollbar-thumb { background: rgba(0,212,255,0.25); border-radius: 2px; }
 }
 
 @layer components {
-  /* ── 赛博朋克切角边框 ── */
-  .clip-cyber-sm {
-    clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
-  }
-  .clip-cyber {
-    clip-path: polygon(16px 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%, 0 16px);
-  }
-  .clip-cyber-lg {
-    clip-path: polygon(24px 0, 100% 0, 100% calc(100% - 24px), calc(100% - 24px) 100%, 0 100%, 0 24px);
-  }
 
-  /* ── 霓虹发光文字 ── */
-  .neon-text {
-    text-shadow: 0 0 8px currentColor, 0 0 20px currentColor;
-  }
-  .neon-text-sm {
-    text-shadow: 0 0 6px currentColor;
-  }
-
-  /* ── 全局 CRT 扫描线背景 ── */
+  /* ── 扫描线纹理（与参考 HTML body::before 一致） ── */
   .scanlines::before {
     content: '';
     position: fixed;
     inset: 0;
+    z-index: 0;
+    pointer-events: none;
     background: repeating-linear-gradient(
       0deg,
       transparent,
       transparent 2px,
-      rgba(0, 243, 255, 0.012) 2px,
-      rgba(0, 243, 255, 0.012) 4px
+      rgba(0, 212, 255, 0.015) 2px,
+      rgba(0, 212, 255, 0.015) 4px
     );
-    pointer-events: none;
-    z-index: 10;
   }
 
-  .scanlines::after {
-    content: '';
-    position: fixed;
-    inset: 0;
-    background: linear-gradient(180deg, rgba(6, 14, 25, 0.25), rgba(6, 14, 25, 0));
-    pointer-events: none;
-    z-index: 9;
+  /* ── 面板（与参考 .panel 一致） ── */
+  .panel {
+    background: #0d1422;
+    border: 1px solid #1e3256;
+    border-radius: 4px;
+    position: relative;
+    overflow: hidden;
   }
-
-  /* ── 面板通用样式 ── */
-  .panel-cyber {
-    @apply bg-cyber-blue border border-border-cyber relative overflow-hidden;
-    background-image:
-      linear-gradient(135deg, rgba(0,243,255,0.06) 0%, transparent 62%),
-      repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(41, 212, 255, 0.02) 3px, rgba(41, 212, 255, 0.02) 4px);
-    box-shadow: inset 0 1px 0 rgba(0, 243, 255, 0.08);
-  }
-  .panel-cyber::before {
+  .panel::before {
     content: '';
     position: absolute;
     top: 0; left: 0; right: 0;
     height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(0,243,255,0.6), transparent);
+    background: linear-gradient(90deg, transparent, #00d4ff, transparent);
+    opacity: 0.5;
   }
 
-  .hud-header {
-    background: linear-gradient(90deg, #0d1422 0%, #070c14 100%);
+  /* ── 面板标题（与参考 .panel-title 一致） ── */
+  .panel-title-bar {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    color: #3d6080;
+    text-transform: uppercase;
+    padding: 10px 16px 6px;
     border-bottom: 1px solid #1e3256;
-    box-shadow: inset 0 -1px 0 rgba(0, 212, 255, 0.08);
   }
 
+  /* ── 统计卡片网格（与参考 .stat-grid/.stat-cell 一致） ── */
+  .stat-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1px;
+    background: #1e3256;
+  }
+  .stat-cell {
+    background: #111b2e;
+    padding: 10px 14px;
+  }
+  .stat-label {
+    font-size: 10px;
+    color: #3d6080;
+    font-family: 'Share Tech Mono', monospace;
+    letter-spacing: 1px;
+  }
+  .stat-value {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 22px;
+    font-weight: 700;
+    color: #e8f4ff;
+    margin-top: 2px;
+    transition: color 0.3s;
+  }
+  .stat-unit {
+    font-size: 11px;
+    color: #8ba9cc;
+    margin-left: 2px;
+  }
+
+  /* ── 排行列表（与参考 .rank-list/.rank-item 一致） ── */
+  .rank-list {
+    padding: 10px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .rank-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .rank-num {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 11px;
+    width: 16px;
+    text-align: center;
+  }
+  .rank-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .rank-name {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    color: #8ba9cc;
+    width: 50px;
+  }
+  .rank-bar-wrap {
+    flex: 1;
+    background: #172240;
+    height: 4px;
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .rank-bar {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 0.4s ease;
+  }
+  .rank-val {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    color: #e8f4ff;
+    width: 70px;
+    text-align: right;
+  }
+
+  /* ── 差值面板（与参考 .diff-panel/.diff-item 一致） ── */
+  .diff-panel-body {
+    padding: 10px 16px;
+  }
+  .diff-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 4px 0;
+    border-bottom: 1px solid #1e3256;
+  }
+  .diff-item:last-child { border: none; }
+  .diff-name { font-size: 11px; }
+  .diff-num {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .diff-pos { color: #69f0ae; }
+  .diff-neg { color: #ff5252; }
+
+  /* ── 区间统计表格 ── */
+  .brush-result { padding: 12px 16px; }
+  .brush-hint {
+    color: #3d6080;
+    font-size: 11px;
+    text-align: center;
+    padding: 20px 0;
+  }
+
+  /* ── 顶栏（与参考 header 一致） ── */
+  .hud-header {
+    background: linear-gradient(90deg, #0d1422, #070c14);
+    border-bottom: 1px solid #1e3256;
+  }
+
+  /* ── 导航标签（与参考 .vtab 一致） ── */
   .hud-nav-link {
-    @apply text-text-muted border border-transparent;
-    background: transparent;
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    padding: 10px 24px;
+    cursor: pointer;
+    color: #3d6080;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+    user-select: none;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
-
-  .hud-nav-link:hover {
-    @apply text-text-primary;
-    background: rgba(255, 255, 255, 0.03);
-  }
-
+  .hud-nav-link:hover { color: #8ba9cc; }
   .hud-nav-link.active {
     color: #00d4ff;
-    border-color: rgba(0, 212, 255, 0.4);
-    background: rgba(0, 212, 255, 0.08);
-    box-shadow: 0 0 10px rgba(0, 212, 255, 0.15);
+    border-bottom-color: #00d4ff;
   }
 
+  /* ── 标签芯片（与参考 .tag 一致） ── */
   .hud-chip {
-    @apply font-mono text-[10px] px-2.5 py-1 border rounded-sm;
-    border-color: #1e3256;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 10px;
+    padding: 3px 10px;
+    border: 1px solid #1e3256;
+    border-radius: 2px;
     color: #8ba9cc;
-    letter-spacing: 0.08em;
-    line-height: 1;
+    letter-spacing: 1px;
   }
-
   .hud-chip.live {
-    border-color: rgba(0, 212, 255, 0.65);
+    border-color: #00d4ff;
     color: #00d4ff;
-    box-shadow: 0 0 8px rgba(0, 212, 255, 0.2);
-  }
-
-  /* ── 按钮样式 ── */
-  .btn-cyber {
-    @apply font-body font-semibold tracking-widest uppercase text-xs px-4 py-2 border transition-all duration-200 cursor-pointer;
-    @apply border-border-cyber text-text-secondary bg-cyber-panel;
-    clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
-  }
-  .btn-cyber:hover, .btn-cyber.active {
-    @apply border-neon-cyan text-neon-cyan bg-neon-cyan-dim;
-    box-shadow: 0 0 10px rgba(0,243,255,0.2);
-  }
-
-  /* ── 数字闪烁动画 ── */
-  .digit-roll {
-    animation: digit-roll 0.4s ease-out;
-  }
-  @keyframes digit-roll {
-    0% { opacity: 0; transform: translateY(-8px); }
-    100% { opacity: 1; transform: translateY(0); }
-  }
-
-  /* ── 进度条发光 ── */
-  .progress-glow {
-    box-shadow: 0 0 6px currentColor, 0 0 12px currentColor;
   }
 
   /* ── 策略切换按钮 ── */
-  .strategy-tab {
-    @apply px-4 py-2 text-xs font-body font-semibold tracking-wider border-b-2 border-transparent cursor-pointer transition-all duration-200 text-text-muted whitespace-nowrap;
+  .strategy-btn {
+    font-family: 'Rajdhani', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    padding: 5px 16px;
+    cursor: pointer;
+    border: 1px solid #1e3256;
+    border-radius: 2px;
+    background: #111b2e;
+    color: #8ba9cc;
+    transition: all 0.2s;
   }
-  .strategy-tab:hover { @apply text-text-secondary; }
-  .strategy-tab.active { @apply text-neon-cyan border-neon-cyan; }
+  .strategy-btn:hover,
+  .strategy-btn.active {
+    border-color: #00d4ff;
+    color: #00d4ff;
+    background: rgba(0,212,255,0.06);
+  }
+
+  /* ── 状态标记 ── */
+  .logo-pulse {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #00d4ff;
+    box-shadow: 0 0 6px #00d4ff, 0 0 14px #00d4ff;
+    animation: logo-pulse 2s ease-in-out infinite;
+    flex-shrink: 0;
+  }
 }

@@ -1,121 +1,158 @@
-import { useRef, useMemo } from 'react'
+import { useRef, useMemo, useCallback } from 'react'
 import { useStrategy } from '@/context/StrategyContext'
 import { useEChart } from './useEChart'
-import { getHours } from '@/data/realData'
+import { getHours, STRATEGY_META } from '@/data/realData'
 import type { StrategyKey } from '@/types'
 
-const POWER_COLORS = {
-  P_CA:  '#00F3FF',
-  P_PV:  '#C6F135',
-  P_GM:  '#FFD740',
-  P_PEM: '#FF7043',
-  P_G:   '#CE93D8',
-} as const
-
-const POWER_NAMES = {
-  P_CA:  '氯碱负荷',
-  P_PV:  '光伏出力',
-  P_GM:  '燃气轮机',
-  P_PEM: 'PEM电解槽',
-  P_G:   '电网购电',
-} as const
-
-type PowerMetric = keyof typeof POWER_NAMES
-const POWER_METRICS: PowerMetric[] = ['P_CA', 'P_PV', 'P_GM', 'P_PEM', 'P_G']
-
-interface PowerBalanceChartProps {
-  strategies?: StrategyKey[]
-  playbackHour?: number
+/** 与 power_dashboard.html SERIES 定义完全一致的策略颜色 */
+const STRATEGY_COLORS: Record<StrategyKey, string> = {
+  uci: '#4e9eff',
+  cicos: '#ff7043',
+  cicar: '#29d4ff',
+  cicom: '#ce93d8',
+  pv: '#c6f135',
+  es: '#ffd740',
 }
 
-export default function PowerBalanceChart({ strategies, playbackHour }: PowerBalanceChartProps) {
+function hexToRgba(hex: string, alpha: number): string {
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  return `rgba(${r},${g},${b},${alpha})`
+}
+
+const STRATEGY_ORDER: StrategyKey[] = ['uci', 'cicos', 'cicar', 'cicom', 'pv', 'es']
+
+interface PowerBalanceChartProps {
+  /** 当 tooltip 指向某小时时回调 */
+  onHourHover?: (hourIdx: number, values: { key: StrategyKey; val: number }[]) => void
+}
+
+export default function PowerBalanceChart({ onHourHover }: PowerBalanceChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const { activeStrategy, dataset } = useStrategy()
-  const keys = strategies ?? [activeStrategy]
+  const { dataset } = useStrategy()
   const hours = getHours()
 
+  const onHourHoverRef = useRef(onHourHover)
+  onHourHoverRef.current = onHourHover
+
   const option = useMemo(() => {
-    const series = POWER_METRICS.flatMap((metric) =>
-      keys.map(sk => {
-        const data = dataset[metric][sk]
-        const isUciBaseline = metric === 'P_CA' && sk === 'uci'
-        return {
-          name: keys.length > 1 ? `${POWER_NAMES[metric]}(${sk.toUpperCase()})` : POWER_NAMES[metric],
-          type: 'line',
-          smooth: true,
-          data: data ?? [],
-          lineStyle: { color: POWER_COLORS[metric], width: isUciBaseline ? 1.5 : 2, type: isUciBaseline ? 'dashed' : 'solid' },
-          itemStyle: { color: POWER_COLORS[metric] },
-          symbol: 'none',
-          emphasis: { lineStyle: { width: 3 } },
-        }
-      })
-    )
+    const series = STRATEGY_ORDER.map((sk) => {
+      const data = dataset.P_CA[sk]
+      const color = STRATEGY_COLORS[sk]
+      const isUci = sk === 'uci'
+      return {
+        name: `P_CA_${sk}`,
+        type: 'line' as const,
+        data,
+        smooth: 0.3,
+        symbol: isUci ? 'circle' : 'none',
+        symbolSize: isUci ? 5 : 0,
+        lineStyle: {
+          color,
+          width: isUci ? 1.5 : 2,
+          type: isUci ? ('dashed' as const) : ('solid' as const),
+        },
+        itemStyle: { color },
+        areaStyle: isUci
+          ? undefined
+          : {
+              color: {
+                type: 'linear' as const,
+                x: 0, y: 0, x2: 0, y2: 1,
+                colorStops: [
+                  { offset: 0, color: hexToRgba(color, 0.18) },
+                  { offset: 1, color: hexToRgba(color, 0) },
+                ],
+              },
+            },
+        emphasis: {
+          focus: 'series' as const,
+          lineStyle: { width: 3 },
+          disabled: false,
+          blurScope: 'coordinateSystem' as const,
+        },
+      }
+    })
 
     return {
-      grid: { top: 30, right: 16, bottom: 40, left: 58 },
+      backgroundColor: 'transparent',
+      grid: { top: 20, bottom: 80, left: 68, right: 20 },
       tooltip: {
-        trigger: 'axis',
-        backgroundColor: '#0A1628',
-        borderColor: '#00F3FF33',
-        textStyle: { color: '#8BA9CC', fontSize: 11 },
-        formatter: (params: unknown[]) => {
-          const p = params as Array<{ seriesName: string; value: number; color: string; axisValue: number | string }>
-          return `<b>第${p[0].axisValue}小时</b><br/>` +
-            p.map(x => `<span style="color:${x.color}">●</span> ${x.seriesName}: ${x.value?.toFixed(0)} kW`).join('<br/>')
+        trigger: 'axis' as const,
+        axisPointer: { type: 'cross' as const, crossStyle: { color: 'rgba(0,212,255,0.4)' } },
+        backgroundColor: 'rgba(7,12,20,0.95)',
+        borderColor: '#1e3256',
+        textStyle: { color: '#e8f4ff', fontSize: 11, fontFamily: "'Share Tech Mono', monospace" },
+        formatter: (params: unknown) => {
+          const arr = params as Array<{ seriesName: string; value: number; color: string; axisValue: string }>
+          const hourIdx = parseInt(arr[0].axisValue) - 1
+          const vals = arr.map(p => ({
+            key: p.seriesName.replace('P_CA_', '') as StrategyKey,
+            val: p.value,
+          }))
+          // callback to update side panels
+          if (onHourHoverRef.current) onHourHoverRef.current(hourIdx, vals)
+
+          const ref = 9020.51
+          let s = `<div style="font-family:'Rajdhani',sans-serif;font-size:13px;color:#00d4ff;margin-bottom:6px;letter-spacing:1px">第 ${arr[0].axisValue} 小时</div>`
+          arr.forEach(p => {
+            const delta = p.value - ref
+            const sign = delta >= 0 ? '+' : ''
+            s += `<div style="display:flex;align-items:center;gap:8px;padding:2px 0">
+              <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${p.color};flex-shrink:0"></span>
+              <span style="flex:1;color:#8ba9cc">${p.seriesName}</span>
+              <span style="font-weight:700">${p.value.toFixed(1)}</span>
+              <span style="color:${delta >= 0 ? '#ff7043' : '#69f0ae'};font-size:10px">${sign}${delta.toFixed(0)}</span>
+            </div>`
+          })
+          return s
         },
       },
-      legend: {
-        top: 4, textStyle: { color: '#8BA9CC', fontSize: 10 },
-        icon: 'roundRect', itemWidth: 12, itemHeight: 4,
+      legend: { show: false },
+      toolbox: {
+        feature: { brush: { type: ['rect', 'clear'] } },
+        iconStyle: { borderColor: '#3d6080' },
+        emphasis: { iconStyle: { borderColor: '#00d4ff' } },
+        top: 5,
+        right: 20,
       },
-      axisPointer: {
-        link: [{ xAxisIndex: 'all' }],
+      brush: {
+        toolbox: ['rect', 'clear'],
+        brushStyle: {
+          borderWidth: 1,
+          borderColor: 'rgba(0,212,255,0.6)',
+          color: 'rgba(0,212,255,0.05)',
+        },
+        outOfBrush: { colorAlpha: 0.15 },
       },
       xAxis: {
-        type: 'category', data: hours,
-        axisLine: { lineStyle: { color: '#1A3350' } },
-        axisLabel: { color: '#5A7A9A', fontSize: 10, formatter: (v: string) => `${v}h` },
+        type: 'category' as const,
+        data: hours.map(h => `${h}h`),
+        axisLine: { lineStyle: { color: '#1e3256' } },
+        axisLabel: { color: '#3d6080', fontFamily: "'Share Tech Mono', monospace", fontSize: 10 },
+        axisTick: { lineStyle: { color: '#1e3256' } },
+        splitLine: { show: true, lineStyle: { color: '#111b2e', type: 'dashed' as const } },
       },
       yAxis: {
-        type: 'value', name: 'kW', nameTextStyle: { color: '#5A7A9A', fontSize: 10 },
-        splitLine: { lineStyle: { color: '#1A3350', type: 'dashed' } },
-        axisLabel: { color: '#5A7A9A', fontSize: 10 },
+        type: 'value' as const,
+        min: 7000,
+        max: 11200,
+        axisLine: { lineStyle: { color: '#1e3256' } },
+        axisLabel: {
+          color: '#3d6080',
+          fontFamily: "'Share Tech Mono', monospace",
+          fontSize: 10,
+          formatter: (v: number) => `${(v / 1000).toFixed(1)}k`,
+        },
+        splitLine: { lineStyle: { color: '#111b2e', type: 'dashed' as const } },
+        axisTick: { show: false },
       },
-      series: [
-        ...series,
-        ...(playbackHour
-          ? [{
-              name: '播放游标',
-              type: 'line',
-              data: [],
-              markLine: {
-                silent: true,
-                symbol: ['none', 'none'],
-                label: {
-                  show: true,
-                  formatter: `H${playbackHour}`,
-                  color: '#00F3FF',
-                  fontSize: 10,
-                  backgroundColor: '#0A1628',
-                  borderColor: '#00F3FF66',
-                  borderWidth: 1,
-                  padding: [2, 6],
-                },
-                lineStyle: {
-                  color: '#00F3FFAA',
-                  width: 1,
-                  type: 'dashed',
-                },
-                data: [{ xAxis: playbackHour }],
-              },
-            }]
-          : []),
-      ],
+      series,
     }
-  }, [keys, dataset, activeStrategy, hours, playbackHour])
+  }, [dataset, hours])
 
-  useEChart(containerRef, option, [keys.join(','), activeStrategy, playbackHour])
+  useEChart(containerRef, option, ['all-strategies'])
 
   return <div ref={containerRef} className="w-full h-full" />
 }
