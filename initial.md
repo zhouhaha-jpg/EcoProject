@@ -1,4 +1,4 @@
-﻿# EcoProject — 记忆注入文档（现状版）
+# EcoProject — 记忆注入文档（现状版）
 
 > **新 Agent 必须在开始开发前完整阅读此文档。**  
 > 本文档记录了项目完整架构、所有历史决策、已完成工作和当前状态，确保开发连续性。  
@@ -45,7 +45,7 @@ EcoProject/
 ├── vite.config.ts              ← @/ 别名指向 ./src
 ├── tsconfig.json
 ├── initial.md                  ← 本文档
-└── src/
+├── src/
     ├── main.tsx                ← React 入口，挂载 StrategyProvider + BrowserRouter
     ├── App.tsx                 ← Routes 定义（5个路由）
     ├── index.css               ← 全局样式（@layer base/components）
@@ -71,12 +71,25 @@ EcoProject/
         │   ├── WaterfallChart.tsx      ← 瀑布/柱状对比图（metric: 'combined'|'cost'|'carbon'）
         │   ├── HydrogenChart.tsx       ← 制氢量堆叠图
         │   └── StrategyRadarChart.tsx  ← 策略雷达图
-        └── ui/
+        ├── ui/
             ├── PanelBox.tsx            ← 通用面板容器
             ├── StrategySwitcher.tsx    ← 顶部导航栏右侧策略按钮组
             ├── DigitalNumber.tsx       ← KPI 数字展示
             ├── StatusBadge.tsx         ← 状态标签（success/warning/info/idle）
             └── SystemLog.tsx           ← 系统日志列表
+        └── agent/
+            ├── AgentSidebar.tsx        ← Agent 侧边栏（可折叠、可拖拽宽度）
+            ├── AgentChat.tsx           ← 消息列表 + 输入框
+            └── AgentModeSwitch.tsx     ← Ask / Agent 模式切换
+    ├── hooks/
+    │   ├── useAgentContext.ts         ← 构建注入 LLM 的上下文
+    │   └── useAgentChat.ts             ← 发送消息、流式接收、解析 tool_calls
+    └── lib/
+        └── agentActions.ts             ← Agent 模式动作（navigate/switchStrategy）
+└── server/                             ← Agent 后端（Express + OpenAI SDK）
+    ├── index.js
+    ├── package.json
+    └── .env.example
 ```
 
 ---
@@ -331,6 +344,7 @@ interface PanelBoxProps {
 | Brush 区间统计结果表格 | ⏳ 未实现 | 仅有 hint 文字占位 |
 | 3D 瀑布图（参考 HTML 第2个 tab） | ⏳ 未实现 | Three.js，参考 HTML §3 节 |
 | 竞速排行动画（参考 HTML 第3个 tab） | ⏳ 未实现 | 参考 HTML §4 节 |
+| AI Agent 侧边栏 | ✅ 完成 | Ask 模式问答 + Agent 模式执行 navigate/switchStrategy |
 
 ---
 
@@ -343,11 +357,19 @@ cd "e:\科研绘图\EcoProject"
 # 2. 开发模式（必须显式指定 3006）
 npm run dev -- --port 3006
 
-# 3. 构建验证
+# 3. Agent 后端（另开终端，需配置 API Key）
+cd server
+cp .env.example .env   # 编辑 .env 填入 OPENAI_API_KEY 或 DASHSCOPE_API_KEY
+npm install
+npm run dev
+
+# 4. 构建验证
 npm run build
 ```
 
 访问：`http://localhost:3006`
+
+**Agent 说明**：侧边栏支持 Ask 模式（基于当前数据问答）和 Agent 模式（执行页面跳转、策略切换）。Vite 已配置 `/api` 代理到 `localhost:3007`，开发时需同时启动后端。
 
 ---
 

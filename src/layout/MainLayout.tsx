@@ -1,5 +1,6 @@
 import { Link, useLocation, Outlet } from 'react-router-dom'
 import StrategySwitcher from '@/components/ui/StrategySwitcher'
+import AgentSidebar from '@/components/agent/AgentSidebar'
 import { LayoutDashboard, Zap, Factory, Wrench, ShieldCheck } from 'lucide-react'
 
 const NAV = [
@@ -49,10 +50,15 @@ export default function MainLayout() {
         </div>
       </div>
 
-      {/* ── 主体 ── */}
-      <main className="relative z-[1] flex-1 min-h-0 overflow-hidden p-5">
-        <Outlet />
-      </main>
+      {/* ── 主体 + Agent 侧边栏 ── */}
+      <div className="relative z-[1] flex-1 min-h-0 flex overflow-hidden">
+        <main className="flex-1 min-h-0 overflow-hidden p-5">
+          <Outlet />
+        </main>
+        <div className="relative shrink-0 h-full">
+          <AgentSidebar />
+        </div>
+      </div>
     </div>
   )
 }
