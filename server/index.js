@@ -102,6 +102,7 @@ app.post('/api/chat', async (req, res) => {
         messages: apiMessages,
         tools: TOOLS,
         tool_choice: 'auto',
+        max_tokens: 4096,
       })
       const msg = completion.choices[0]?.message
       return res.json({
@@ -114,6 +115,7 @@ app.post('/api/chat', async (req, res) => {
       model,
       messages: apiMessages,
       stream: true,
+      max_tokens: 4096,
     })
 
     res.setHeader('Content-Type', 'text/event-stream')
@@ -130,9 +132,15 @@ app.post('/api/chat', async (req, res) => {
     res.write('data: [DONE]\n\n')
     res.end()
   } catch (err) {
-    console.error(err)
-    const msg = err?.message || String(err)
-    res.status(500).json({ error: msg })
+    console.error('[Agent API Error]', err)
+    const status = err?.status ?? 500
+    const msg = err?.error?.message ?? err?.message ?? String(err)
+    if (!res.headersSent) {
+      res.status(status).json({ error: msg })
+    } else {
+      res.write(`data: ${JSON.stringify({ error: msg })}\n\n`)
+      res.end()
+    }
   }
 })
 

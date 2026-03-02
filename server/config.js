@@ -4,8 +4,8 @@
  */
 
 export default {
-  /** API 地址（智谱清言兼容 OpenAI 格式） */
-  apiBaseUrl: 'https://open.bigmodel.cn/api/paas/v4/',
+  /** API 地址（智谱文档：https://open.bigmodel.cn/api/paas/v4/chat/completions） */
+  apiBaseUrl: 'https://open.bigmodel.cn/api/paas/v4',
 
   /** 使用的模型，如 glm-4、glm-4-plus、glm-4-flash、glm-4.7 等 */
   model: 'glm-4.7',
