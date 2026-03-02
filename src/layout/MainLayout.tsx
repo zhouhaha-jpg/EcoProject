@@ -1,14 +1,15 @@
 import { Link, useLocation, Outlet } from 'react-router-dom'
 import StrategySwitcher from '@/components/ui/StrategySwitcher'
 import AgentSidebar from '@/components/agent/AgentSidebar'
-import { Zap, Sun, Flame, Battery, Plug } from 'lucide-react'
+import { LayoutDashboard, Zap, Sun, Flame, Battery, Plug } from 'lucide-react'
 
 const NAV = [
-  { to: '/ca',  label: '电解槽',           icon: Battery },
-  { to: '/pv',  label: '光伏',             icon: Sun },
-  { to: '/gm',  label: '燃气轮机',         icon: Flame },
-  { to: '/pem', label: '质子膜燃料电池',   icon: Zap },
-  { to: '/g',   label: '电网',             icon: Plug },
+  { to: '/overview', label: '总览',             icon: LayoutDashboard },
+  { to: '/ca',       label: '电解槽',           icon: Battery },
+  { to: '/pv',       label: '光伏',             icon: Sun },
+  { to: '/gm',       label: '燃气轮机',         icon: Flame },
+  { to: '/pem',      label: '质子膜燃料电池',   icon: Zap },
+  { to: '/g',        label: '电网',             icon: Plug },
 ]
 
 export default function MainLayout() {

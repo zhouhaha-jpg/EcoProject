@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import MainLayout from './layout/MainLayout'
+import OverviewPage from './pages/OverviewPage'
 import PrefixPage from './pages/PrefixPage'
 
 export default function App() {
@@ -7,7 +8,8 @@ export default function App() {
     <div className="h-full w-full">
       <Routes>
         <Route path="/" element={<MainLayout />}>
-          <Route index element={<Navigate to="/ca" replace />} />
+          <Route index element={<Navigate to="/overview" replace />} />
+          <Route path="overview" element={<OverviewPage />} />
           <Route path="ca" element={<PrefixPage prefix="ca" />} />
           <Route path="pv" element={<PrefixPage prefix="pv" />} />
           <Route path="gm" element={<PrefixPage prefix="gm" />} />

@@ -14,9 +14,9 @@ export interface AgentActionHandlers {
 
 /** 路由路径映射（中文/英文 -> path） */
 const PATH_MAP: Record<string, string> = {
-  '/': '/ca',
-  '总览': '/ca',
-  'overview': '/ca',
+  '/': '/overview',
+  '总览': '/overview',
+  'overview': '/overview',
   '/ca': '/ca',
   '电解槽': '/ca',
   'ca': '/ca',

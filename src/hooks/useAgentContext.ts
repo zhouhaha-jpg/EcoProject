@@ -25,7 +25,8 @@ export interface AgentContextData {
 }
 
 const PAGE_LABELS: Record<string, string> = {
-  '/': '电解槽',
+  '/': '总览',
+  '/overview': '总览',
   '/ca': '电解槽',
   '/pv': '光伏',
   '/gm': '燃气轮机',

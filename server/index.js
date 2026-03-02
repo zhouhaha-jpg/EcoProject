@@ -64,10 +64,10 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'navigate',
-      description: '切换到指定页面。path: 路径，如 "/ca"（电解槽）、"/pv"（光伏）、"/gm"（燃气轮机）、"/pem"（质子膜燃料电池）、"/g"（电网）',
+      description: '切换到指定页面。path: 路径，如 "/overview"（总览）、"/ca"（电解槽）、"/pv"（光伏）、"/gm"（燃气轮机）、"/pem"（质子膜燃料电池）、"/g"（电网）',
       parameters: {
         type: 'object',
-        properties: { path: { type: 'string', enum: ['/ca', '/pv', '/gm', '/pem', '/g'] } },
+        properties: { path: { type: 'string', enum: ['/overview', '/ca', '/pv', '/gm', '/pem', '/g'] } },
         required: ['path'],
       },
     },
