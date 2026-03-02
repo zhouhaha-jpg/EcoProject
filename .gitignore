@@ -3,3 +3,6 @@ dist
 .env.local
 .env
 *.log
+server/db/eco.db
+server/db/eco.db-shm
+server/db/eco.db-wal

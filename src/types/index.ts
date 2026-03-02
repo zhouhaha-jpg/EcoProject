@@ -87,7 +87,24 @@ export interface HSEData {
 export interface StrategyContextValue {
   activeStrategy: StrategyKey
   setActiveStrategy: (key: StrategyKey) => void
+  /** 图表曲线高亮筛选：选中的策略曲线高亮，未选中的暗淡。空集合表示全部高亮 */
+  selectedStrategies: Set<StrategyKey>
+  toggleStrategy: (key: StrategyKey) => void
   dataset: EcoDataset
   strategyMeta: Record<StrategyKey, StrategyMeta>
   currentTime: Date
+  datasetLoading?: boolean
+  datasetError?: string | null
+}
+
+/** 前缀与页面映射：ca=电解槽, pv=光伏, gm=燃气轮机, pem=质子膜燃料电池, g=电网 */
+export type PrefixKey = 'ca' | 'pv' | 'gm' | 'pem' | 'g'
+
+/** 前缀对应的功率指标 */
+export const PREFIX_TO_METRIC: Record<PrefixKey, 'P_CA' | 'P_PV' | 'P_GM' | 'P_PEM' | 'P_G'> = {
+  ca: 'P_CA',
+  pv: 'P_PV',
+  gm: 'P_GM',
+  pem: 'P_PEM',
+  g: 'P_G',
 }

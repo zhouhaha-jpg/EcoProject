@@ -1,21 +1,18 @@
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router-dom'
 import MainLayout from './layout/MainLayout'
-import Overview from './pages/Overview'
-import Energy from './pages/Energy'
-import Production from './pages/Production'
-import Equipment from './pages/Equipment'
-import HSE from './pages/HSE'
+import PrefixPage from './pages/PrefixPage'
 
 export default function App() {
   return (
     <div className="h-full w-full">
       <Routes>
         <Route path="/" element={<MainLayout />}>
-          <Route index element={<Overview />} />
-          <Route path="energy" element={<Energy />} />
-          <Route path="production" element={<Production />} />
-          <Route path="equipment" element={<Equipment />} />
-          <Route path="hse" element={<HSE />} />
+          <Route index element={<Navigate to="/ca" replace />} />
+          <Route path="ca" element={<PrefixPage prefix="ca" />} />
+          <Route path="pv" element={<PrefixPage prefix="pv" />} />
+          <Route path="gm" element={<PrefixPage prefix="gm" />} />
+          <Route path="pem" element={<PrefixPage prefix="pem" />} />
+          <Route path="g" element={<PrefixPage prefix="g" />} />
         </Route>
       </Routes>
     </div>
