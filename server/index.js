@@ -1,6 +1,9 @@
 /**
- * Agent 后端 API
- * POST /api/chat - 接收 messages + mode + context，转发 LLM，流式或 JSON 返回
+ * EcoProject 后端 API
+ * - POST /api/chat - Agent 对话
+ * - GET /api/datasets - 数据集列表
+ * - GET /api/datasets/default - 默认数据集
+ * - GET /api/datasets/:id - 指定数据集
  */
 
 import 'dotenv/config'
@@ -8,10 +11,16 @@ import express from 'express'
 import cors from 'cors'
 import OpenAI from 'openai'
 import config from './config.js'
+import { initDb } from './db/index.js'
+import datasetsRouter from './routes/datasets.js'
+
+initDb()
 
 const app = express()
 app.use(cors())
 app.use(express.json())
+
+app.use('/api/datasets', datasetsRouter)
 
 const apiKey = config.apiKey
 const baseURL = process.env.API_BASE_URL || config.apiBaseUrl
@@ -55,10 +64,10 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'navigate',
-      description: '切换到指定页面。path: 路径，如 "/"（总览）、"/energy"（能源）、"/production"（生产）、"/equipment"（装备）、"/hse"（HSE）',
+      description: '切换到指定页面。path: 路径，如 "/overview"（总览）、"/ca"（电解槽）、"/pv"（光伏）、"/gm"（燃气轮机）、"/pem"（质子膜燃料电池）、"/g"（电网）',
       parameters: {
         type: 'object',
-        properties: { path: { type: 'string', enum: ['/', '/energy', '/production', '/equipment', '/hse'] } },
+        properties: { path: { type: 'string', enum: ['/overview', '/ca', '/pv', '/gm', '/pem', '/g'] } },
         required: ['path'],
       },
     },

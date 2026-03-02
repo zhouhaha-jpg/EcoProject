@@ -26,10 +26,12 @@ export interface AgentContextData {
 
 const PAGE_LABELS: Record<string, string> = {
   '/': '总览',
-  '/energy': '能源',
-  '/production': '生产',
-  '/equipment': '装备',
-  '/hse': 'HSE',
+  '/overview': '总览',
+  '/ca': '电解槽',
+  '/pv': '光伏',
+  '/gm': '燃气轮机',
+  '/pem': '质子膜燃料电池',
+  '/g': '电网',
 }
 
 function computeStats(arr: number[]) {
