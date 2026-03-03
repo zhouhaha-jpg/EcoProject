@@ -1,9 +1,11 @@
 /**
- * 总览页：同时展示 5 个前缀的功率时序图
- * 布局：上排 3 图（电解槽/光伏/燃气轮机），下排 2 图（质子膜燃料电池/电网）
+ * 总览页：同时展示 5 个前缀的功率时序图 + 经济指标小图
+ * 布局：上排 3 图（电解槽/光伏/燃气轮机），中排 2 图（质子膜燃料电池/电网），下排经济指标
  */
+import { Link } from 'react-router-dom'
 import { useStrategy } from '@/context/StrategyContext'
 import PrefixPowerChart from '@/components/charts/PrefixPowerChart'
+import EconomicIndicatorChart from '@/components/charts/EconomicIndicatorChart'
 import type { PrefixKey } from '@/types'
 
 const PREFIX_ORDER: PrefixKey[] = ['ca', 'pv', 'gm', 'pem', 'g']
@@ -33,7 +35,7 @@ export default function OverviewPage() {
       style={{
         display: 'grid',
         gridTemplateColumns: 'repeat(6, 1fr)',
-        gridTemplateRows: '1fr 1fr',
+        gridTemplateRows: '1fr 1fr 0.55fr',
         gap: 12,
         minHeight: 0,
       }}
@@ -62,6 +64,25 @@ export default function OverviewPage() {
           </div>
         </div>
       )})}
+      {/* 经济指标小图 */}
+      <div
+        className="panel min-h-0 flex flex-col"
+        style={{ gridColumn: '1 / 7' }}
+      >
+        <div className="panel-title-bar flex items-center justify-between">
+          <span>经济指标（综合）</span>
+          <Link
+            to="/economic"
+            className="text-xs hover:text-[#00d4ff] transition-colors"
+            style={{ color: '#3d6080' }}
+          >
+            查看详情 →
+          </Link>
+        </div>
+        <div style={{ flex: 1, minHeight: 0 }}>
+          <EconomicIndicatorChart compact metric="combined" />
+        </div>
+      </div>
     </div>
   )
 }

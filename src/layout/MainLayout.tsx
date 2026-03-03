@@ -1,10 +1,11 @@
 import { Link, useLocation, Outlet } from 'react-router-dom'
 import StrategySwitcher from '@/components/ui/StrategySwitcher'
 import AgentSidebar from '@/components/agent/AgentSidebar'
-import { LayoutDashboard, Zap, Sun, Flame, Battery, Plug } from 'lucide-react'
+import { LayoutDashboard, Zap, Sun, Flame, Battery, Plug, TrendingUp } from 'lucide-react'
 
 const NAV = [
   { to: '/overview', label: '总览',             icon: LayoutDashboard },
+  { to: '/economic', label: '经济指标',         icon: TrendingUp },
   { to: '/ca',       label: '电解槽',           icon: Battery },
   { to: '/pv',       label: '光伏',             icon: Sun },
   { to: '/gm',       label: '燃气轮机',         icon: Flame },

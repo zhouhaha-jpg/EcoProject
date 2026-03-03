@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import MainLayout from './layout/MainLayout'
 import OverviewPage from './pages/OverviewPage'
 import PrefixPage from './pages/PrefixPage'
+import EconomicIndicatorsPage from './pages/EconomicIndicatorsPage'
 
 export default function App() {
   return (
@@ -10,6 +11,7 @@ export default function App() {
         <Route path="/" element={<MainLayout />}>
           <Route index element={<Navigate to="/overview" replace />} />
           <Route path="overview" element={<OverviewPage />} />
+          <Route path="economic" element={<EconomicIndicatorsPage />} />
           <Route path="ca" element={<PrefixPage prefix="ca" />} />
           <Route path="pv" element={<PrefixPage prefix="pv" />} />
           <Route path="gm" element={<PrefixPage prefix="gm" />} />
