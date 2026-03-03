@@ -14,20 +14,24 @@ export interface AgentActionHandlers {
 
 /** 路由路径映射（中文/英文 -> path） */
 const PATH_MAP: Record<string, string> = {
-  '/': '/',
-  '总览': '/',
-  'overview': '/',
-  '/energy': '/energy',
-  '能源': '/energy',
-  'energy': '/energy',
-  '/production': '/production',
-  '生产': '/production',
-  'production': '/production',
-  '/equipment': '/equipment',
-  '装备': '/equipment',
-  'equipment': '/equipment',
-  '/hse': '/hse',
-  'hse': '/hse',
+  '/': '/overview',
+  '总览': '/overview',
+  'overview': '/overview',
+  '/ca': '/ca',
+  '电解槽': '/ca',
+  'ca': '/ca',
+  '/pv': '/pv',
+  '光伏': '/pv',
+  'pv': '/pv',
+  '/gm': '/gm',
+  '燃气轮机': '/gm',
+  'gm': '/gm',
+  '/pem': '/pem',
+  '质子膜燃料电池': '/pem',
+  'pem': '/pem',
+  '/g': '/g',
+  '电网': '/g',
+  'g': '/g',
 }
 
 /** 策略映射（中文/英文 -> StrategyKey） */
