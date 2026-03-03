@@ -3,6 +3,7 @@ import MainLayout from './layout/MainLayout'
 import OverviewPage from './pages/OverviewPage'
 import PrefixPage from './pages/PrefixPage'
 import EconomicIndicatorsPage from './pages/EconomicIndicatorsPage'
+import StorageModulePage from './pages/StorageModulePage'
 
 export default function App() {
   return (
@@ -12,6 +13,7 @@ export default function App() {
           <Route index element={<Navigate to="/overview" replace />} />
           <Route path="overview" element={<OverviewPage />} />
           <Route path="economic" element={<EconomicIndicatorsPage />} />
+          <Route path="storage" element={<StorageModulePage />} />
           <Route path="ca" element={<PrefixPage prefix="ca" />} />
           <Route path="pv" element={<PrefixPage prefix="pv" />} />
           <Route path="gm" element={<PrefixPage prefix="gm" />} />

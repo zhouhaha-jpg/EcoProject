@@ -1,11 +1,12 @@
 import { Link, useLocation, Outlet } from 'react-router-dom'
 import StrategySwitcher from '@/components/ui/StrategySwitcher'
 import AgentSidebar from '@/components/agent/AgentSidebar'
-import { LayoutDashboard, Zap, Sun, Flame, Battery, Plug, TrendingUp } from 'lucide-react'
+import { LayoutDashboard, Zap, Sun, Flame, Battery, Plug, TrendingUp, Database } from 'lucide-react'
 
 const NAV = [
   { to: '/overview', label: '总览',             icon: LayoutDashboard },
   { to: '/economic', label: '经济指标',         icon: TrendingUp },
+  { to: '/storage',  label: '存储模块',         icon: Database },
   { to: '/ca',       label: '电解槽',           icon: Battery },
   { to: '/pv',       label: '光伏',             icon: Sun },
   { to: '/gm',       label: '燃气轮机',         icon: Flame },
@@ -22,7 +23,7 @@ export default function MainLayout() {
       <header className="hud-header relative z-10 shrink-0 flex items-center gap-5 px-8 py-4">
         <div className="logo-pulse" />
         <h1 style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: 20, fontWeight: 600, letterSpacing: 2, color: '#e8f4ff' }}>
-          氯碱制氢数字孪生 <span style={{ color: '#00d4ff', fontWeight: 700 }}>功率对比</span> 分析平台
+          智慧园区 <span style={{ color: '#00d4ff', fontWeight: 700 }}>节能减排</span> 调度平台
         </h1>
         <div className="ml-auto flex items-center gap-2">
           <span className="hud-chip">24 H</span>
