@@ -1,9 +1,13 @@
-import { createContext, useContext, useState, useEffect, type ReactNode } from 'react'
-import type { StrategyContextValue, StrategyKey } from '@/types'
+import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
+import type { StrategyContextValue, StrategyKey, EcoDataset } from '@/types'
 import { DATASET, STRATEGY_META } from '@/data/realData'
 import { fetchDefaultDataset } from '@/lib/api'
 
-const StrategyContext = createContext<StrategyContextValue | null>(null)
+const StrategyContext = createContext<(StrategyContextValue & {
+  loadScenarioDataset: (ds: Record<string, unknown>, label: string) => void
+  scenarioLabel: string | null
+  scenarioDataset: EcoDataset | null
+}) | null>(null)
 
 const ALL_STRATEGIES: StrategyKey[] = ['uci', 'cicos', 'cicar', 'cicom', 'pv', 'es']
 
@@ -29,6 +33,14 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
   const [dataset, setDataset] = useState(DATASET)
   const [datasetLoading, setDatasetLoading] = useState(true)
   const [datasetError, setDatasetError] = useState<string | null>(null)
+
+  const [scenarioDataset, setScenarioDataset] = useState<EcoDataset | null>(null)
+  const [scenarioLabel, setScenarioLabel] = useState<string | null>(null)
+
+  const loadScenarioDataset = useCallback((ds: Record<string, unknown>, label: string) => {
+    setScenarioDataset(ds as unknown as EcoDataset)
+    setScenarioLabel(label)
+  }, [])
 
   useEffect(() => {
     fetchDefaultDataset()
@@ -58,6 +70,9 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
       currentTime,
       datasetLoading,
       datasetError,
+      loadScenarioDataset,
+      scenarioLabel,
+      scenarioDataset,
     }}>
       {children}
     </StrategyContext.Provider>

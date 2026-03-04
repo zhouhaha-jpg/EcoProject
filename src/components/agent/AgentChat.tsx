@@ -79,13 +79,14 @@ export default function AgentChat({
                 <>
                   <li>• 哪个方案成本最低？</li>
                   <li>• PV 和 ES 的碳排差多少？</li>
-                  <li>• 为什么 PV 在中午功率最高？</li>
+                  <li>• 为什么 ES 方案第17h购电飙升？</li>
                 </>
               ) : (
                 <>
-                  <li>• 切换到能源页面</li>
-                  <li>• 显示 PV 方案</li>
-                  <li>• 在能源页显示 CICOS 方案</li>
+                  <li>• 如果光伏减少30%会怎样？</li>
+                  <li>• 限制19-21时购电不超过3000kW</li>
+                  <li>• 扫描光伏5000到30000的Pareto</li>
+                  <li>• 切换到经济指标页面</li>
                 </>
               )}
             </ul>

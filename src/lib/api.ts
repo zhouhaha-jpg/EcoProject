@@ -24,3 +24,35 @@ export async function fetchDatasetsList() {
   const json = await res.json()
   return json.data as Array<{ id: number; name: string; created_at: string }>
 }
+
+export async function runOptimizeAll(params?: Record<string, unknown>, extraConstraints?: unknown[]) {
+  const res = await fetch(`${API_BASE}/optimize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      params: params ?? {},
+      extra_constraints: extraConstraints ?? [],
+      save: true,
+    }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function runOptimizeSingle(
+  strategy: string,
+  params?: Record<string, unknown>,
+  extraConstraints?: unknown[]
+) {
+  const res = await fetch(`${API_BASE}/optimize/single`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      strategy,
+      params: params ?? {},
+      extra_constraints: extraConstraints ?? [],
+    }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}

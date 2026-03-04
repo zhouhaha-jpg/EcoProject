@@ -4,6 +4,7 @@ import OverviewPage from './pages/OverviewPage'
 import PrefixPage from './pages/PrefixPage'
 import EconomicIndicatorsPage from './pages/EconomicIndicatorsPage'
 import StorageModulePage from './pages/StorageModulePage'
+import ScenarioComparePage from './pages/ScenarioComparePage'
 
 export default function App() {
   return (
@@ -14,6 +15,7 @@ export default function App() {
           <Route path="overview" element={<OverviewPage />} />
           <Route path="economic" element={<EconomicIndicatorsPage />} />
           <Route path="storage" element={<StorageModulePage />} />
+          <Route path="scenario" element={<ScenarioComparePage />} />
           <Route path="ca" element={<PrefixPage prefix="ca" />} />
           <Route path="pv" element={<PrefixPage prefix="pv" />} />
           <Route path="gm" element={<PrefixPage prefix="gm" />} />

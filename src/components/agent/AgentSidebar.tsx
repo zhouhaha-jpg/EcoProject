@@ -17,7 +17,7 @@ const DEFAULT_WIDTH = 380
 
 export default function AgentSidebar() {
   const navigate = useNavigate()
-  const { setActiveStrategy } = useStrategy()
+  const { setActiveStrategy, loadScenarioDataset } = useStrategy()
   const ctx = useAgentContext()
   const chat = useAgentChat(ctx)
 
@@ -27,13 +27,13 @@ export default function AgentSidebar() {
   const startXRef = useRef(0)
   const startWidthRef = useRef(0)
 
-  // 注册 Agent 动作处理器
   useEffect(() => {
     registerAgentHandlers({
       navigate: (path) => navigate(path),
       switchStrategy: (key) => setActiveStrategy(key),
+      loadScenarioDataset: (ds, label) => loadScenarioDataset(ds, label),
     })
-  }, [navigate, setActiveStrategy])
+  }, [navigate, setActiveStrategy, loadScenarioDataset])
 
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault()

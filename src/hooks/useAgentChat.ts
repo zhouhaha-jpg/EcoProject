@@ -163,7 +163,7 @@ async function handleJsonResponse(
       }
     }>
   },
-  mode: AgentMode,
+  _mode: AgentMode,
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>
 ) {
   const msg = data.choices?.[0]?.message
@@ -171,6 +171,8 @@ async function handleJsonResponse(
   const toolCalls = msg?.tool_calls ?? []
 
   const actions: { type: string; params: Record<string, unknown>; result: string }[] = []
+
+  const ASYNC_TOOLS = ['run_whatif', 'add_constraint', 'pareto_scan']
 
   for (const tc of toolCalls) {
     const name = tc.function?.name ?? ''
@@ -180,7 +182,19 @@ async function handleJsonResponse(
     } catch {
       params = {}
     }
-    const result = executeAction(name as 'navigate' | 'switchStrategy', params)
+
+    if (ASYNC_TOOLS.includes(name)) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: 'assistant',
+          content: `正在执行 ${name}，优化求解中，请稍候（约10-60秒）...`,
+        },
+      ])
+    }
+
+    const result = await executeAction(name, params)
     actions.push({ type: name, params, result: result.message })
   }
 
