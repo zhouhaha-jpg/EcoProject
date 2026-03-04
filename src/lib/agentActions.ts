@@ -96,6 +96,7 @@ export async function executeAction(
         const data = await res.json()
         if (handlers && data.summary) {
           handlers.loadScenarioDataset(data, desc)
+          handlers.navigate('/scenario')
         }
         const summaryES = data.summary?.es
         const msg = summaryES
@@ -116,6 +117,7 @@ export async function executeAction(
         const data = await res.json()
         if (handlers && data.summary) {
           handlers.loadScenarioDataset(data, desc)
+          handlers.navigate('/scenario')
         }
         return { success: true, message: `${desc} 求解完成`, data }
       }

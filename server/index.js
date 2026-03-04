@@ -85,6 +85,8 @@ const AGENT_SYSTEM_PROMPT = SYSTEM_PROMPT + `
 - **trace_causality** - 因果追溯：分析某个时段某个指标异常的原因，沿能量流/氢气流追溯因果链。
 - **generate_chart** - 动态图表：根据用户描述动态生成 ECharts 配置并展示。
 
+**重要**：执行 run_whatif 或 add_constraint 后，必须紧接着调用 generate_chart 生成「基准 vs 推演」的对比柱状图（chart_type: bar, title 含场景描述, data_query 为"基准与推演的成本、碳排、综合指标对比"），以便用户在方案对比页看到表格和图表。
+
 ### Pareto 分析
 - **pareto_scan** - 参数扫描：对某个参数在指定范围内扫描，得到成本-碳排 Pareto 前沿。
 

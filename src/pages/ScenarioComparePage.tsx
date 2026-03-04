@@ -1,7 +1,8 @@
 /**
- * 方案对比页：展示 What-If 推演结果与基准方案的对比
+ * 方案对比页：展示 What-If 推演结果与基准方案的对比（表格 + 动态图表）
  */
 import { useStrategy } from '@/context/StrategyContext'
+import ScenarioCompareChart from '@/components/charts/ScenarioCompareChart'
 import type { StrategyKey } from '@/types'
 
 const STRATEGIES: StrategyKey[] = ['uci', 'cicos', 'cicar', 'cicom', 'pv', 'es']
@@ -45,7 +46,7 @@ export default function ScenarioComparePage() {
   const scenSummary = scenarioDataset.summary as Record<StrategyKey, { cost: number; carbon: number; combined: number }>
 
   return (
-    <div className="h-full min-h-0 overflow-auto" style={{ display: 'grid', gridTemplateRows: 'auto 1fr', gap: 12 }}>
+    <div className="h-full min-h-0 overflow-auto" style={{ display: 'grid', gridTemplateRows: 'auto auto 1fr', gap: 12 }}>
       <div className="panel shrink-0">
         <div className="panel-title-bar flex items-center justify-between">
           <span>方案对比 — {scenarioLabel ?? 'What-If 推演'}</span>
@@ -97,6 +98,16 @@ export default function ScenarioComparePage() {
               })}
             </tbody>
           </table>
+        </div>
+      </div>
+
+      {/* 基准 vs 推演 动态图表 */}
+      <div className="panel shrink-0" style={{ minHeight: 180 }}>
+        <div className="panel-title-bar">基准 vs 推演 对比图</div>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, padding: 16, height: 160 }}>
+          <ScenarioCompareChart baseSummary={baseSummary} scenarioSummary={scenSummary} metric="cost" />
+          <ScenarioCompareChart baseSummary={baseSummary} scenarioSummary={scenSummary} metric="carbon" />
+          <ScenarioCompareChart baseSummary={baseSummary} scenarioSummary={scenSummary} metric="combined" />
         </div>
       </div>
 
