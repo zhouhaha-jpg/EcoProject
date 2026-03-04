@@ -10,7 +10,7 @@ npm install
 npm run dev
 ```
 
-默认端口：`3007`（可通过环境变量 `PORT` 修改）
+默认端口：`5000`（可通过环境变量 `PORT` 修改）
 
 ## API
 
@@ -29,4 +29,4 @@ npm run dev
 
 ## 前端代理
 
-开发时 Vite 将 `/api` 代理到 `http://localhost:3007`，见 `vite.config.ts`。
+开发时 Vite 将 `/api` 代理到 `http://localhost:5000`，见 `vite.config.ts`。

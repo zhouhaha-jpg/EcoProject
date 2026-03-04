@@ -11,7 +11,7 @@
 **项目名称**：氯碱制氢数字孪生 · 功率对比分析平台  
 **工程目录**：`e:\科研绘图\EcoProject`  
 **参考原型**：`e:\科研绘图\power_dashboard.html`（独立 HTML，是所有 UI 风格的最终参照标准）  
-**开发服务器**：`npm run dev -- --port 3006`（vite.config 默认 3005，须显式指定 3006）  
+**开发服务器**：`npm run dev`（Vite 默认 5173，后端 5000）  
 **构建命令**：`npm run build`（`tsc && vite build`，当前可无错误完成）
 
 ### 业务背景
@@ -369,7 +369,7 @@ npm run build
 
 访问：`http://localhost:3006`
 
-**Agent 说明**：侧边栏支持 Ask 模式（基于当前数据问答）和 Agent 模式（执行页面跳转、策略切换）。Vite 已配置 `/api` 代理到 `localhost:3007`，开发时需同时启动后端。
+**Agent 说明**：侧边栏支持 Ask 模式（基于当前数据问答）和 Agent 模式（执行页面跳转、策略切换）。Vite 已配置 `/api` 代理到 `localhost:5000`，开发时需同时启动后端。
 
 ---
 

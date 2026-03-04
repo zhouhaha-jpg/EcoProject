@@ -285,7 +285,7 @@ app.post('/api/chat', async (req, res) => {
   }
 })
 
-const PORT = process.env.PORT || 3007
+const PORT = process.env.PORT || 5000
 app.listen(PORT, () => {
   console.log(`Agent API: http://localhost:${PORT}`)
   if (!apiKey) console.warn('警告: 未配置 API Key，/api/chat 将返回 503')
