@@ -4,6 +4,7 @@
  */
 
 import type { StrategyKey } from '@/types'
+import type { EcoDataset } from '@/types'
 
 export type AgentActionType =
   | 'navigate'
@@ -49,13 +50,20 @@ export function registerAgentHandlers(h: AgentActionHandlers) {
   handlers = h
 }
 
+/** 用于 trace_causality 的上下文，提取该时段设备状态 */
+export interface TraceCausalityContext {
+  fullData: EcoDataset
+}
+
 /**
  * Execute an agent action. Async tools (run_whatif, pareto_scan, etc.) call the
  * backend optimizer and may take 10-60 seconds.
+ * @param context 可选，trace_causality 时传入以提取该时段设备数据
  */
 export async function executeAction(
   type: string,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  context?: TraceCausalityContext
 ): Promise<{ success: boolean; message: string; data?: unknown }> {
   if (!handlers && ['navigate', 'switchStrategy', 'run_whatif', 'add_constraint'].includes(type)) {
     if (!handlers) return { success: false, message: 'Agent 动作处理器未初始化' }
@@ -123,12 +131,51 @@ export async function executeAction(
       }
 
       case 'trace_causality': {
-        const strategy = String(params.strategy ?? 'es')
-        const hour = Number(params.hour ?? 1)
+        const strategy = String(params.strategy ?? 'es') as StrategyKey
+        const hour = Math.max(1, Math.min(24, Number(params.hour ?? 1)))
+        const idx = hour - 1
+
+        if (!context?.fullData) {
+          return {
+            success: true,
+            message: `已获取 ${strategy} 方案第 ${hour} 时段的请求，请基于上下文中的完整数据进行因果分析。`,
+            data: { strategy, hour },
+          }
+        }
+
+        const ds = context.fullData
+        const lines: string[] = [
+          `## ${strategy.toUpperCase()} 方案 第 ${hour} 时段的设备状态`,
+          '',
+          '电力平衡 (kW):',
+          `- P_CA 电解槽: ${ds.P_CA?.[strategy]?.[idx]?.toFixed(0) ?? '-'}`,
+          `- P_PV 光伏: ${ds.P_PV?.[strategy]?.[idx]?.toFixed(0) ?? '-'}`,
+          `- P_GM 燃气轮机: ${ds.P_GM?.[strategy]?.[idx]?.toFixed(0) ?? '-'}`,
+          `- P_PEM 质子膜燃料电池: ${ds.P_PEM?.[strategy]?.[idx]?.toFixed(0) ?? '-'}`,
+          `- P_G 电网购电: ${ds.P_G?.[strategy]?.[idx]?.toFixed(0) ?? '-'}`,
+          `- P_es_es 储能(仅ES): ${ds.P_es_es?.[idx]?.toFixed(0) ?? '-'}`,
+          '',
+          '氢气平衡 (kg/s):',
+          `- H_CA 氯碱制氢: ${ds.H_CA?.[strategy]?.[idx]?.toFixed(4) ?? '-'}`,
+          `- H_PEM PEM制氢: ${ds.H_PEM?.[strategy]?.[idx]?.toFixed(4) ?? '-'}`,
+          `- H_HS 储氢罐: ${ds.H_HS?.[strategy]?.[idx]?.toFixed(3) ?? '-'}`,
+          '',
+          `电网碳排放因子 ef_g: ${ds.ef_g?.[idx]?.toFixed(6) ?? '-'} tCO2/kWh`,
+        ]
+
+        const pg = ds.P_G?.[strategy]
+        if (pg) {
+          const prev = idx > 0 ? pg[idx - 1]?.toFixed(0) : '-'
+          const curr = pg[idx]?.toFixed(0) ?? '-'
+          const next = idx < 23 ? pg[idx + 1]?.toFixed(0) : '-'
+          lines.push('', `相邻时段 P_G 对比 (${hour - 1}h,${hour}h,${hour + 1}h): ${prev}, ${curr}, ${next} kW`)
+        }
+
+        const payload = lines.join('\n')
         return {
           success: true,
-          message: `已获取 ${strategy} 方案第 ${hour} 时段的设备状态数据，请基于上下文中的完整数据进行因果分析。`,
-          data: { strategy, hour },
+          message: `已获取 ${strategy} 方案第 ${hour} 时段的设备状态数据。`,
+          data: { strategy, hour, deviceState: payload },
         }
       }
 

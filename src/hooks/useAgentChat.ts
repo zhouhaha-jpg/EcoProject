@@ -69,7 +69,12 @@ export function useAgentChat(ctx: AgentContextData) {
           await handleStreamResponse(res, setMessages)
         } else {
           const data = await res.json()
-          await handleJsonResponse(data, mode, setMessages)
+          await handleJsonResponse(data, mode, setMessages, {
+            url,
+            initialMessages: [...messages, userMsg],
+            contextText,
+            ctx,
+          })
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e)
@@ -150,6 +155,13 @@ async function handleStreamResponse(
   }
 }
 
+interface JsonResponseContext {
+  url: string
+  initialMessages: ChatMessage[]
+  contextText: string
+  ctx: AgentContextData
+}
+
 /** 处理 JSON 响应（Agent 模式，含 tool_calls） */
 async function handleJsonResponse(
   data: {
@@ -163,16 +175,19 @@ async function handleJsonResponse(
       }
     }>
   },
-  _mode: AgentMode,
-  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>
+  mode: AgentMode,
+  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>,
+  extra?: JsonResponseContext
 ) {
   const msg = data.choices?.[0]?.message
-  const content = msg?.content ?? ''
+  let content = msg?.content ?? ''
   const toolCalls = msg?.tool_calls ?? []
 
   const actions: { type: string; params: Record<string, unknown>; result: string }[] = []
+  const toolResults: { id: string; content: string }[] = []
 
   const ASYNC_TOOLS = ['run_whatif', 'add_constraint', 'pareto_scan']
+  const NEED_FOLLOWUP_TOOLS = ['trace_causality']
 
   for (const tc of toolCalls) {
     const name = tc.function?.name ?? ''
@@ -194,8 +209,57 @@ async function handleJsonResponse(
       ])
     }
 
-    const result = await executeAction(name, params)
+    const traceCtx = name === 'trace_causality' && extra?.ctx
+      ? { fullData: extra.ctx.fullData }
+      : undefined
+    const result = await executeAction(name, params, traceCtx)
     actions.push({ type: name, params, result: result.message })
+
+    const toolContent =
+      name === 'trace_causality' && result.data && typeof result.data === 'object' && 'deviceState' in result.data
+        ? String((result.data as { deviceState?: string }).deviceState ?? result.message)
+        : result.message
+    toolResults.push({ id: tc.id, content: toolContent })
+  }
+
+  const hasFollowup = toolCalls.some((tc) => NEED_FOLLOWUP_TOOLS.includes(tc.function?.name ?? ''))
+
+  if (hasFollowup && extra && toolResults.length > 0) {
+    const apiMessages = [
+      ...extra.initialMessages.map((m) => ({ role: m.role, content: m.content })),
+      {
+        role: 'assistant',
+        content: content || '',
+        tool_calls: toolCalls.map((tc) => ({
+          id: tc.id,
+          type: 'function' as const,
+          function: { name: tc.function?.name ?? '', arguments: tc.function?.arguments ?? '{}' },
+        })),
+      },
+      ...toolResults.map((tr) => ({ role: 'tool' as const, tool_call_id: tr.id, content: tr.content })),
+    ]
+
+    try {
+      const res2 = await fetch(extra.url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: apiMessages,
+          mode,
+          context: extra.contextText,
+        }),
+      })
+      if (res2.ok) {
+        const data2 = await res2.json()
+        const msg2 = data2.choices?.[0]?.message
+        const finalContent = msg2?.content ?? ''
+        if (finalContent) {
+          content = finalContent
+        }
+      }
+    } catch {
+      // 第二轮请求失败时保留已执行动作的展示
+    }
   }
 
   const actionText =

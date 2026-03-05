@@ -82,7 +82,7 @@ const AGENT_SYSTEM_PROMPT = SYSTEM_PROMPT + `
 - **add_constraint** - 约束注入：添加额外约束后重新求解。当用户说"限制某时段购电不超过X"时使用。
 
 ### 数据分析
-- **trace_causality** - 因果追溯：分析某个时段某个指标异常的原因，沿能量流/氢气流追溯因果链。
+- **trace_causality** - 因果追溯：分析某个时段某个指标异常的原因，沿能量流/氢气流追溯因果链。调用后你将收到该时段的设备状态数据（P_CA/P_PV/P_GM/P_PEM/P_G/H_CA/H_PEM/H_HS 等），必须基于这些数据用自然语言给出因果分析结论，解释为何该指标在该时段异常。
 - **generate_chart** - 动态图表：根据用户描述动态生成 ECharts 配置并展示。
 
 **重要**：执行 run_whatif 或 add_constraint 后，必须紧接着调用 generate_chart 生成「基准 vs 推演」的对比柱状图（chart_type: bar, title 含场景描述, data_query 为"基准与推演的成本、碳排、综合指标对比"），以便用户在方案对比页看到表格和图表。
@@ -233,9 +233,16 @@ app.post('/api/chat', async (req, res) => {
 
   const systemContent = (mode === 'agent' ? AGENT_SYSTEM_PROMPT : SYSTEM_PROMPT) + contextBlock
 
+  const mapMessage = (m) => {
+    const base = { role: m.role, content: m.content ?? '' }
+    if (m.tool_calls) base.tool_calls = m.tool_calls
+    if (m.tool_call_id) base.tool_call_id = m.tool_call_id
+    return base
+  }
+
   const apiMessages = [
     { role: 'system', content: systemContent },
-    ...messages.map((m) => ({ role: m.role, content: m.content })),
+    ...messages.map(mapMessage),
   ]
 
   try {
