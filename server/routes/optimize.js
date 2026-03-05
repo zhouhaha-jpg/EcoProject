@@ -16,7 +16,9 @@ const router = Router()
 
 function runPython(input) {
   return new Promise((resolve, reject) => {
-    const py = spawn('python', [PYTHON_SCRIPT], {
+    /** Linux 常用 python3，Windows 常用 python */
+    const pyCmd = process.platform === 'win32' ? 'python' : 'python3'
+    const py = spawn(pyCmd, [PYTHON_SCRIPT], {
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 300_000,
     })

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "provider": "node",
+  "packages": {
+    "node": "22",
+    "python": "3.12"
+  },
+  "steps": {
+    "build": {
+      "commands": ["...", "pip install -r python/requirements.txt"]
+    }
+  }
+}
