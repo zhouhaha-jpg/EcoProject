@@ -25,7 +25,7 @@ const DEFAULT_WIDTH = 380
 
 export default function AgentSidebar() {
   const navigate = useNavigate()
-  const { setActiveStrategy, loadScenarioDataset } = useStrategy()
+  const { setActiveStrategy, loadScenarioDataset, loadParetoData } = useStrategy()
   const ctx = useAgentContext()
 
   const [conversationList, setConversationList] = useState<ConversationItem[]>([])
@@ -110,8 +110,9 @@ export default function AgentSidebar() {
       navigate: (path) => navigate(path),
       switchStrategy: (key) => setActiveStrategy(key),
       loadScenarioDataset: (ds, label) => loadScenarioDataset(ds, label),
+      loadParetoData: (data, label) => loadParetoData(data, label),
     })
-  }, [navigate, setActiveStrategy, loadScenarioDataset])
+  }, [navigate, setActiveStrategy, loadScenarioDataset, loadParetoData])
 
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault()

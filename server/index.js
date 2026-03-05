@@ -90,7 +90,7 @@ const AGENT_SYSTEM_PROMPT = SYSTEM_PROMPT + `
 **重要**：执行 run_whatif 或 add_constraint 后，必须紧接着调用 generate_chart 生成「基准 vs 推演」的对比柱状图（chart_type: bar, title 含场景描述, data_query 为"基准与推演的成本、碳排、综合指标对比"），以便用户在方案对比页看到表格和图表。
 
 ### Pareto 分析
-- **pareto_scan** - 参数扫描：对某个参数在指定范围内扫描，得到成本-碳排 Pareto 前沿。
+- **pareto_scan** - 多轮参数扫描：对指定参数取 15-20 个值分别求解，得到成本-碳排 Pareto 前沿散点图。与 run_whatif 区别：run_whatif 是单情景对比 6 策略；pareto_scan 是同一策略下多参数值扫描。values 必须为 15-20 个均匀分布的值，如 n_PV 5000-30000 可取 [5000,6250,7500,...,28750,30000] 共约 18 个点。
 
 **重要**：优化求解可能需要 10-60 秒，请提前告知用户正在计算。求解完成后自动对比前后差异并给出建议。`
 
@@ -213,7 +213,7 @@ const TOOLS = [
         type: 'object',
         properties: {
           param_name: { type: 'string', description: '要扫描的参数名，如 n_PV、c_carbon、H_max' },
-          values: { type: 'array', items: { type: 'number' }, description: '要扫描的参数值列表' },
+          values: { type: 'array', items: { type: 'number' }, description: '15-20 个均匀分布的参数值，必须足够密集以填充散点图' },
           strategy: { type: 'string', enum: ['uci', 'cicos', 'cicar', 'cicom', 'pv', 'es'], description: '使用的策略' },
         },
         required: ['param_name', 'values'],

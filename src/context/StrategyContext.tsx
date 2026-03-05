@@ -3,10 +3,28 @@ import type { StrategyContextValue, StrategyKey, EcoDataset } from '@/types'
 import { DATASET, STRATEGY_META } from '@/data/realData'
 import { fetchDefaultDataset } from '@/lib/api'
 
+export interface ParetoResult {
+  paramValue: number
+  cost: number
+  carbon: number
+  combined: number
+}
+
+export interface ParetoData {
+  param_name: string
+  strategy: string
+  results: ParetoResult[]
+  optimalRange?: { min: number; max: number }
+  suggestion?: string
+}
+
 const StrategyContext = createContext<(StrategyContextValue & {
   loadScenarioDataset: (ds: Record<string, unknown>, label: string) => void
   scenarioLabel: string | null
   scenarioDataset: EcoDataset | null
+  loadParetoData: (data: ParetoData, label: string) => void
+  paretoLabel: string | null
+  paretoData: ParetoData | null
 }) | null>(null)
 
 const ALL_STRATEGIES: StrategyKey[] = ['uci', 'cicos', 'cicar', 'cicom', 'pv', 'es']
@@ -37,9 +55,40 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
   const [scenarioDataset, setScenarioDataset] = useState<EcoDataset | null>(null)
   const [scenarioLabel, setScenarioLabel] = useState<string | null>(null)
 
+  const [paretoData, setParetoData] = useState<ParetoData | null>(null)
+  const [paretoLabel, setParetoLabel] = useState<string | null>(null)
+
   const loadScenarioDataset = useCallback((ds: Record<string, unknown>, label: string) => {
     setScenarioDataset(ds as unknown as EcoDataset)
     setScenarioLabel(label)
+    setParetoData(null)
+    setParetoLabel(null)
+  }, [])
+
+  const loadParetoData = useCallback((data: ParetoData, label: string) => {
+    const results = data.results
+    if (results.length < 2) {
+      setParetoData({ ...data, optimalRange: undefined, suggestion: undefined })
+      setParetoLabel(label)
+      return
+    }
+    const sorted = [...results].sort((a, b) => a.paramValue - b.paramValue)
+    const paretoOptimal = sorted.filter((p, i) => {
+      return !sorted.some((q, j) => j !== i && q.cost <= p.cost && q.carbon <= p.carbon && (q.cost < p.cost || q.carbon < p.carbon))
+    })
+    const byCombined = [...results].sort((a, b) => a.combined - b.combined)
+    const topCombined = byCombined.slice(0, Math.max(1, Math.ceil(results.length * 0.4)))
+    const minPv = Math.min(...topCombined.map((r) => r.paramValue))
+    const maxPv = Math.max(...topCombined.map((r) => r.paramValue))
+    const optimalRange = { min: minPv, max: maxPv }
+    const suggestion =
+      minPv === maxPv
+        ? `建议 ${data.param_name}=${minPv}，综合指标最优`
+        : `建议 ${data.param_name}=${minPv}-${maxPv}，是成本-碳排的最佳平衡区间`
+    setParetoData({ ...data, optimalRange, suggestion })
+    setParetoLabel(label)
+    setScenarioDataset(null)
+    setScenarioLabel(null)
   }, [])
 
   useEffect(() => {
@@ -73,6 +122,9 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
       loadScenarioDataset,
       scenarioLabel,
       scenarioDataset,
+      loadParetoData,
+      paretoLabel,
+      paretoData,
     }}>
       {children}
     </StrategyContext.Provider>

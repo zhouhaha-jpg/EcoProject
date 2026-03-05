@@ -1,8 +1,11 @@
 /**
- * 方案对比页：展示 What-If 推演结果与基准方案的对比（表格 + 动态图表）
+ * 方案对比页：展示 What-If 推演 / Pareto 前沿
+ * - 有 scenarioDataset：基准 vs 推演 表格+图表
+ * - 有 paretoData：Pareto 前沿散点图 + 最优区间建议
  */
 import { useStrategy } from '@/context/StrategyContext'
 import ScenarioCompareChart from '@/components/charts/ScenarioCompareChart'
+import ParetoFrontierChart from '@/components/charts/ParetoFrontierChart'
 import type { StrategyKey } from '@/types'
 
 const STRATEGIES: StrategyKey[] = ['uci', 'cicos', 'cicar', 'cicom', 'pv', 'es']
@@ -18,24 +21,57 @@ function pct(a: number, b: number): string {
 }
 
 export default function ScenarioComparePage() {
-  const { dataset, scenarioDataset, scenarioLabel, datasetLoading } = useStrategy()
+  const { dataset, scenarioDataset, scenarioLabel, paretoData, paretoLabel, datasetLoading } = useStrategy()
 
   if (datasetLoading) {
     return <div className="h-full flex items-center justify-center text-text-muted">加载数据中…</div>
   }
 
-  if (!scenarioDataset) {
+  if (!scenarioDataset && !paretoData) {
     return (
       <div className="h-full flex items-center justify-center">
-        <div className="panel" style={{ padding: 32, maxWidth: 500, textAlign: 'center' }}>
+        <div className="panel" style={{ padding: 32, maxWidth: 520, textAlign: 'center' }}>
           <div className="panel-title-bar" style={{ textAlign: 'center', marginBottom: 16 }}>方案对比</div>
           <p style={{ color: '#8ba9cc', fontSize: 13, lineHeight: 1.8 }}>
-            暂无推演数据。请在右侧 Agent 面板中使用自然语言发起 What-If 推演。
+            暂无推演数据。请在右侧 Agent 面板中使用自然语言发起 What-If 推演或 Pareto 参数扫描。
           </p>
           <div style={{ marginTop: 16, color: '#3d6080', fontSize: 12 }}>
             <p>示例指令：</p>
             <p style={{ color: '#00d4ff' }}>"如果光伏组件数量增加到 20000，碳交易价格提高到 150 元/tCO2"</p>
             <p style={{ color: '#00d4ff' }}>"限制 19-21 时段电网购电不超过 3000kW"</p>
+            <p style={{ color: '#00d4ff' }}>"分析光伏组件数量从 5000 到 30000 时成本和碳排放的变化趋势"</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (paretoData) {
+    return (
+      <div className="h-full min-h-0 overflow-auto" style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto', gap: 12 }}>
+        <div className="panel shrink-0">
+          <div className="panel-title-bar flex items-center justify-between">
+            <span>Pareto 前沿 — {paretoLabel ?? '参数扫描'}</span>
+            <span style={{ color: '#3d6080', fontSize: 10, fontWeight: 400 }}>
+              成本 vs 碳排 · 最优区间
+            </span>
+          </div>
+        </div>
+        <div className="panel min-h-0" style={{ minHeight: 280 }}>
+          <ParetoFrontierChart data={paretoData} />
+        </div>
+        <div className="panel shrink-0">
+          <div className="panel-title-bar">建议</div>
+          <div style={{ padding: 16, color: '#8ba9cc', fontSize: 13, lineHeight: 1.8 }}>
+            <p style={{ color: '#69f0ae', fontWeight: 600 }}>
+              {paretoData.suggestion ?? '暂无建议'}
+            </p>
+            <p style={{ marginTop: 8, color: '#3d6080', fontSize: 12 }}>
+              绿色标注点为综合指标最优区间。Pareto 扫描对参数进行多轮取值，展示成本-碳排的权衡关系。
+            </p>
+            <p style={{ marginTop: 8, color: '#5a7a9a', fontSize: 11 }}>
+              说明：当前优化模型仅考虑运行成本（购电、碳交易等），未包含光伏装机成本。若某参数增大后成本与碳排同步下降，可能表示该参数在运行层面有正向收益；实际决策需结合装机成本等约束综合评估。
+            </p>
           </div>
         </div>
       </div>

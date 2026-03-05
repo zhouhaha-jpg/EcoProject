@@ -15,10 +15,13 @@ export type AgentActionType =
   | 'generate_chart'
   | 'pareto_scan'
 
+import type { ParetoData } from '@/context/StrategyContext'
+
 export interface AgentActionHandlers {
   navigate: (path: string) => void
   switchStrategy: (key: StrategyKey) => void
   loadScenarioDataset: (dataset: Record<string, unknown>, label: string) => void
+  loadParetoData: (data: ParetoData, label: string) => void
 }
 
 const PATH_MAP: Record<string, string> = {
@@ -65,7 +68,7 @@ export async function executeAction(
   params: Record<string, unknown>,
   context?: TraceCausalityContext
 ): Promise<{ success: boolean; message: string; data?: unknown }> {
-  if (!handlers && ['navigate', 'switchStrategy', 'run_whatif', 'add_constraint'].includes(type)) {
+  if (!handlers && ['navigate', 'switchStrategy', 'run_whatif', 'add_constraint', 'pareto_scan'].includes(type)) {
     if (!handlers) return { success: false, message: 'Agent 动作处理器未初始化' }
   }
 
@@ -204,10 +207,16 @@ export async function executeAction(
             results.push({ paramValue: val, ...r.summary })
           }
         }
+        const paretoPayload: ParetoData = { param_name: paramName, strategy, results }
+        const label = `Pareto 扫描: ${paramName} (${Math.min(...values)}-${Math.max(...values)})，策略=${strategy}`
+        if (handlers && results.length > 0) {
+          handlers.loadParetoData(paretoPayload, label)
+          handlers.navigate('/scenario')
+        }
         return {
           success: true,
           message: `Pareto 扫描完成: ${paramName} 取 ${values.length} 个值，策略=${strategy}`,
-          data: { param_name: paramName, results },
+          data: paretoPayload,
         }
       }
 
