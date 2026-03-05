@@ -30,7 +30,7 @@ function runPython(input) {
     console.log(`[runPython] PYTHONPATH: ${env.PYTHONPATH || '(未设置)'}`)
     const py = spawn(pyCmd, [PYTHON_SCRIPT], {
       stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: 300_000,
+      timeout: 900_000,  // 15 分钟，与 server.requestTimeout 一致
       env,
     })
 
