@@ -7,7 +7,7 @@
   },
   "steps": {
     "build": {
-      "commands": ["...", "pip install -r python/requirements.txt"]
+      "commands": ["...", "pip install --target=./.python_packages -r python/requirements.txt"]
     }
   }
 }

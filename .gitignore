@@ -9,3 +9,4 @@ __pycache__
 server/db/eco.db
 server/db/eco.db-shm
 server/db/eco.db-wal
+server/.python_packages

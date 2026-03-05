@@ -5,12 +5,15 @@
  */
 import { Router } from 'express'
 import { spawn } from 'child_process'
+import { existsSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { getDb } from '../db/index.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PYTHON_SCRIPT = join(__dirname, '..', 'python', 'optimizer.py')
+/** 部署时 pip 安装到 .python_packages，需设置 PYTHONPATH */
+const PYTHON_PACKAGES = join(__dirname, '..', '.python_packages')
 
 const router = Router()
 
@@ -18,9 +21,15 @@ function runPython(input) {
   return new Promise((resolve, reject) => {
     /** Linux 常用 python3，Windows 常用 python */
     const pyCmd = process.platform === 'win32' ? 'python' : 'python3'
+    const env = { ...process.env }
+    if (existsSync(PYTHON_PACKAGES)) {
+      const sep = process.platform === 'win32' ? ';' : ':'
+      env.PYTHONPATH = PYTHON_PACKAGES + (env.PYTHONPATH ? `${sep}${env.PYTHONPATH}` : '')
+    }
     const py = spawn(pyCmd, [PYTHON_SCRIPT], {
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 300_000,
+      env,
     })
 
     let stdout = ''
