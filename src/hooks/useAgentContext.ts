@@ -24,7 +24,7 @@ const PAGE_LABELS: Record<string, string> = {
   '/': '总览', '/overview': '总览',
   '/economic': '经济指标', '/storage': '存储模块',
   '/ca': '电解槽', '/pv': '光伏', '/gm': '燃气轮机',
-  '/pem': '质子膜燃料电池', '/g': '电网', '/scenario': '方案对比',
+  '/pem': '质子膜燃料电池', '/g': '电网', '/scenario': 'Agent工作区',
 }
 
 function stats(arr: number[]) {

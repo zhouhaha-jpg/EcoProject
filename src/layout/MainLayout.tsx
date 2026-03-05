@@ -5,9 +5,9 @@ import { LayoutDashboard, Zap, Sun, Flame, Battery, Plug, TrendingUp, Database, 
 
 const NAV = [
   { to: '/overview', label: '总览',             icon: LayoutDashboard },
+  { to: '/scenario', label: 'Agent工作区',      icon: GitCompare },
   { to: '/economic', label: '经济指标',         icon: TrendingUp },
   { to: '/storage',  label: '存储模块',         icon: Database },
-  { to: '/scenario', label: '方案对比',         icon: GitCompare },
   { to: '/ca',       label: '电解槽',           icon: Battery },
   { to: '/pv',       label: '光伏',             icon: Sun },
   { to: '/gm',       label: '燃气轮机',         icon: Flame },

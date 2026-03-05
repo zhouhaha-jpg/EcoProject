@@ -1,6 +1,6 @@
 /**
- * 方案对比页：展示 What-If 推演 / Pareto 前沿
- * - 有 scenarioDataset：基准 vs 推演 表格+图表
+ * Agent 工作区：展示 Agent 工作成果
+ * - 有 scenarioDataset：What-If 推演 基准 vs 推演 表格+图表
  * - 有 paretoData：Pareto 前沿散点图 + 最优区间建议
  */
 import { useStrategy } from '@/context/StrategyContext'
@@ -31,9 +31,9 @@ export default function ScenarioComparePage() {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="panel" style={{ padding: 32, maxWidth: 520, textAlign: 'center' }}>
-          <div className="panel-title-bar" style={{ textAlign: 'center', marginBottom: 16 }}>方案对比</div>
+          <div className="panel-title-bar" style={{ textAlign: 'center', marginBottom: 16 }}>Agent 工作区</div>
           <p style={{ color: '#8ba9cc', fontSize: 13, lineHeight: 1.8 }}>
-            暂无推演数据。请在右侧 Agent 面板中使用自然语言发起 What-If 推演或 Pareto 参数扫描。
+            暂无工作成果。请在右侧 Agent 面板中使用自然语言发起 What-If 推演或 Pareto 参数扫描。
           </p>
           <div style={{ marginTop: 16, color: '#3d6080', fontSize: 12 }}>
             <p>示例指令：</p>
@@ -85,7 +85,7 @@ export default function ScenarioComparePage() {
     <div className="h-full min-h-0 overflow-auto" style={{ display: 'grid', gridTemplateRows: 'auto auto 1fr', gap: 12 }}>
       <div className="panel shrink-0">
         <div className="panel-title-bar flex items-center justify-between">
-          <span>方案对比 — {scenarioLabel ?? 'What-If 推演'}</span>
+          <span>Agent 工作区 — {scenarioLabel ?? 'What-If 推演'}</span>
           <span style={{ color: '#3d6080', fontSize: 10, fontWeight: 400 }}>
             基准 vs 推演
           </span>

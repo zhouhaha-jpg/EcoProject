@@ -25,6 +25,13 @@ export interface ChatMessage {
   actions?: { type: string; params: Record<string, unknown>; result: string }[]
 }
 
+export interface ToolChainStep {
+  id: string
+  name: string
+  status: 'running' | 'done'
+  result?: string
+}
+
 export interface UseAgentChatOptions {
   conversationId: number | null
   onConversationCreated?: (id: number) => void
@@ -37,6 +44,7 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [mode, setMode] = useState<AgentMode>('agent')
+  const [toolChain, setToolChain] = useState<ToolChainStep[]>([])
 
   const sendMessage = useCallback(
     async (content: string) => {
@@ -50,6 +58,7 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
       setMessages((prev) => [...prev, userMsg])
       setIsLoading(true)
       setError(null)
+      setToolChain([{ id: 't0', name: 'thinking', status: 'running' }])
 
       let cid = conversationId ?? null
       try {
@@ -97,7 +106,7 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
           await handleStreamResponse(res, setMessages)
         } else {
           const data = await res.json()
-          await handleJsonResponse(data, mode, setMessages, {
+          await handleJsonResponse(data, mode, setMessages, setToolChain, {
             url,
             initialMessages: [...messages, userMsg],
             contextText,
@@ -119,6 +128,7 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
         ])
       } finally {
         setIsLoading(false)
+        setToolChain([])
       }
     },
     [messages, mode, ctx, conversationId, onConversationCreated, onConversationListChange]
@@ -143,6 +153,7 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
     sendMessage,
     clearMessages,
     loadMessages,
+    toolChain,
   }
 }
 
@@ -196,6 +207,8 @@ interface JsonResponseContext {
   initialMessages: ChatMessage[]
   contextText: string
   ctx: AgentContextData
+  conversationId?: number | null
+  onConversationListChange?: () => void
 }
 
 /** 处理 JSON 响应（Agent 模式，含 tool_calls） */
@@ -213,6 +226,7 @@ async function handleJsonResponse(
   },
   mode: AgentMode,
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>,
+  setToolChain: React.Dispatch<React.SetStateAction<ToolChainStep[]>>,
   extra?: JsonResponseContext
 ) {
   const msg = data.choices?.[0]?.message
@@ -225,7 +239,18 @@ async function handleJsonResponse(
   const ASYNC_TOOLS = ['run_whatif', 'add_constraint', 'pareto_scan']
   const NEED_FOLLOWUP_TOOLS = ['trace_causality']
 
-  for (const tc of toolCalls) {
+  if (toolCalls.length > 0) {
+    setToolChain(
+      toolCalls.map((tc) => ({
+        id: tc.id,
+        name: tc.function?.name ?? '',
+        status: 'running' as const,
+      }))
+    )
+  }
+
+  for (let i = 0; i < toolCalls.length; i++) {
+    const tc = toolCalls[i]
     const name = tc.function?.name ?? ''
     let params: Record<string, unknown> = {}
     try {
@@ -234,22 +259,17 @@ async function handleJsonResponse(
       params = {}
     }
 
-    if (ASYNC_TOOLS.includes(name)) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: 'assistant',
-          content: `正在执行 ${name}，优化求解中，请稍候（约10-60秒）...`,
-        },
-      ])
-    }
-
     const traceCtx = name === 'trace_causality' && extra?.ctx
       ? { fullData: extra.ctx.fullData }
       : undefined
     const result = await executeAction(name, params, traceCtx)
     actions.push({ type: name, params, result: result.message })
+
+    setToolChain((prev) =>
+      prev.map((s) =>
+        s.id === tc.id ? { ...s, status: 'done' as const, result: result.message } : s
+      )
+    )
 
     const toolContent =
       name === 'trace_causality' && result.data && typeof result.data === 'object' && 'deviceState' in result.data
@@ -275,6 +295,8 @@ async function handleJsonResponse(
       ...toolResults.map((tr) => ({ role: 'tool' as const, tool_call_id: tr.id, content: tr.content })),
     ]
 
+    setToolChain((prev) => [...prev, { id: 't-cont', name: 'thinking', status: 'running' }])
+
     try {
       const res2 = await fetch(extra.url, {
         method: 'POST',
@@ -286,37 +308,120 @@ async function handleJsonResponse(
         }),
       })
       if (res2.ok) {
-        const data2 = await res2.json()
-        const msg2 = data2.choices?.[0]?.message
-        const finalContent = msg2?.content ?? ''
-        if (finalContent) {
-          content = finalContent
+        const contentType = res2.headers.get('content-type') ?? ''
+        const isStream = contentType.includes('text/event-stream')
+        if (isStream) {
+          const assistantId = crypto.randomUUID()
+          setMessages((prev) => [...prev, { id: assistantId, role: 'assistant', content: '' }])
+          setToolChain((prev) =>
+            prev.map((s) => (s.id === 't-cont' ? { ...s, status: 'done' as const } : s))
+          )
+          let fullText = ''
+          const reader = res2.body?.getReader()
+          const decoder = new TextDecoder()
+          if (reader) {
+            while (true) {
+              const { done, value } = await reader.read()
+              if (done) break
+              const chunk = decoder.decode(value, { stream: true })
+              const lines = chunk.split('\n')
+              for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                  const dataStr = line.slice(6)
+                  if (dataStr === '[DONE]') continue
+                  try {
+                    const parsed = JSON.parse(dataStr)
+                    const delta = parsed.choices?.[0]?.delta?.content
+                    if (delta) {
+                      fullText += delta
+                      setMessages((prev) =>
+                        prev.map((m) =>
+                          m.id === assistantId ? { ...m, content: fullText } : m
+                        )
+                      )
+                    }
+                  } catch {
+                    /* ignore */
+                  }
+                }
+              }
+            }
+          }
+          content = fullText
+          const actionText =
+            actions.length > 0
+              ? actions.map((a) => `已执行：${a.type} → ${a.result}`).join('\n')
+              : ''
+          const displayContent = [content, actionText].filter(Boolean).join('\n\n') || '已处理您的请求。'
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId ? { ...m, content: displayContent, actions } : m
+            )
+          )
+          if (extra.conversationId) {
+            appendConversationMessage(extra.conversationId, {
+              role: 'assistant',
+              content: displayContent,
+              actions: actions.length > 0 ? actions : undefined,
+            }).then(() => extra.onConversationListChange?.()).catch(() => {})
+          }
+        } else {
+          const data2 = await res2.json()
+          const msg2 = data2.choices?.[0]?.message
+          const finalContent = msg2?.content ?? ''
+          if (finalContent) content = finalContent
+          setToolChain((prev) =>
+            prev.map((s) => (s.id === 't-cont' ? { ...s, status: 'done' as const } : s))
+          )
+          const actionText =
+            actions.length > 0
+              ? actions.map((a) => `已执行：${a.type} → ${a.result}`).join('\n')
+              : ''
+          const displayContent = [content, actionText].filter(Boolean).join('\n\n') || '已处理您的请求。'
+          const assistantMsg = {
+            id: crypto.randomUUID(),
+            role: 'assistant' as const,
+            content: displayContent,
+            ...(actions.length > 0 && { actions }),
+          }
+          setMessages((prev) => [...prev, assistantMsg])
+          if (extra.conversationId) {
+            appendConversationMessage(extra.conversationId, {
+              role: 'assistant',
+              content: displayContent,
+              actions: actions.length > 0 ? actions : undefined,
+            }).then(() => extra.onConversationListChange?.()).catch(() => {})
+          }
         }
       }
     } catch {
-      // 第二轮请求失败时保留已执行动作的展示
+      setToolChain((prev) =>
+        prev.map((s) => (s.id === 't-cont' ? { ...s, status: 'done' as const } : s))
+      )
     }
   }
 
-  const actionText =
-    actions.length > 0
-      ? actions.map((a) => `已执行：${a.type} → ${a.result}`).join('\n')
-      : ''
-  const displayContent = [content, actionText].filter(Boolean).join('\n\n') || '已处理您的请求。'
+  if (!hasFollowup || !extra || toolResults.length === 0) {
+    const actionText =
+      actions.length > 0
+        ? actions.map((a) => `已执行：${a.type} → ${a.result}`).join('\n')
+        : ''
+    const displayContent = [content, actionText].filter(Boolean).join('\n\n') || '已处理您的请求。'
 
-  const assistantMsg = {
-    id: crypto.randomUUID(),
-    role: 'assistant' as const,
-    content: displayContent,
-    ...(actions.length > 0 && { actions }),
-  }
-  setMessages((prev) => [...prev, assistantMsg])
-
-  if (extra?.conversationId) {
-    appendConversationMessage(extra.conversationId, {
-      role: 'assistant',
+    const assistantMsg = {
+      id: crypto.randomUUID(),
+      role: 'assistant' as const,
       content: displayContent,
-      actions: actions.length > 0 ? actions : undefined,
-    }).then(() => extra.onConversationListChange?.()).catch(() => {})
+      ...(actions.length > 0 && { actions }),
+    }
+    setMessages((prev) => [...prev, assistantMsg])
+
+    if (extra?.conversationId) {
+      appendConversationMessage(extra.conversationId, {
+        role: 'assistant',
+        content: displayContent,
+        actions: actions.length > 0 ? actions : undefined,
+      }).then(() => extra.onConversationListChange?.()).catch(() => {})
+    }
   }
 }

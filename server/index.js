@@ -227,7 +227,7 @@ app.post('/api/chat', async (req, res) => {
     return res.status(503).json({ error: '未配置 ZHIPU_API_KEY 或 OPENAI_API_KEY' })
   }
 
-  const { messages = [], mode = 'ask', context = '' } = req.body
+  const { messages = [], mode = 'ask', context = '', stream: wantStream = false } = req.body
 
   const contextBlock = context
     ? `\n\n## 当前上下文\n${context}\n`
@@ -249,6 +249,33 @@ app.post('/api/chat', async (req, res) => {
 
   try {
     if (mode === 'agent') {
+      const isContinuation = apiMessages.some((m) => m.role === 'tool')
+      const shouldStream = isContinuation
+
+      if (shouldStream) {
+        const stream = await openai.chat.completions.create({
+          model,
+          messages: apiMessages,
+          tools: TOOLS,
+          tool_choice: 'auto',
+          max_tokens: 4096,
+          stream: true,
+        })
+        res.setHeader('Content-Type', 'text/event-stream')
+        res.setHeader('Cache-Control', 'no-cache')
+        res.setHeader('Connection', 'keep-alive')
+        res.flushHeaders()
+        for await (const chunk of stream) {
+          const delta = chunk.choices[0]?.delta?.content
+          if (delta) {
+            res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: delta } }] })}\n\n`)
+          }
+        }
+        res.write('data: [DONE]\n\n')
+        res.end()
+        return
+      }
+
       const completion = await openai.chat.completions.create({
         model,
         messages: apiMessages,

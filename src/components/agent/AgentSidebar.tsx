@@ -229,6 +229,7 @@ export default function AgentSidebar() {
                   onModeChange={chat.setMode}
                   onSend={chat.sendMessage}
                   onClear={handleNewConversation}
+                  toolChain={chat.toolChain}
                 />
               )}
             </div>
