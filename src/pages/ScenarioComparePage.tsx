@@ -114,7 +114,8 @@ export default function ScenarioComparePage() {
       <div className="panel min-h-0 flex flex-col">
         <div className="panel-title-bar">推演说明</div>
         <div style={{ flex: 1, padding: 16, color: '#8ba9cc', fontSize: 13, lineHeight: 1.8 }}>
-          <p>当前推演场景：<b style={{ color: '#00d4ff' }}>{scenarioLabel}</b></p>
+          <p><b style={{ color: '#4e9eff' }}>基准</b>：系统默认参数下的优化结果（n_PV=10000、G_scale=1.5 等），所有情景对比共用同一基准。</p>
+          <p style={{ marginTop: 8 }}>当前推演场景：<b style={{ color: '#00d4ff' }}>{scenarioLabel}</b></p>
           <p style={{ marginTop: 8 }}>
             表格中绿色数值表示推演结果优于基准，红色表示劣于基准。
             您可以在右侧 Agent 中继续修改参数进行新一轮推演。

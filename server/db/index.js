@@ -43,8 +43,13 @@ export function getDatasetById(id) {
   return { ...row, data: JSON.parse(row.data) }
 }
 
+/**
+ * 返回基准数据集（用于方案对比的「基准」列）
+ * 始终返回 id 最小的数据集（种子数据），保证所有 What-If 情景的基准一致。
+ * What-If 结果会 INSERT 为新行，不会覆盖基准。
+ */
 export function getDefaultDataset() {
-  const row = getDb().prepare('SELECT id, name, data, created_at FROM datasets ORDER BY id DESC LIMIT 1').get()
+  const row = getDb().prepare('SELECT id, name, data, created_at FROM datasets ORDER BY id ASC LIMIT 1').get()
   if (!row) return null
   return { ...row, data: JSON.parse(row.data) }
 }
