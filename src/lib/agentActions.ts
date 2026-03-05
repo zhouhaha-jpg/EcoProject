@@ -45,7 +45,8 @@ const STRATEGY_MAP: Record<string, StrategyKey> = {
   es: 'es', '储能': 'es', '储能优化': 'es', '储能综合优化': 'es',
 }
 
-const API_BASE = ''
+/** 与 api.ts 一致：生产环境需配置 VITE_API_BASE 指向后端地址 */
+const API_BASE = import.meta.env.VITE_API_BASE ? `${import.meta.env.VITE_API_BASE}/api` : '/api'
 
 let handlers: AgentActionHandlers | null = null
 
@@ -98,7 +99,7 @@ export async function executeAction(
       case 'run_whatif': {
         const desc = String(params.description ?? 'What-If 推演')
         const overrides = (params.params ?? {}) as Record<string, unknown>
-        const res = await fetch(`${API_BASE}/api/optimize`, {
+        const res = await fetch(`${API_BASE}/optimize`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ params: overrides, save: true, name: desc }),
@@ -119,7 +120,7 @@ export async function executeAction(
       case 'add_constraint': {
         const desc = String(params.description ?? '添加约束')
         const constraints = (params.constraints ?? []) as unknown[]
-        const res = await fetch(`${API_BASE}/api/optimize`, {
+        const res = await fetch(`${API_BASE}/optimize`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ extra_constraints: constraints, save: true, name: desc }),
@@ -197,7 +198,7 @@ export async function executeAction(
 
         const results: Array<{ paramValue: number; cost: number; carbon: number; combined: number }> = []
         for (const val of values) {
-          const res = await fetch(`${API_BASE}/api/optimize/single`, {
+          const res = await fetch(`${API_BASE}/optimize/single`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ strategy, params: { [paramName]: val } }),
