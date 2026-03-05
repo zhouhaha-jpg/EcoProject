@@ -6,6 +6,11 @@ import { useState, useCallback } from 'react'
 import type { AgentContextData } from './useAgentContext'
 import { formatContextForLLM } from './useAgentContext'
 import { executeAction } from '@/lib/agentActions'
+import {
+  createConversation,
+  appendConversationMessage,
+  updateConversationTitle,
+} from '@/lib/api'
 
 /** 开发时为空则走 Vite 代理 /api；生产时需配置 VITE_API_BASE */
 const API_BASE = import.meta.env.VITE_API_BASE ?? ''
@@ -20,11 +25,18 @@ export interface ChatMessage {
   actions?: { type: string; params: Record<string, unknown>; result: string }[]
 }
 
-export function useAgentChat(ctx: AgentContextData) {
+export interface UseAgentChatOptions {
+  conversationId: number | null
+  onConversationCreated?: (id: number) => void
+  onConversationListChange?: () => void
+}
+
+export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOptions) {
+  const { conversationId, onConversationCreated, onConversationListChange } = options ?? {}
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [mode, setMode] = useState<AgentMode>('ask')
+  const [mode, setMode] = useState<AgentMode>('agent')
 
   const sendMessage = useCallback(
     async (content: string) => {
@@ -38,6 +50,22 @@ export function useAgentChat(ctx: AgentContextData) {
       setMessages((prev) => [...prev, userMsg])
       setIsLoading(true)
       setError(null)
+
+      let cid = conversationId ?? null
+      try {
+        if (cid == null) {
+          cid = await createConversation(mode)
+          onConversationCreated?.(cid)
+          onConversationListChange?.()
+        }
+        await appendConversationMessage(cid!, { role: 'user', content: userMsg.content })
+        if (messages.length === 0) {
+          const title = content.trim().length > 24 ? content.trim().slice(0, 24) + '…' : content.trim()
+          updateConversationTitle(cid!, title || '新对话').catch(() => {})
+        }
+      } catch (e) {
+        console.warn('[persist]', e)
+      }
 
       const contextText = formatContextForLLM(ctx)
 
@@ -74,6 +102,8 @@ export function useAgentChat(ctx: AgentContextData) {
             initialMessages: [...messages, userMsg],
             contextText,
             ctx,
+            conversationId: cid,
+            onConversationListChange,
           })
         }
       } catch (e) {
@@ -91,11 +121,16 @@ export function useAgentChat(ctx: AgentContextData) {
         setIsLoading(false)
       }
     },
-    [messages, mode, ctx]
+    [messages, mode, ctx, conversationId, onConversationCreated, onConversationListChange]
   )
 
   const clearMessages = useCallback(() => {
     setMessages([])
+    setError(null)
+  }, [])
+
+  const loadMessages = useCallback((msgs: ChatMessage[]) => {
+    setMessages(msgs)
     setError(null)
   }, [])
 
@@ -107,6 +142,7 @@ export function useAgentChat(ctx: AgentContextData) {
     setMode,
     sendMessage,
     clearMessages,
+    loadMessages,
   }
 }
 
@@ -268,13 +304,19 @@ async function handleJsonResponse(
       : ''
   const displayContent = [content, actionText].filter(Boolean).join('\n\n') || '已处理您的请求。'
 
-  setMessages((prev) => [
-    ...prev,
-    {
-      id: crypto.randomUUID(),
+  const assistantMsg = {
+    id: crypto.randomUUID(),
+    role: 'assistant' as const,
+    content: displayContent,
+    ...(actions.length > 0 && { actions }),
+  }
+  setMessages((prev) => [...prev, assistantMsg])
+
+  if (extra?.conversationId) {
+    appendConversationMessage(extra.conversationId, {
       role: 'assistant',
       content: displayContent,
-      ...(actions.length > 0 && { actions }),
-    },
-  ])
+      actions: actions.length > 0 ? actions : undefined,
+    }).then(() => extra.onConversationListChange?.()).catch(() => {})
+  }
 }

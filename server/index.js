@@ -14,6 +14,7 @@ import config from './config.js'
 import { initDb } from './db/index.js'
 import datasetsRouter from './routes/datasets.js'
 import optimizeRouter from './routes/optimize.js'
+import conversationsRouter from './routes/conversations.js'
 
 initDb()
 
@@ -23,6 +24,7 @@ app.use(express.json({ limit: '10mb' }))
 
 app.use('/api/datasets', datasetsRouter)
 app.use('/api/optimize', optimizeRouter)
+app.use('/api/conversations', conversationsRouter)
 
 const apiKey = config.apiKey
 const baseURL = process.env.API_BASE_URL || config.apiBaseUrl

@@ -53,3 +53,49 @@ export function getDefaultDataset() {
   if (!row) return null
   return { ...row, data: JSON.parse(row.data) }
 }
+
+// ─── 对话历史 ─────────────────────────────────────────────────────────────
+
+export function listConversations() {
+  return getDb()
+    .prepare(
+      `SELECT c.id, c.title, c.mode, c.created_at, c.updated_at,
+        (SELECT COUNT(*) FROM conversation_messages WHERE conversation_id = c.id) as message_count
+       FROM conversations c
+       ORDER BY c.updated_at DESC`
+    )
+    .all()
+}
+
+export function getConversation(id) {
+  const row = getDb().prepare('SELECT id, title, mode, created_at, updated_at FROM conversations WHERE id = ?').get(id)
+  if (!row) return null
+  const messages = getDb()
+    .prepare('SELECT id, role, content, actions, created_at FROM conversation_messages WHERE conversation_id = ? ORDER BY id ASC')
+    .all(id)
+    .map((m) => ({ ...m, actions: m.actions ? JSON.parse(m.actions) : undefined }))
+  return { ...row, messages }
+}
+
+export function createConversation(mode = 'agent') {
+  const info = getDb().prepare('INSERT INTO conversations (title, mode) VALUES (?, ?)').run('新对话', mode)
+  return info.lastInsertRowid
+}
+
+export function updateConversation(id, { title, mode }) {
+  const db = getDb()
+  if (title != null) db.prepare('UPDATE conversations SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(title, id)
+  if (mode != null) db.prepare('UPDATE conversations SET mode = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(mode, id)
+}
+
+export function appendMessage(conversationId, { role, content, actions }) {
+  const db = getDb()
+  db.prepare(
+    'INSERT INTO conversation_messages (conversation_id, role, content, actions) VALUES (?, ?, ?, ?)'
+  ).run(conversationId, role, content, actions ? JSON.stringify(actions) : null)
+  db.prepare('UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(conversationId)
+}
+
+export function deleteConversation(id) {
+  getDb().prepare('DELETE FROM conversations WHERE id = ?').run(id)
+}

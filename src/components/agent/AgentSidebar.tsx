@@ -1,5 +1,5 @@
 /**
- * Agent 侧边栏容器：可折叠、可拖拽宽度
+ * Agent 侧边栏容器：可折叠、可拖拽宽度、历史对话管理
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react'
@@ -9,7 +9,15 @@ import { registerAgentHandlers } from '@/lib/agentActions'
 import { useAgentContext } from '@/hooks/useAgentContext'
 import { useAgentChat } from '@/hooks/useAgentChat'
 import AgentChat from './AgentChat'
-import { MessageSquare, ChevronRight } from 'lucide-react'
+import ConversationList from './ConversationList'
+import { MessageSquare, ChevronRight, History } from 'lucide-react'
+import {
+  fetchConversationsList,
+  fetchConversation,
+  deleteConversation,
+} from '@/lib/api'
+import type { ConversationItem } from '@/lib/api'
+import type { ChatMessage } from '@/hooks/useAgentChat'
 
 const MIN_WIDTH = 280
 const MAX_WIDTH = 520
@@ -19,7 +27,77 @@ export default function AgentSidebar() {
   const navigate = useNavigate()
   const { setActiveStrategy, loadScenarioDataset } = useStrategy()
   const ctx = useAgentContext()
-  const chat = useAgentChat(ctx)
+
+  const [conversationList, setConversationList] = useState<ConversationItem[]>([])
+  const [currentConversationId, setCurrentConversationId] = useState<number | null>(null)
+  const [showHistory, setShowHistory] = useState(false)
+  const [listLoading, setListLoading] = useState(false)
+
+  const refreshList = useCallback(async () => {
+    setListLoading(true)
+    try {
+      const list = await fetchConversationsList()
+      setConversationList(list)
+    } catch (e) {
+      console.warn('[conversations]', e)
+    } finally {
+      setListLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    refreshList()
+  }, [refreshList])
+
+  const chat = useAgentChat(ctx, {
+    conversationId: currentConversationId,
+    onConversationCreated: (id) => setCurrentConversationId(id),
+    onConversationListChange: refreshList,
+  })
+
+  const handleSelectConversation = useCallback(
+    async (id: number) => {
+      setCurrentConversationId(id)
+      setShowHistory(false)
+      try {
+        const conv = await fetchConversation(id)
+        const msgs: ChatMessage[] = conv.messages.map((m) => ({
+          id: `msg-${m.id}`,
+          role: m.role as 'user' | 'assistant',
+          content: m.content,
+          actions: m.actions,
+        }))
+        chat.loadMessages(msgs)
+        chat.setMode((conv.mode as 'ask' | 'agent') || 'agent')
+      } catch (e) {
+        console.warn('[load conversation]', e)
+      }
+    },
+    [chat]
+  )
+
+  const handleNewConversation = useCallback(() => {
+    setCurrentConversationId(null)
+    chat.clearMessages()
+    chat.setMode('agent')
+    setShowHistory(false)
+  }, [chat])
+
+  const handleDeleteConversation = useCallback(
+    async (id: number) => {
+      try {
+        await deleteConversation(id)
+        if (currentConversationId === id) {
+          setCurrentConversationId(null)
+          chat.clearMessages()
+        }
+        refreshList()
+      } catch (e) {
+        console.warn('[delete conversation]', e)
+      }
+    },
+    [currentConversationId, chat, refreshList]
+  )
 
   const [collapsed, setCollapsed] = useState(false)
   const [width, setWidth] = useState(DEFAULT_WIDTH)
@@ -112,25 +190,46 @@ export default function AgentSidebar() {
                 <MessageSquare size={14} className="text-[#00d4ff]" />
                 AI Agent
               </div>
-              <button
-                type="button"
-                onClick={() => setCollapsed(true)}
-                className="p-1.5 text-[#3d6080] hover:text-[#8ba9cc] rounded transition-colors"
-                title="折叠"
-              >
-                <ChevronRight size={14} />
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => setShowHistory((v) => !v)}
+                  className={`p-1.5 rounded transition-colors ${showHistory ? 'text-[#00d4ff] bg-[#00d4ff]/10' : 'text-[#3d6080] hover:text-[#8ba9cc]'}`}
+                  title="历史对话"
+                >
+                  <History size={14} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCollapsed(true)}
+                  className="p-1.5 text-[#3d6080] hover:text-[#8ba9cc] rounded transition-colors"
+                  title="折叠"
+                >
+                  <ChevronRight size={14} />
+                </button>
+              </div>
             </div>
-            <div className="flex-1 min-h-0 overflow-hidden">
-              <AgentChat
-                messages={chat.messages}
-                isLoading={chat.isLoading}
-                error={chat.error}
-                mode={chat.mode}
-                onModeChange={chat.setMode}
-                onSend={chat.sendMessage}
-                onClear={chat.clearMessages}
-              />
+            <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+              {showHistory ? (
+                <ConversationList
+                  list={conversationList}
+                  currentId={currentConversationId}
+                  onSelect={handleSelectConversation}
+                  onNew={handleNewConversation}
+                  onDelete={handleDeleteConversation}
+                  loading={listLoading}
+                />
+              ) : (
+                <AgentChat
+                  messages={chat.messages}
+                  isLoading={chat.isLoading}
+                  error={chat.error}
+                  mode={chat.mode}
+                  onModeChange={chat.setMode}
+                  onSend={chat.sendMessage}
+                  onClear={handleNewConversation}
+                />
+              )}
             </div>
           </>
         )}
