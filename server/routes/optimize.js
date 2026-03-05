@@ -26,6 +26,8 @@ function runPython(input) {
       const sep = process.platform === 'win32' ? ';' : ':'
       env.PYTHONPATH = PYTHON_PACKAGES + (env.PYTHONPATH ? `${sep}${env.PYTHONPATH}` : '')
     }
+    console.log(`[runPython] 启动 Python: ${pyCmd} ${PYTHON_SCRIPT}`)
+    console.log(`[runPython] PYTHONPATH: ${env.PYTHONPATH || '(未设置)'}`)
     const py = spawn(pyCmd, [PYTHON_SCRIPT], {
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 300_000,
@@ -42,7 +44,9 @@ function runPython(input) {
       if (code !== 0 && code !== null) {
         reject(new Error(`Python exited ${code}: ${stderr.slice(0, 500)}`))
       } else if (signal) {
-        const hint = signal === 'SIGKILL' ? '（可能内存不足 OOM，Railway 免费版约 512MB）' : ''
+        let hint = ''
+        if (signal === 'SIGKILL') hint = '（可能内存不足 OOM，Railway 免费版约 512MB）'
+        else if (signal === 'SIGTERM') hint = '（Railway 可能因健康检查失败或部署重启而终止容器）'
         reject(new Error(`Python 进程被信号终止: ${signal}${hint}. stderr: ${stderr.slice(0, 300) || '(无)'}`))
       } else if (code !== 0) {
         reject(new Error(`Python 异常退出: ${stderr.slice(0, 500) || '(无 stderr)'}`))
@@ -55,8 +59,13 @@ function runPython(input) {
       }
     })
 
-    py.on('error', (err) => reject(err))
-    py.stdin.write(JSON.stringify(input))
+    py.on('error', (err) => {
+      console.error('[runPython] spawn error:', err)
+      reject(err)
+    })
+    const inputStr = JSON.stringify(input)
+    console.log(`[runPython] 输入数据长度: ${inputStr.length} chars`)
+    py.stdin.write(inputStr)
     py.stdin.end()
   })
 }
@@ -66,6 +75,8 @@ function runPython(input) {
  * @body { params?: object, extra_constraints?: array, save?: boolean, name?: string }
  */
 router.post('/', async (req, res) => {
+  const startTime = Date.now()
+  console.log(`[optimize] 开始求解, params=${JSON.stringify(req.body.params)}, save=${req.body.save}`)
   try {
     const { params = {}, extra_constraints = [], save = false, name } = req.body
     const result = await runPython({
@@ -82,9 +93,12 @@ router.post('/', async (req, res) => {
       result._datasetId = info.lastInsertRowid
     }
 
+    const elapsed = Date.now() - startTime
+    console.log(`[optimize] 求解成功，耗时 ${elapsed}ms`)
     res.json(result)
   } catch (err) {
-    console.error('[optimize]', err)
+    const elapsed = Date.now() - startTime
+    console.error(`[optimize] 求解失败，耗时 ${elapsed}ms:`, err)
     res.status(500).json({ error: err.message })
   }
 })

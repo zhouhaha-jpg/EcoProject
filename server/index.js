@@ -26,6 +26,11 @@ app.use('/api/datasets', datasetsRouter)
 app.use('/api/optimize', optimizeRouter)
 app.use('/api/conversations', conversationsRouter)
 
+/** Railway Health Check - 确保服务健康状态被正确识别 */
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', time: new Date().toISOString() })
+})
+
 const apiKey = config.apiKey
 const baseURL = process.env.API_BASE_URL || config.apiBaseUrl
 const model = process.env.OPENAI_MODEL || config.model
@@ -274,6 +279,9 @@ app.post('/api/chat', async (req, res) => {
         res.write('data: [DONE]\n\n')
         res.end()
         return
+        res.write('data: [DONE]\n\n')
+        res.end()
+        return
       }
 
       const completion = await openai.chat.completions.create({
@@ -324,8 +332,13 @@ app.post('/api/chat', async (req, res) => {
 })
 
 const PORT = process.env.PORT || 5000
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Agent API: http://localhost:${PORT}`)
   if (!apiKey) console.warn('警告: 未配置 API Key，/api/chat 将返回 503')
   else console.log(`模型: ${model} | API: ${baseURL}`)
 })
+
+/** 增加超时设置以支持长时间运行的 MILP 优化（Railway 平台支持 15 分钟） */
+server.requestTimeout = 900_000  // 15 分钟
+server.headersTimeout = 920_000  // 略大于 requestTimeout
+server.keepAliveTimeout = 65000   // 默认 5s 增加到 65s
