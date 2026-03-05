@@ -78,6 +78,7 @@ export default function ScenarioComparePage() {
     )
   }
 
+  if (!scenarioDataset) return null
   const baseSummary = dataset.summary
   const scenSummary = scenarioDataset.summary as Record<StrategyKey, { cost: number; carbon: number; combined: number }>
 
