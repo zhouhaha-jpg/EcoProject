@@ -38,9 +38,14 @@ function runPython(input) {
     py.stdout.on('data', (d) => { stdout += d.toString() })
     py.stderr.on('data', (d) => { stderr += d.toString() })
 
-    py.on('close', (code) => {
-      if (code !== 0) {
+    py.on('close', (code, signal) => {
+      if (code !== 0 && code !== null) {
         reject(new Error(`Python exited ${code}: ${stderr.slice(0, 500)}`))
+      } else if (signal) {
+        const hint = signal === 'SIGKILL' ? '（可能内存不足 OOM，Railway 免费版约 512MB）' : ''
+        reject(new Error(`Python 进程被信号终止: ${signal}${hint}. stderr: ${stderr.slice(0, 300) || '(无)'}`))
+      } else if (code !== 0) {
+        reject(new Error(`Python 异常退出: ${stderr.slice(0, 500) || '(无 stderr)'}`))
       } else {
         try {
           resolve(JSON.parse(stdout))
