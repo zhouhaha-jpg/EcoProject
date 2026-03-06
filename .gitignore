@@ -1,5 +1,6 @@
 node_modules
 dist
+.github/prompts/ecoproject-domain.prompt.md
 .env.local
 .env
 *.log

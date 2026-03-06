@@ -1,375 +1,370 @@
 # EcoProject — 记忆注入文档（现状版）
 
-> **新 Agent 必须在开始开发前完整阅读此文档。**  
-> 本文档记录了项目完整架构、所有历史决策、已完成工作和当前状态，确保开发连续性。  
-> 生成日期：2026-02-25
+> **新 Agent 必须在开始开发前完整阅读此文档。**
+> 本文档以当前仓库代码为准，记录真实架构、已落地能力、遗留限制与注意事项。
+> 生成日期：2026-03-06
 
 ---
 
 ## 1. 项目概述
 
-**项目名称**：氯碱制氢数字孪生 · 功率对比分析平台  
+**项目名称**：智慧园区节能减排综合调度平台  
 **工程目录**：`e:\科研绘图\EcoProject`  
-**参考原型**：`e:\科研绘图\power_dashboard.html`（独立 HTML，是所有 UI 风格的最终参照标准）  
-**开发服务器**：`npm run dev`（Vite 默认 5173，后端 5000）  
-**构建命令**：`npm run build`（`tsc && vite build`，当前可无错误完成）
+**参考原型**：`e:\科研绘图\power_dashboard.html`（所有视觉效果的最终参照标准）  
+**前端开发命令**：`npm run dev`（可通过 `-- --port 3006` 指定端口）  
+**前端构建命令**：`npm run build`（`tsc && vite build`）  
+**后端开发命令**：`cd server && npm run dev`  
+**优化器依赖**：`pip install -r server/python/requirements.txt`
 
 ### 业务背景
 
-模拟氯碱制氢工业系统中 6 种优化调度方案（UCI / CICOS / CICAR / CICOM / PV / ES）在 24 小时时序下的功率、制氢量、碳排放等关键指标对比分析。数据来源于 `output.xlsx`，已完整硬编码进 `src/data/realData.ts`。
+平台用于展示和分析氯碱工业多能互补系统在 24 小时时序下的优化调度结果，重点比较 6 种方案（UCI / CICOS / CICAR / CICOM / PV / ES）在功率、储氢、运行成本、碳排放等指标上的差异。
+
+当前系统已从“静态数据看板”升级为“带 Agent 的调度分析平台”，能够通过自然语言触发 What-If 推演、附加约束求解、因果追溯和 Pareto 参数扫描。
 
 ---
 
 ## 2. 技术栈
 
-| 类型 | 技术 | 版本 |
+| 类型 | 技术 | 说明 |
 |---|---|---|
-| UI 框架 | React | 18.3.1 |
-| 类型系统 | TypeScript | 5.5.3 |
-| 构建工具 | Vite | 5.4.8 |
-| 样式系统 | Tailwind CSS | **v3**.4.13（非 v4）|
-| 图表库 | ECharts | 5.5.1（core 按需引入）|
-| 路由 | React Router DOM | 7.1.1 |
-| 图标 | Lucide React | 0.441.0 |
-| 状态 | Zustand | 5.0.1（已安装，**未实际使用**，用 React Context 代替）|
+| 前端框架 | React 18.3.1 | 主应用 UI |
+| 类型系统 | TypeScript 5.5.3 | 前端类型约束 |
+| 构建工具 | Vite 5.4.8 | 前端开发与构建 |
+| 样式系统 | Tailwind CSS v3.4.13 | 必须保持 `.cjs` 配置 |
+| 图表库 | ECharts 5.5.1 | 所有业务图表 |
+| 路由 | React Router DOM 7.1.1 | 前端页面切换 |
+| 图标 | Lucide React 0.441.0 | UI 图标 |
+| 后端框架 | Express 4.21 | Agent、数据集、优化接口 |
+| LLM SDK | OpenAI SDK 4.52 | 兼容 OpenAI / 智谱等 OpenAI 风格接口 |
+| 数据库存储 | better-sqlite3 | 数据集和对话历史持久化 |
+| 优化求解 | Python + NumPy + SciPy | 当前主求解链路 |
+| 桌面端 | Electron | 仓库含 `electron/`，用于 Windows 客户端构建 |
+
+> ⚠️ `zustand` 已安装，但当前主状态管理仍是 React Context，不是 Zustand。
 
 ---
 
-## 3. 目录结构
+## 3. 当前目录结构
 
 ```
 EcoProject/
-├── index.html
-├── package.json
-├── tailwind.config.cjs         ← Tailwind v3 配置（必须是 .cjs，因为 package.json "type":"module"）
-├── vite.config.ts              ← @/ 别名指向 ./src
-├── tsconfig.json
-├── initial.md                  ← 本文档
+├── .github/
+│   └── prompts/
+│       └── ecoproject-domain.prompt.md   ← 项目专用 Prompt（当前已加入 .gitignore）
+├── electron/
+│   ├── main.js                           ← Electron 主进程入口
+│   └── preload.cjs                       ← 预加载脚本
+├── server/
+│   ├── index.js                          ← Express 后端入口 + /api/chat
+│   ├── config.js                         ← API Key / Base URL / 模型配置
+│   ├── routes/
+│   │   ├── conversations.js              ← 对话历史 API
+│   │   ├── datasets.js                   ← 数据集 API
+│   │   └── optimize.js                   ← 优化求解 API
+│   ├── db/
+│   │   ├── index.js                      ← SQLite 初始化与访问
+│   │   ├── schema.sql                    ← 数据集与对话历史表结构
+│   │   └── seed.js                       ← 默认数据集种子
+│   ├── python/
+│   │   ├── optimizer.py                  ← 当前主优化器（Python + SciPy）
+│   │   └── requirements.txt              ← Python 依赖
+│   └── matlab/
+│       └── optimize_system.m             ← 参数化 MATLAB 版本，当前非主执行链路
 ├── src/
-    ├── main.tsx                ← React 入口，挂载 StrategyProvider + BrowserRouter
-    ├── App.tsx                 ← Routes 定义（5个路由）
-    ├── index.css               ← 全局样式（@layer base/components）
-    ├── types/
-    │   └── index.ts            ← 所有 TS 类型（StrategyKey, EcoDataset 等）
-    ├── data/
-    │   └── realData.ts         ← 真实数据 + STRATEGY_META + DATASET + getHours()
-    ├── context/
-    │   └── StrategyContext.tsx ← 全局 Context（activeStrategy / dataset / currentTime）
-    ├── layout/
-    │   └── MainLayout.tsx      ← 顶栏 + 导航 Tab + <Outlet />
-    ├── pages/
-    │   ├── Overview.tsx        ← 总览（主图 + 3个右侧联动面板 + 区间统计占位）
-    │   ├── Energy.tsx          ← 能源
-    │   ├── Production.tsx      ← 生产
-    │   ├── Equipment.tsx       ← 装备
-    │   └── HSE.tsx             ← HSE
-    └── components/
-        ├── charts/
-        │   ├── useEChart.ts            ← ECharts 通用 Hook（含全局 BASE_THEME）
-        │   ├── PowerBalanceChart.tsx   ← 核心多策略功率曲线图（6策略同时显示）
-        │   ├── CarbonTrendChart.tsx    ← 碳排放时序图
-        │   ├── WaterfallChart.tsx      ← 瀑布/柱状对比图（metric: 'combined'|'cost'|'carbon'）
-        │   ├── HydrogenChart.tsx       ← 制氢量堆叠图
-        │   └── StrategyRadarChart.tsx  ← 策略雷达图
-        ├── ui/
-            ├── PanelBox.tsx            ← 通用面板容器
-            ├── StrategySwitcher.tsx    ← 顶部导航栏右侧策略按钮组
-            ├── DigitalNumber.tsx       ← KPI 数字展示
-            ├── StatusBadge.tsx         ← 状态标签（success/warning/info/idle）
-            └── SystemLog.tsx           ← 系统日志列表
-        └── agent/
-            ├── AgentSidebar.tsx        ← Agent 侧边栏（可折叠、可拖拽宽度）
-            ├── AgentChat.tsx           ← 消息列表 + 输入框
-            └── AgentModeSwitch.tsx     ← Ask / Agent 模式切换
-    ├── hooks/
-    │   ├── useAgentContext.ts         ← 构建注入 LLM 的上下文
-    │   └── useAgentChat.ts             ← 发送消息、流式接收、解析 tool_calls
-    └── lib/
-        └── agentActions.ts             ← Agent 模式动作（navigate/switchStrategy）
-└── server/                             ← Agent 后端（Express + OpenAI SDK）
-    ├── index.js
-    ├── package.json
-    └── .env.example
+│   ├── App.tsx                           ← 当前路由入口
+│   ├── main.tsx                          ← React 入口，挂载 StrategyProvider + BrowserRouter
+│   ├── index.css                         ← 全局样式系统
+│   ├── layout/
+│   │   └── MainLayout.tsx                ← 顶栏 + 导航 + Agent 侧边栏
+│   ├── context/
+│   │   └── StrategyContext.tsx           ← 全局数据、场景数据、Pareto 数据状态
+│   ├── hooks/
+│   │   ├── useAgentChat.ts               ← Ask/Agent 对话与 tool_calls 编排
+│   │   └── useAgentContext.ts            ← 注入 LLM 的完整上下文
+│   ├── lib/
+│   │   ├── agentActions.ts               ← Agent 工具映射与执行
+│   │   └── api.ts                        ← 前端 API 客户端
+│   ├── components/
+│   │   ├── agent/
+│   │   │   ├── AgentSidebar.tsx          ← 侧边栏容器、历史对话、拖拽宽度
+│   │   │   ├── AgentChat.tsx             ← 聊天窗口、工具链显示
+│   │   │   ├── AgentModeSwitch.tsx       ← Ask / Agent 模式切换
+│   │   │   └── ConversationList.tsx      ← 历史对话列表
+│   │   ├── charts/
+│   │   │   ├── PrefixPowerChart.tsx      ← 按设备前缀的 6 方案功率图
+│   │   │   ├── EconomicIndicatorChart.tsx← 成本/碳排/综合指标图
+│   │   │   ├── HydrogenStorageChart.tsx  ← 储氢罐图
+│   │   │   ├── EnergyStorageChart.tsx    ← 储能图
+│   │   │   ├── ScenarioCompareChart.tsx  ← 基准 vs 推演对比图
+│   │   │   ├── ParetoFrontierChart.tsx   ← Pareto 前沿散点图
+│   │   │   └── useEChart.ts              ← ECharts Hook 与基础主题
+│   │   └── ui/
+│   │       ├── StrategySwitcher.tsx      ← 顶部策略高亮开关
+│   │       ├── PanelBox.tsx              ← 通用面板容器
+│   │       ├── DigitalNumber.tsx         ← KPI 数字卡
+│   │       ├── StatusBadge.tsx           ← 状态标签
+│   │       └── SystemLog.tsx             ← 系统日志
+│   ├── pages/
+│   │   ├── OverviewPage.tsx              ← 总览页
+│   │   ├── EconomicIndicatorsPage.tsx    ← 经济指标页
+│   │   ├── StorageModulePage.tsx         ← 存储模块页
+│   │   ├── ScenarioComparePage.tsx       ← Agent 工作区
+│   │   └── PrefixPage.tsx                ← 电解槽/光伏/燃机/PEM/电网统一模板页
+│   ├── types/
+│   │   └── index.ts                      ← 核心 TS 类型
+│   └── data/
+│       └── realData.ts                   ← 前端本地兜底数据
+├── initial.md                            ← 本文档
+└── agent能力升级方案_168d7722.plan.md     ← Agent 能力设计方案文档（可参考，不可替代代码事实）
 ```
+
+> ⚠️ `src/pages` 下仍保留 `Overview.tsx`、`Energy.tsx`、`Equipment.tsx`、`Production.tsx`、`HSE.tsx` 等旧页面文件，但它们**不是当前 `App.tsx` 正在使用的主路由**。
 
 ---
 
-## 4. 数据架构
+## 4. 当前路由与页面职责
 
-### 4.1 核心类型（`src/types/index.ts`）
+当前主路由由 `src/App.tsx` 定义，共 9 个入口：
+
+| 路由 | 页面 | 职责 |
+|---|---|---|
+| `/overview` | `OverviewPage.tsx` | 5 类设备功率总览 + 经济指标入口 |
+| `/scenario` | `ScenarioComparePage.tsx` | Agent 工作区，展示推演结果或 Pareto 前沿 |
+| `/economic` | `EconomicIndicatorsPage.tsx` | 成本 / 碳排 / 综合指标表格与图表 |
+| `/storage` | `StorageModulePage.tsx` | 储氢罐与储能数据分析 |
+| `/ca` | `PrefixPage.tsx` | 电解槽功率详情 |
+| `/pv` | `PrefixPage.tsx` | 光伏功率详情 |
+| `/gm` | `PrefixPage.tsx` | 燃气轮机功率详情 |
+| `/pem` | `PrefixPage.tsx` | 质子膜燃料电池功率详情 |
+| `/g` | `PrefixPage.tsx` | 电网购电功率详情 |
+
+---
+
+## 5. 数据结构与状态管理
+
+### 5.1 核心类型
+
+当前 `EcoDataset` 的关键字段如下：
 
 ```typescript
 type StrategyKey = 'uci' | 'cicos' | 'cicar' | 'cicom' | 'pv' | 'es'
 
 interface EcoDataset {
   summary: Record<StrategyKey, { cost: number; carbon: number; combined: number }>
-  P_CA:    Record<StrategyKey, number[]>   // 电解槽功率 (kW)，24h
-  P_PV:    Record<StrategyKey, number[]>   // 光伏功率
-  P_GM:    Record<StrategyKey, number[]>   // 燃气轮机
-  P_PEM:   Record<StrategyKey, number[]>   // PEM 制氢功率
-  P_G:     Record<StrategyKey, number[]>   // 电网功率
-  P_es_es: number[]                        // 储能功率（仅 es 方案有意义）
-  ef_g:    number[]                        // 碳排放因子 (tCO2/kWh)
-  H_CA:    Record<StrategyKey, number[]>   // 氯碱制氢 (kg/s)
-  H_PEM:   Record<StrategyKey, number[]>   // PEM 制氢 (kg/s)
-  H_CH:    Record<StrategyKey, number[]>   // 压缩储氢 (kg/s)
+  P_CA: Record<StrategyKey, number[]>
+  P_PV: Record<StrategyKey, number[]>
+  P_GM: Record<StrategyKey, number[]>
+  P_PEM: Record<StrategyKey, number[]>
+  P_G: Record<StrategyKey, number[]>
+  P_es_es: number[]
+  ef_g: number[]
+  H_CA: Record<StrategyKey, number[]>
+  H_PEM: Record<StrategyKey, number[]>
+  H_CH: Record<StrategyKey, number[]>
+  H_HS: Record<StrategyKey, number[]>
 }
 ```
 
-> ⚠️ **重要**：数据访问模式必须是 `dataset.P_CA[activeStrategy]`，**不是** `dataset[activeStrategy]`。
+> ⚠️ **重要**：访问模式必须是 `dataset.P_CA[activeStrategy]`，不要写成 `dataset[activeStrategy]`。
 
-### 4.2 策略元数据颜色
+### 5.2 `StrategyContext.tsx`
 
-```
-uci   → '#4E9EFF'  统一控制综合（基准方案，24h 恒定 9020.51 kW）
-cicos → '#FF7043'  成本优化集成
-cicar → '#29D4FF'  碳排优化集成
-cicom → '#CE93D8'  综合优化集成
-pv    → '#C6F135'  光伏优先优化
-es    → '#FFD740'  储能综合优化
-```
+当前 Context 不再只是“当前策略 + 静态数据”，还额外承载了 Agent 结果状态：
 
-### 4.3 全局 Context（`src/context/StrategyContext.tsx`）
+- `activeStrategy` / `setActiveStrategy`：当前高亮策略
+- `selectedStrategies` / `toggleStrategy`：图表曲线高亮筛选
+- `dataset`：当前基础数据集
+- `datasetLoading` / `datasetError`：默认数据集加载状态与错误
+- `scenarioDataset` / `scenarioLabel`：What-If 或约束求解结果
+- `paretoData` / `paretoLabel`：Pareto 扫描结果
+- `loadScenarioDataset()`：将新的优化结果载入 Agent 工作区
+- `loadParetoData()`：保存 Pareto 扫描结果，并自动计算建议区间
 
-- `activeStrategy`：当前激活策略，默认 `'uci'`
-- `setActiveStrategy`：切换策略
-- `dataset`：完整静态 `DATASET` 对象
-- `strategyMeta`：`STRATEGY_META`
-- `currentTime`：`new Date()`，每秒更新（保留用于时钟）
+### 5.3 默认数据来源
 
----
-
-## 5. 颜色系统 & 设计规范
-
-完全对齐 `power_dashboard.html` CSS 变量：
-
-| CSS 变量 | Tailwind key | 值 | 用途 |
-|---|---|---|---|
-| `--bg0` | `bg0` | `#070c14` | 全局背景 |
-| `--bg1` | `bg1` | `#0d1422` | 面板背景 |
-| `--bg2` | `bg2` | `#111b2e` | 次级面板 |
-| `--bg3` | `bg3` | `#172240` | 进度条底色 |
-| `--border` | `border-cyber` | `#1e3256` | 所有边框 |
-| `--glow` | `glow` | `#00d4ff` | 高亮/发光色 |
-| `--text0` | `text-primary` | `#e8f4ff` | 主文本 |
-| `--text1` | `text-secondary` | `#8ba9cc` | 次要文本 |
-| `--text2` | `text-muted` | `#3d6080` | 三级/标签文本 |
-
-**字体**（Google Fonts，HTML `<head>` 已配置）：
-- `Rajdhani`：标题、数字、按钮
-- `Noto Sans SC`：正文
-- `Share Tech Mono`：坐标轴标签、Tooltip、序号
+- 前端启动时优先调用 `/api/datasets/default`
+- 如果后端不可用，则回退到 `src/data/realData.ts` 的本地静态数据
+- SQLite 中 `id` 最小的数据集被视为全局“基准数据集”
 
 ---
 
-## 6. CSS 系统（`src/index.css`）
+## 6. Agent 与后端架构
 
-所有样式在 `@layer components` 中定义，与 `power_dashboard.html` 完全对应：
+### 6.1 当前后端接口
 
-| CSS 类 | 对应参考 HTML | 用途 |
-|---|---|---|
-| `.scanlines` | `body::before` | 全局扫描线背景纹理 |
-| `.panel` | `.panel` | 面板容器（`bg:#0d1422`，顶部渐变光线，`border:#1e3256`）|
-| `.panel-title-bar` | `.panel-title` | 面板标题条（Rajdhani，大写，letter-spacing:2px）|
-| `.stat-grid` / `.stat-cell` / `.stat-label` / `.stat-value` / `.stat-unit` | `.stat-*` | 2×2 统计卡片网格 |
-| `.rank-list` / `.rank-item` / `.rank-num` / `.rank-dot` / `.rank-name` / `.rank-bar-wrap` / `.rank-bar` / `.rank-val` | `.rank-*` | 方案排行列表 |
-| `.diff-panel-body` / `.diff-item` / `.diff-name` / `.diff-num` / `.diff-pos` / `.diff-neg` | `.diff-*` | 差值面板（pos=绿，neg=红）|
-| `.brush-result` / `.brush-hint` | `.brush-*` | 区间统计占位区 |
-| `.hud-header` | `header` | 顶栏背景渐变 |
-| `.hud-nav-link` / `.hud-nav-link.active` | `.vtab` / `.vtab.active` | 导航链接（active 时 `border-bottom: 2px solid #00d4ff`）|
-| `.hud-chip` / `.hud-chip.live` | `.tag` / `.tag.live` | 顶栏右侧标签芯片 |
-| `.strategy-btn` | — | 策略切换按钮 |
-| `.logo-pulse` | `.logo-pulse` | 顶栏左侧脉冲圆点 |
-
----
-
-## 7. 关键组件规范
-
-### 7.1 `useEChart` Hook（`src/components/charts/useEChart.ts`）
-
-```typescript
-// 已注册的 ECharts 组件（全部必须，勿删）：
-// BarChart, LineChart, RadarChart, ScatterChart
-// GridComponent, TooltipComponent, LegendComponent, TitleComponent
-// RadarComponent, MarkLineComponent, DataZoomComponent
-// ToolboxComponent, BrushComponent   ← 后期补加，Overview 的 Brush 功能依赖
-// CanvasRenderer
-
-// BASE_THEME（合并到所有图表 setOption 中）：
-const BASE_THEME = {
-  backgroundColor: 'transparent',
-  textStyle: { color: '#8BA9CC', fontFamily: 'Rajdhani, Noto Sans SC, sans-serif' },
-  animation: false,                                    // 禁用初始加载动画（静态直接显示完整图）
-  stateAnimation: { duration: 300, easing: 'cubicOut' }, // 保留 hover 过渡动画
-}
-```
-
-### 7.2 `PowerBalanceChart`（`src/components/charts/PowerBalanceChart.tsx`）
-
-```typescript
-// Props：
-interface PowerBalanceChartProps {
-  onHourHover?: (hourIdx: number, values: { key: StrategyKey; val: number }[]) => void
-}
-// ✅ 无 strategies / playbackHour / topColor 等旧 props
-```
-
-- 同时显示全部 6 种策略的 `P_CA` 数据
-- UCI：蓝色虚线 + 圆形标记点，无面积填充
-- 其余 5 策略：实线 + 渐变半透明面积填充（`hexToRgba(color, 0.18)` → `0`）
-- **Hover Emphasis**：`emphasis.focus:'series'` + `blurScope:'coordinateSystem'`，悬停时该线加粗（width:3），其余变暗
-- `onHourHover` 在 Tooltip `formatter` 内调用，用于驱动 Overview 右侧三个面板实时更新
-
-### 7.3 `PanelBox`（`src/components/ui/PanelBox.tsx`）
-
-```typescript
-// Props：
-interface PanelBoxProps {
-  title?: string
-  children: ReactNode
-  className?: string
-  topColor?: string   // 接受但不渲染，保留仅为不破坏旧页面调用
-  footer?: ReactNode  // 底部内容，带上边框分割线
-}
-// 渲染：<div className={`panel flex flex-col ${className}`}>
-```
-
-### 7.4 页面布局规范
-
-**Energy / Equipment / Production / HSE**（固定三行网格）：
-
-```tsx
-<div className="h-full grid grid-cols-12 gap-3" style={{ gridTemplateRows: '72px 1fr 1fr' }}>
-  {/* 第1行 72px：KPI 卡片（col-span-3 × 4）*/}
-  {/* 第2行 1fr：主图表（col-span-8）+ 辅助面板（col-span-4）*/}
-  {/* 第3行 1fr：对比图表（col-span-6 × 2）*/}
-</div>
-```
-
-**Overview**（2行，弹性高度）：
-
-```tsx
-<div className="h-full" style={{ display:'grid', gridTemplateRows:'1fr auto', gap:12, minHeight:0 }}>
-  {/* 第1行 1fr：内部再 grid "1fr 280px"，左侧主图 + 右侧3面板 */}
-  {/* 第2行 auto（minHeight:80）：区间统计占位 */}
-</div>
-```
-
-**MainLayout**：
-- `<div className="scanlines min-h-screen w-full flex flex-col overflow-hidden">`
-- `<header>` → shrink-0，固定高度
-- 导航 tab 栏 → shrink-0
-- `<main className="flex-1 min-h-0 overflow-hidden p-5">` → `<Outlet />`（Outlet 的 h-full 可铺满）
-
----
-
-## 8. 各页面说明
-
-### Overview（总览）`/`
-| 区域 | 内容 |
+| 接口 | 说明 |
 |---|---|
-| 左侧（1fr） | `PowerBalanceChart`（`onHourHover` 联动右侧面板）|
-| 右侧（280px） | ① 实时统计：max/min/avg/range ② 方案排行：带进度条 ③ 差值面板：与UCI对比 |
-| 底部（auto） | 区间统计占位（Brush 选区结果表格，**尚未实现**，仅有 hint 文字）|
+| `POST /api/chat` | Ask / Agent 模式统一入口 |
+| `GET /api/datasets` | 数据集列表 |
+| `GET /api/datasets/default` | 默认基准数据集 |
+| `GET /api/datasets/:id` | 指定数据集详情 |
+| `POST /api/optimize` | 全 6 策略求解，支持参数覆写与附加约束 |
+| `POST /api/optimize/single` | 单策略求解，用于 Pareto 扫描 |
+| `GET/POST/PUT/DELETE /api/conversations...` | 对话历史增删改查 |
 
-### Energy（能源）`/energy`
-- KPI：光伏总出力 / 电网购电量 / 燃气轮机发电 / 氯碱耗电
-- 图表：PowerBalanceChart（col-8）+ CarbonTrendChart（col-4）
-- 对比：WaterfallChart综合目标（col-6）+ WaterfallChart运营成本（col-6）
+### 6.2 Ask / Agent 两种模式
 
-### Production（生产）`/production`
-- KPI：氢气总产量 / 氯碱制氢 / PEM制氢 / PEM功耗
-- 图表：HydrogenChart（col-8）+ CarbonTrendChart（col-4）
-- 对比：WaterfallChart综合（col-6）+ WaterfallChart碳排（col-6）
+- **Ask 模式**：纯问答，`/api/chat` 返回流式文本，前端按 SSE 增量显示
+- **Agent 模式**：允许 LLM 发起 tool_calls，前端按工具链步骤执行并展示结果
 
-### Equipment（装备）`/equipment`
-- KPI：4个设备状态卡（氯碱/PEM/光伏/燃气轮机）
-- 图表：PowerBalanceChart关键出力（col-8）+ 峰值统计 DigitalNumber（col-4）
-- 底部：2个设备卡（电网/储能）+ PowerBalanceChart实时监控（col-6）
+### 6.3 已落地的 Agent 工具能力
 
-### HSE `/hse`
-- KPI：日碳排放 / 碳配额剩余 / 配额使用率 / 碳因子峰谷
-- 图表：CarbonTrendChart（col-8）+ 安全状态列表+进度条（col-4）
-- 底部：WaterfallChart碳排（col-6）+ SystemLog（col-6）
+当前 `server/index.js` 与 `src/lib/agentActions.ts` 已经注册并实现以下工具：
+
+| 工具 | 状态 | 实际行为 |
+|---|---|---|
+| `navigate` | ✅ 完成 | 切换到指定页面 |
+| `switchStrategy` | ✅ 完成 | 切换高亮策略 |
+| `run_whatif` | ✅ 完成 | 调 `/api/optimize` 运行新情景，结果写入数据库并加载到 `/scenario` |
+| `add_constraint` | ✅ 完成 | 调 `/api/optimize` 添加约束后重算 |
+| `trace_causality` | ✅ 完成 | 从完整 24h 数据中抽取指定时段设备状态，交给 LLM 解释 |
+| `pareto_scan` | ✅ 完成 | 多次调用 `/api/optimize/single` 扫描参数区间，并在前端生成 Pareto 图 |
+| `generate_chart` | ⚠️ 部分完成 | 当前只返回图表元信息，不会动态插入任意 ECharts 图表面板 |
+
+### 6.4 当前优化求解链路
+
+**当前主链路不是 MATLAB Engine，而是 Python 优化器：**
+
+1. 前端通过 `run_whatif` / `add_constraint` / `pareto_scan` 发起请求
+2. `server/routes/optimize.js` 用 `child_process.spawn` 调用 `server/python/optimizer.py`
+3. `optimizer.py` 使用 NumPy + SciPy 的 `minimize(..., method='SLSQP')` 完成求解
+4. 返回结果后写入 SQLite 或直接回传前端
+5. 前端将结果显示在 Agent 工作区
+
+`server/matlab/optimize_system.m` 仍然保留在仓库中，但**当前不是线上主调用路径**。相关设计方案可参考 `agent能力升级方案_168d7722.plan.md`，但实现事实必须以当前代码为准。
+
+### 6.5 SQLite 持久化
+
+数据库表结构定义在 `server/db/schema.sql`：
+
+- `datasets`：存储默认数据集和每次推演/约束求解生成的新数据集
+- `conversations`：存储对话元信息（标题、模式、时间）
+- `conversation_messages`：存储具体消息和工具执行记录
 
 ---
 
-## 9. 历史决策记录（极其重要）
+## 7. 当前页面说明
 
-### 9.1 已解决的重大 Bug
+### 7.1 总览页 `OverviewPage.tsx`
 
-| 问题 | 根因 | 修复 |
-|---|---|---|
-| 页面白屏崩溃 | 数据访问写成 `dataset[activeStrategy]` | 改为 `dataset.P_CA[activeStrategy]` |
-| Energy/Equipment 控制台报 prop 错误 | PowerBalanceChart 重写后移除了 `strategies`/`playbackHour` props | 移除调用方的这些 props |
-| Brush/Toolbox 图标不响应 | 未注册 `BrushComponent`/`ToolboxComponent` | `useEChart.ts` 的 `echarts.use()` 中补充注册 |
-| 图表无法随容器 resize | 无监听 | `useEChart` 中用 `ResizeObserver` |
+- 展示 5 类设备前缀功率图：`ca / pv / gm / pem / g`
+- 底部展示一个紧凑版 `EconomicIndicatorChart`
+- 主要作为“总入口总览面板”，不是旧版大综合图布局
 
-### 9.2 已完成的所有改动（按时间顺序）
+### 7.2 经济指标页 `EconomicIndicatorsPage.tsx`
 
-1. **初始版构建**：React 18 + TS + Vite + Tailwind v3，5页路由，完整真实数据
-2. **颜色体系重写**：完全对齐 `power_dashboard.html`，从"赛博朋克强蓝"改为"深色微蓝"
-3. **CSS 重写**：移除旧类（`.panel-cyber`、`.neon-text`），新增全套参考对应类
-4. **MainLayout 简化**：移除 EC Logo/时钟，改为 `logo-pulse` + 标题 + 3个 `hud-chip`
-5. **PowerBalanceChart 完全重写**：单策略多指标 → 全策略单指标(P_CA)，移除所有 playback 逻辑
-6. **Overview 重写**：加入右侧三个联动面板，底部区间统计占位
-7. **滚动播放功能完全移除**：`isPlaying`/`playHour`/`timerRef`/footer 播放控件全部清除
-8. **图表初始动画禁用**：`BASE_THEME` 中 `animation: false`（静态完整显示，无逐帧绘制）
-9. **Hover Emphasis 效果**：`emphasis.focus:'series'` + `blurScope:'coordinateSystem'`，悬停高亮，其余变暗
-10. **保留 hover 过渡**：`stateAnimation: { duration: 300 }` 保留 hover 状态平滑切换
-11. **布局高度固定化**：所有页面从 `grid-rows-[auto_1fr_1fr]` 改为 `style={{ gridTemplateRows: '72px 1fr 1fr' }}`，组件高度不随内容撑开
+- 顶部为 6 策略的成本 / 碳排 / 综合指标表格
+- 底部为 3 张柱状图，对应三类指标
 
-### 9.3 严禁操作（"不要做"清单）
+### 7.3 存储模块页 `StorageModulePage.tsx`
 
-- ❌ 不要将 `animation: false` 和 `stateAnimation` 一并删除，前者禁初始动画，后者保留 hover 交互
-- ❌ 不要给 `PowerBalanceChart` 传 `strategies`/`playbackHour`/`topColor` 等已删除的 props
-- ❌ 不要从 `useEChart.ts` 的 `echarts.use()` 中移除 `BrushComponent`/`ToolboxComponent`
-- ❌ 不要用 `dataset[activeStrategy]` 访问数据，正确是 `dataset.P_CA[activeStrategy]`
-- ❌ 不要修改 `tailwind.config.cjs` 的后缀（必须是 `.cjs`）
-- ❌ 任何视觉/样式修改前，先对照 `power_dashboard.html` 对应实现，以其为准
+- 主图为 `HydrogenStorageChart`
+- 底部为 `EnergyStorageChart`
+- 右侧实时统计、方案排行、与 UCI 差值均已接入
+
+### 7.4 前缀页 `PrefixPage.tsx`
+
+- 统一承载电解槽、光伏、燃机、PEM、电网五类详情页
+- 包含主图、实时统计、排行、UCI 差值面板
+- 底部 Brush 区间统计仍是占位提示，尚未输出实际统计结果
+
+### 7.5 Agent 工作区 `ScenarioComparePage.tsx`
+
+- 如果当前有 `scenarioDataset`：展示“基准 vs 推演”的表格和 3 张对比图
+- 如果当前有 `paretoData`：展示 Pareto 前沿散点图、建议区间和说明文字
+- 如果两者都没有：显示示例指令引导用户在 Agent 面板发起操作
 
 ---
 
-## 10. 当前功能状态
+## 8. 当前 UI 与交互规范
 
-| 功能 | 状态 | 备注 |
+### 8.1 视觉标准
+
+所有视觉设计继续以 `power_dashboard.html` 为准，重点保留：
+
+- 深色微蓝背景体系：`#070c14 / #0d1422 / #111b2e`
+- 统一边框色：`#1e3256`
+- 高亮色：`#00d4ff`
+- 字体：`Rajdhani`、`Noto Sans SC`、`Share Tech Mono`
+
+### 8.2 `MainLayout.tsx`
+
+当前布局由三部分组成：
+
+1. 顶栏：平台标题 + 3 个状态芯片
+2. 导航栏：总览、Agent工作区、经济指标、存储模块、5 个设备页 + 策略切换器
+3. 右侧 Agent 侧边栏：可折叠、可拖拽宽度、可切换历史对话
+
+### 8.3 Agent 侧边栏
+
+- `AgentSidebar.tsx`：负责注册 Agent 处理器，并承载历史对话列表
+- `AgentChat.tsx`：展示聊天内容、模式切换、工具链执行过程
+- 工具链显示风格参考 Cursor，显示为非气泡背景条
+
+---
+
+## 9. 历史决策与当前事实
+
+### 9.1 已确认的重要演进
+
+1. 项目主路由已经从旧版页面体系切换为“总览 / 经济指标 / 存储模块 / Agent工作区 / 设备前缀页”结构。
+2. Agent 已不再只是页面导航助手，而是具备优化重算、附加约束、因果追溯、Pareto 扫描等执行能力。
+3. 后端已从“仅聊天代理”升级为“聊天 + SQLite + 优化求解 + 对话历史”的完整服务层。
+4. 当前真正执行优化的是 Python `optimizer.py`，不是 MATLAB Engine。
+5. 对话历史与求解结果都会落库，前端可重复打开历史对话。
+
+### 9.2 当前限制与未完成项
+
+| 能力 | 状态 | 说明 |
 |---|---|---|
-| 5 个页面基本结构 | ✅ 完成 | |
-| 颜色体系与参考一致 | ✅ 完成 | |
-| 图表静态显示（无初始动画） | ✅ 完成 | |
-| 图表 Hover 高亮/变暗 emphasis 效果 | ✅ 完成 | |
-| Overview 右侧 3 面板 Tooltip 联动 | ✅ 完成 | |
-| 所有页面固定高度铺满屏幕 | ✅ 完成 | |
-| Brush 区间选择 UI（工具箱图标） | ✅ 有入口 | |
-| Brush 区间统计结果表格 | ⏳ 未实现 | 仅有 hint 文字占位 |
-| 3D 瀑布图（参考 HTML 第2个 tab） | ⏳ 未实现 | Three.js，参考 HTML §3 节 |
-| 竞速排行动画（参考 HTML 第3个 tab） | ⏳ 未实现 | 参考 HTML §4 节 |
-| AI Agent 侧边栏 | ✅ 完成 | Ask 模式问答 + Agent 模式执行 navigate/switchStrategy |
+| What-If 推演 | ✅ 已完成 | 可修改参数并生成场景结果 |
+| 约束注入 | ✅ 已完成 | 当前仅支持 `P_grid_max` / `P_grid_min` |
+| 因果追溯 | ✅ 已完成 | 依赖结构化设备状态 + LLM 解释 |
+| Pareto 扫描 | ✅ 已完成 | 已有前端图和建议区间 |
+| 动态图表生成 | ⚠️ 部分完成 | 工具存在，但尚未落成通用动态图表面板 |
+| Brush 区间统计表 | ⏳ 未实现 | PrefixPage 底部仍是提示占位 |
+| MATLAB Engine 桥接 | ⏳ 未接入主链路 | 仅保留 `.m` 文件 |
+| 自然语言约束全量解析 | ⏳ 未完成 | 目前约束类型较少 |
+
+---
+
+## 10. 严禁操作（不要做）
+
+- ❌ 不要把当前优化执行路径描述成 MATLAB 主执行链路，真实主链路是 Python `optimizer.py`
+- ❌ 不要用 `dataset[activeStrategy]` 访问数据，正确写法是 `dataset.P_CA[activeStrategy]` 等
+- ❌ 不要修改 `tailwind.config.cjs` 的后缀，必须保持 `.cjs`
+- ❌ 不要在未核实代码的情况下把 `agent能力升级方案_168d7722.plan.md` 中的设想直接写成“已完成”
+- ❌ 不要误以为旧页面 `Energy.tsx` / `Production.tsx` / `Equipment.tsx` / `HSE.tsx` 仍是当前主路由
+- ❌ 不要擅自删除 Agent 工具名或接口名，前后端已有耦合：`run_whatif`、`add_constraint`、`trace_causality`、`generate_chart`、`pareto_scan`
+- ❌ 任何视觉改动前，必须先对照 `power_dashboard.html`
+- ❌ 只要改动了项目结构、能力边界、路由或架构事实，就必须同步更新本 `initial.md`
 
 ---
 
 ## 11. 启动步骤
 
 ```powershell
-# 1. 进入项目目录
+# 1. 前端
 cd "e:\科研绘图\EcoProject"
-
-# 2. 开发模式（必须显式指定 3006）
+npm install
 npm run dev -- --port 3006
 
-# 3. Agent 后端（另开终端，需配置 API Key）
+# 2. 后端
 cd server
-cp .env.example .env   # 编辑 .env 填入 OPENAI_API_KEY 或 DASHSCOPE_API_KEY
 npm install
+copy .env.example .env
 npm run dev
 
+# 3. Python 优化器依赖（首次）
+pip install -r server/python/requirements.txt
+
 # 4. 构建验证
+cd "e:\科研绘图\EcoProject"
 npm run build
 ```
 
-访问：`http://localhost:3006`
-
-**Agent 说明**：侧边栏支持 Ask 模式（基于当前数据问答）和 Agent 模式（执行页面跳转、策略切换）。Vite 已配置 `/api` 代理到 `localhost:5000`，开发时需同时启动后端。
+默认开发时前端可通过 Vite 代理访问 `/api`，后端默认监听 `5000`。
 
 ---
 
@@ -377,8 +372,9 @@ npm run build
 
 | 文件 | 用途 |
 |---|---|
-| `e:\科研绘图\power_dashboard.html` | **UI 设计最终参照**，所有视觉效果均以此为准 |
-| `e:\科研绘图\EcoProject\src\data\realData.ts` | 所有真实数据的唯一来源 |
+| `e:\科研绘图\power_dashboard.html` | UI 视觉最终参照 |
+| `e:\科研绘图\EcoProject\src\data\realData.ts` | 前端本地兜底数据 |
+| `e:\科研绘图\EcoProject\agent能力升级方案_168d7722.plan.md` | Agent 能力扩展方案文档，仅作规划参考 |
 
-> **核心原则**：视觉上的一切以 `power_dashboard.html` 为最终标准，不要自行发挥。功能扩展（如 Brush 统计、3D 视图）也应对照参考 HTML 的对应实现逻辑。
+> **核心原则**：代码事实优先于规划文档；视觉标准优先于个人发挥；架构变化后必须回写本文件。
 
