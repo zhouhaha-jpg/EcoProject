@@ -6,6 +6,8 @@ dist
 .idea
 .venv
 __pycache__
+release/
+server/python/build/
 server/db/eco.db
 server/db/eco.db-shm
 server/db/eco.db-wal
