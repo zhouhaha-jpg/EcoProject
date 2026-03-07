@@ -25,6 +25,7 @@ import sys
 import traceback
 from datetime import date, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 from urllib.request import Request, urlopen
 from urllib.error import URLError
 
@@ -39,6 +40,15 @@ DB_PATH = str(Path(__file__).parent.parent / 'db' / 'eco.db')
 USER_AGENT = 'EcoProject/1.0 (Smart Park Energy Platform)'
 OPEN_METEO_FORECAST = 'https://api.open-meteo.com/v1/forecast'
 OPEN_METEO_ARCHIVE = 'https://archive-api.open-meteo.com/v1/archive'
+BEIJING_TZ = ZoneInfo('Asia/Shanghai')
+
+
+def beijing_today():
+    return datetime.now(BEIJING_TZ).date()
+
+
+def beijing_now():
+    return datetime.now(BEIJING_TZ)
 
 
 def get_db():
@@ -104,7 +114,7 @@ def get_solar_data(lat, lon, target_date=None):
         (radiation_24h, wind10_24h, wind80_24h, temp_24h, source)
     """
     try:
-        if target_date and target_date < date.today():
+        if target_date and target_date < beijing_today():
             hourly = fetch_solar_archive(lat, lon, target_date)
         else:
             hourly = fetch_solar_forecast(lat, lon)
@@ -144,7 +154,7 @@ def get_price_data(target_date=None, seed=None):
         (prices_24h, source)
     """
     try:
-        dt = target_date or date.today()
+        dt = target_date or beijing_today()
         # Level 2: 模拟器
         prices = simulate_spot_price(dt=dt, seed=seed)
         return prices.tolist(), 'simulator'
@@ -309,7 +319,7 @@ def fetch_all(lat=None, lon=None, target_date=None, seed=None):
         lat, lon = get_park_coordinates(conn)
 
     if target_date is None:
-        target_date = date.today()
+        target_date = beijing_today()
 
     data_date_str = target_date.isoformat()
 
@@ -370,7 +380,7 @@ def fetch_all(lat=None, lon=None, target_date=None, seed=None):
             'G_profile': g_profile,
             'G_scale': round(g_scale, 4),
         },
-        'fetched_at': datetime.now().isoformat(),
+        'fetched_at': beijing_now().isoformat(),
     }
     return result
 

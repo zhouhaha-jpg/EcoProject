@@ -12,6 +12,19 @@ const DB_PATH = join(__dirname, 'eco.db')
 
 let db = null
 
+function parseDatasetRow(row) {
+  if (!row) return null
+  return { ...row, data: JSON.parse(row.data) }
+}
+
+function isRuntimeDataset(row, datasetType = '') {
+  const metaType = row.data?._meta?.datasetType
+  const inferredType = metaType
+    || (row.name.startsWith('时光回溯 ') ? 'history' : row.name.startsWith('实时优化 ') ? 'realtime' : '')
+  if (datasetType) return inferredType === datasetType
+  return inferredType === 'realtime' || inferredType === 'history'
+}
+
 export function getDb() {
   if (!db) {
     db = new Database(DB_PATH)
@@ -39,8 +52,7 @@ export function listDatasets() {
 
 export function getDatasetById(id) {
   const row = getDb().prepare('SELECT id, name, data, created_at FROM datasets WHERE id = ?').get(id)
-  if (!row) return null
-  return { ...row, data: JSON.parse(row.data) }
+  return parseDatasetRow(row)
 }
 
 /**
@@ -50,8 +62,27 @@ export function getDatasetById(id) {
  */
 export function getDefaultDataset() {
   const row = getDb().prepare('SELECT id, name, data, created_at FROM datasets ORDER BY id ASC LIMIT 1').get()
-  if (!row) return null
-  return { ...row, data: JSON.parse(row.data) }
+  return parseDatasetRow(row)
+}
+
+export function getLatestRuntimeDataset(datasetType = '', limit = 120) {
+  const rows = getDb()
+    .prepare('SELECT id, name, data, created_at FROM datasets ORDER BY id DESC LIMIT ?')
+    .all(limit)
+    .map(parseDatasetRow)
+    .filter(Boolean)
+
+  return rows.find((row) => isRuntimeDataset(row, datasetType)) ?? null
+}
+
+export function findRuntimeDatasetByViewDate(viewDate, limit = 240) {
+  const rows = getDb()
+    .prepare('SELECT id, name, data, created_at FROM datasets ORDER BY id DESC LIMIT ?')
+    .all(limit)
+    .map(parseDatasetRow)
+    .filter(Boolean)
+
+  return rows.find((row) => isRuntimeDataset(row) && row.data?._meta?.viewDate === viewDate) ?? null
 }
 
 // ─── 对话历史 ─────────────────────────────────────────────────────────────

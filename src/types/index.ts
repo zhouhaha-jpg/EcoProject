@@ -34,6 +34,15 @@ export interface PCA_Data {
   es: HourlyData
 }
 
+export interface DatasetMeta {
+  datasetType: 'realtime' | 'history' | 'seed' | string
+  viewDate: string
+  snapshotAt: string
+  isHistorical: boolean
+  datasetId?: number | null
+  datasetName?: string
+}
+
 /** 完整数据集 */
 export interface EcoDataset {
   /** 各方案成本/碳排放汇总 */
@@ -60,6 +69,7 @@ export interface EcoDataset {
   H_CH: PCA_Data
   /** 储氢罐 H_HS (t) */
   H_HS: PCA_Data
+  _meta?: DatasetMeta
 }
 
 /** 设备健康数据 */
@@ -91,6 +101,7 @@ export interface StrategyContextValue {
   selectedStrategies: Set<StrategyKey>
   toggleStrategy: (key: StrategyKey) => void
   dataset: EcoDataset
+  datasetMeta?: DatasetMeta
   strategyMeta: Record<StrategyKey, StrategyMeta>
   currentTime: Date
   datasetLoading?: boolean

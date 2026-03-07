@@ -10,6 +10,7 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react'
+import type { DatasetMeta } from '@/types'
 
 export interface DataSources {
   price: 'crawler' | 'simulator' | 'fallback'
@@ -38,6 +39,13 @@ export interface ShadowOptimization {
   suggestion: string
 }
 
+export interface LatestOptDatasetPayload {
+  datasetId: number
+  datasetName: string
+  data: Record<string, unknown>
+  meta?: DatasetMeta
+}
+
 export interface RealtimeState {
   prices: number[]
   solar: number[]
@@ -49,7 +57,7 @@ export interface RealtimeState {
   alerts: AlertEvent[]
   shadowOptimization: ShadowOptimization | null
   loading: boolean
-  latestOptDataset: Record<string, unknown> | null
+  latestOptDataset: LatestOptDatasetPayload | null
 }
 
 const DEFAULT_SOURCES: DataSources = {
@@ -81,7 +89,7 @@ export function useRealtimeData(): RealtimeState & {
   const [alerts, setAlerts] = useState<AlertEvent[]>([])
   const [shadowOptimization, setShadowOptimization] = useState<ShadowOptimization | null>(null)
   const [loading, setLoading] = useState(true)
-  const [latestOptDataset, setLatestOptDataset] = useState<Record<string, unknown> | null>(null)
+  const [latestOptDataset, setLatestOptDataset] = useState<LatestOptDatasetPayload | null>(null)
 
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>()
@@ -163,7 +171,7 @@ export function useRealtimeData(): RealtimeState & {
               break
             case 'dataset_updated':
               if (msg.payload?.data) {
-                setLatestOptDataset(msg.payload.data)
+                setLatestOptDataset(msg.payload)
               }
               break
             case 'health_update':

@@ -2,13 +2,29 @@
  * 后端 API 客户端
  */
 
+import type { DatasetMeta } from '@/types'
+
 const API_BASE = import.meta.env.VITE_API_BASE ? `${import.meta.env.VITE_API_BASE}/api` : '/api'
+
+export interface DisplayDatasetResponse {
+  data: Record<string, unknown>
+  meta: DatasetMeta
+  id?: number
+  name?: string
+}
 
 export async function fetchDefaultDataset() {
   const res = await fetch(`${API_BASE}/datasets/default`)
   if (!res.ok) throw new Error(await res.text())
   const json = await res.json()
   return json.data as Record<string, unknown>
+}
+
+export async function fetchDisplayDataset(date?: string): Promise<DisplayDatasetResponse> {
+  const suffix = date ? `?date=${encodeURIComponent(date)}` : ''
+  const res = await fetch(`${API_BASE}/realtime/display${suffix}`)
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
 }
 
 export async function fetchDatasetById(id: number) {

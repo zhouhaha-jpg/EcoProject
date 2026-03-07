@@ -18,6 +18,7 @@ import optimizeRouter from './routes/optimize.js'
 import conversationsRouter from './routes/conversations.js'
 import realtimeRouter from './routes/realtime.js'
 import { mountWebSocket, broadcastDataUpdate, broadcastAlert, broadcastOptimizationComplete, broadcastHealthUpdate, broadcastDatasetUpdated } from './ws.js'
+import { formatBeijingDateTime } from './lib/time.js'
 
 initDb()
 
@@ -400,7 +401,7 @@ async function scheduledFetch() {
     const lat = latRow ? latRow.value : '30.26'
     const lon = lonRow ? lonRow.value : '120.19'
 
-    const py = spawn('python', [FETCHER_SCRIPT, '--once', '--lat', lat, '--lon', lon, '--dramatic'], {
+    const py = spawn('python', [FETCHER_SCRIPT, '--once', '--lat', lat, '--lon', lon], {
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 60_000,
     })
@@ -481,19 +482,30 @@ async function triggerAutoOptimization(fetchResult) {
 
       try {
         const optResult = JSON.parse(stdout)
+        const datasetMeta = {
+          datasetType: 'realtime',
+          viewDate: fetchResult.date,
+          snapshotAt: fetchResult.fetched_at ? formatBeijingDateTime(fetchResult.fetched_at) : formatBeijingDateTime(),
+          isHistorical: false,
+          datasetId: null,
+          datasetName: '',
+        }
+        const datasetWithMeta = { ...optResult, _meta: datasetMeta }
 
         // 保存到数据库
         const db = getDb()
-        const dsName = `实时优化 ${new Date().toLocaleString('zh-CN')}`
+        const dsName = `实时优化 ${formatBeijingDateTime()}`
         const stmt = db.prepare('INSERT INTO datasets (name, data) VALUES (?, ?)')
-        const info = stmt.run(dsName, JSON.stringify(optResult))
+        const info = stmt.run(dsName, JSON.stringify(datasetWithMeta))
         const datasetId = Number(info.lastInsertRowid)
+        datasetWithMeta._meta = { ...datasetMeta, datasetId, datasetName: dsName }
 
         // 广播完整数据集 → 前端 StrategyContext 自动更新 → 所有页面图表刷新
         broadcastDatasetUpdated({
           datasetId,
           datasetName: dsName,
-          data: optResult,
+          meta: datasetWithMeta._meta,
+          data: datasetWithMeta,
         })
 
         console.log('[auto-opt] 优化完成, datasetId:', datasetId)
@@ -501,11 +513,11 @@ async function triggerAutoOptimization(fetchResult) {
         // 如有 critical 异动，追加预警话术推送
         const hasCritical = (fetchResult.alerts || []).some(a => a.severity === 'critical')
         if (hasCritical) {
-          const alertText = await generateAlertText(fetchResult, optResult)
+          const alertText = await generateAlertText(fetchResult, datasetWithMeta)
           broadcastOptimizationComplete({
             datasetId,
             datasetName: dsName,
-            summary: optResult.summary,
+            summary: datasetWithMeta.summary,
             alerts: fetchResult.alerts,
             suggestion: alertText,
           })

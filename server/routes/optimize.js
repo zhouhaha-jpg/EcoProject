@@ -8,6 +8,7 @@ import { spawn } from 'child_process'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { getDb } from '../db/index.js'
+import { getBeijingDate } from '../lib/time.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PYTHON_SCRIPT = join(__dirname, '..', 'python', 'optimizer.py')
@@ -21,7 +22,7 @@ const router = Router()
 function getRealtimeOverrides() {
   try {
     const db = getDb()
-    const today = new Date().toISOString().slice(0, 10)
+    const today = getBeijingDate()
     const rows = db.prepare(
       'SELECT hour, price_grid, ef_grid, shortwave_radiation FROM realtime_data WHERE data_date = ? ORDER BY hour'
     ).all(today)

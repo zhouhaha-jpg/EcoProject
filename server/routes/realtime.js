@@ -14,10 +14,12 @@ import { Router } from 'express'
 import { spawn } from 'child_process'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { getDb } from '../db/index.js'
+import { getDb, findRuntimeDatasetByViewDate, getLatestRuntimeDataset } from '../db/index.js'
+import { formatBeijingDateTime, formatSqliteUtcToBeijing, getBeijingDate } from '../lib/time.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const FETCHER_SCRIPT = join(__dirname, '..', 'python', 'data_fetcher.py')
+const OPTIMIZER_SCRIPT = join(__dirname, '..', 'python', 'optimizer.py')
 
 const router = Router()
 
@@ -52,6 +54,37 @@ function runFetcher(args = []) {
   })
 }
 
+function runOptimizer(params = {}) {
+  return new Promise((resolve, reject) => {
+    const py = spawn('python', [OPTIMIZER_SCRIPT], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 300_000,
+    })
+
+    let stdout = ''
+    let stderr = ''
+
+    py.stdout.on('data', (d) => { stdout += d.toString() })
+    py.stderr.on('data', (d) => { stderr += d.toString() })
+
+    py.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`optimizer exited ${code}: ${stderr.slice(0, 300)}`))
+      } else {
+        try {
+          resolve(JSON.parse(stdout))
+        } catch {
+          reject(new Error(`Invalid JSON from optimizer: ${stdout.slice(0, 200)}`))
+        }
+      }
+    })
+
+    py.on('error', (err) => reject(err))
+    py.stdin.write(JSON.stringify({ mode: 'all', params }))
+    py.stdin.end()
+  })
+}
+
 /**
  * GET /api/realtime/latest
  * 返回今天的 24h 实时数据（若无数据则自动触发采集）
@@ -59,7 +92,7 @@ function runFetcher(args = []) {
 router.get('/latest', async (req, res) => {
   try {
     const db = getDb()
-    const today = new Date().toISOString().slice(0, 10)
+    const today = getBeijingDate()
     const rows = db.prepare(
       'SELECT * FROM realtime_data WHERE data_date = ? ORDER BY hour'
     ).all(today)
@@ -71,11 +104,48 @@ router.get('/latest', async (req, res) => {
     // 无数据, 自动触发一次采集
     const config = getParkConfig(db)
     const result = await runFetcher([
-      '--once', '--lat', String(config.latitude), '--lon', String(config.longitude), '--dramatic'
+      '--once', '--lat', String(config.latitude), '--lon', String(config.longitude)
     ])
     res.json(result)
   } catch (err) {
     console.error('[realtime/latest]', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.get('/display', async (req, res) => {
+  try {
+    const db = getDb()
+    const requestedDate = req.query.date ? String(req.query.date) : ''
+
+    if (requestedDate && !/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) {
+      return res.status(400).json({ error: 'date 参数格式必须为 YYYY-MM-DD' })
+    }
+
+    if (requestedDate) {
+      const cached = findRuntimeDatasetByViewDate(requestedDate)
+      if (cached) {
+        const response = normalizeDatasetResponse(cached, requestedDate, 'history')
+        return res.json(response)
+      }
+
+      const built = await buildDatasetForDate(db, requestedDate, { save: true, datasetType: 'history' })
+      return res.json(built)
+    }
+
+    const latestDateRow = db.prepare(
+      'SELECT data_date FROM realtime_data ORDER BY data_date DESC LIMIT 1'
+    ).get()
+    const latestDate = latestDateRow?.data_date || getBeijingDate()
+
+    const latestDataset = getLatestRuntimeDataset('realtime') || getLatestRuntimeDataset()
+    if (latestDataset) {
+      return res.json(normalizeDatasetResponse(latestDataset, latestDate))
+    }
+    const built = await buildDatasetForDate(db, latestDate, { save: true, datasetType: 'realtime' })
+    res.json(built)
+  } catch (err) {
+    console.error('[realtime/display]', err)
     res.status(500).json({ error: err.message })
   }
 })
@@ -282,7 +352,7 @@ function formatRows(rows, dateStr) {
     priceSrc = r.price_source
     solarSrc = r.solar_source
     carbonSrc = r.carbon_source
-    fetchedAt = r.fetched_at
+    fetchedAt = formatSqliteUtcToBeijing(r.fetched_at)
   }
 
   // 构造 optimizer_overrides
@@ -308,6 +378,91 @@ function formatRows(rows, dateStr) {
       G_scale: Math.round(gScale * 10000) / 10000,
     },
     fetched_at: fetchedAt,
+  }
+}
+
+function buildDatasetMeta({ row, datasetType = 'realtime', viewDate, snapshotAt }) {
+  const inferredType = row?.data?._meta?.datasetType
+    ?? (row?.name?.startsWith('时光回溯 ') ? 'history' : datasetType)
+  const resolvedType = datasetType === 'history' ? 'history' : inferredType
+  const inferredDate = row?.data?._meta?.viewDate ?? viewDate ?? extractDateFromName(row?.name) ?? getBeijingDate()
+  const inferredSnapshot = normalizeSnapshotAt(row?.data?._meta?.snapshotAt || snapshotAt)
+    || (row?.created_at ? formatSqliteUtcToBeijing(row.created_at) : formatBeijingDateTime())
+
+  return {
+    datasetType: resolvedType,
+    viewDate: inferredDate,
+    snapshotAt: inferredSnapshot,
+    isHistorical: resolvedType === 'history',
+    datasetId: row?.id ?? null,
+    datasetName: row?.name ?? '',
+  }
+}
+
+function normalizeSnapshotAt(value) {
+  if (!value) return ''
+  const parsed = new Date(value)
+  if (!Number.isNaN(parsed.getTime())) {
+    return formatBeijingDateTime(parsed)
+  }
+  return String(value).replace('T', ' ').slice(0, 19)
+}
+
+function normalizeDatasetResponse(row, fallbackDate = '', datasetType = 'realtime') {
+  const meta = buildDatasetMeta({ row, viewDate: fallbackDate, datasetType })
+  const data = { ...row.data, _meta: meta }
+  return { data, meta, id: row.id, name: row.name }
+}
+
+function extractDateFromName(name = '') {
+  const match = String(name).match(/\d{4}-\d{2}-\d{2}/)
+  return match?.[0] ?? ''
+}
+
+async function ensureRowsForDate(db, dateStr) {
+  const existing = db.prepare(
+    'SELECT * FROM realtime_data WHERE data_date = ? ORDER BY hour'
+  ).all(dateStr)
+
+  if (existing.length >= 24) {
+    return formatRows(existing, dateStr)
+  }
+
+  const config = getParkConfig(db)
+  return runFetcher([
+    '--once',
+    '--date', dateStr,
+    '--lat', String(config.latitude),
+    '--lon', String(config.longitude),
+  ])
+}
+
+async function buildDatasetForDate(db, dateStr, { save = false, datasetType = 'history' } = {}) {
+  const realtimePayload = await ensureRowsForDate(db, dateStr)
+  const optimized = await runOptimizer(realtimePayload.optimizer_overrides || {})
+  const meta = buildDatasetMeta({
+    datasetType,
+    viewDate: dateStr,
+    snapshotAt: realtimePayload.fetched_at || formatBeijingDateTime(),
+  })
+  const data = { ...optimized, _meta: meta }
+
+  let datasetId = null
+  let datasetName = ''
+  if (save) {
+    datasetName = datasetType === 'history'
+      ? `时光回溯 ${dateStr} ${formatBeijingDateTime()}`
+      : `实时优化 ${formatBeijingDateTime()}`
+    const info = db.prepare('INSERT INTO datasets (name, data) VALUES (?, ?)').run(datasetName, JSON.stringify(data))
+    datasetId = Number(info.lastInsertRowid)
+    data._meta = { ...meta, datasetId, datasetName }
+  }
+
+  return {
+    data,
+    meta: data._meta,
+    id: datasetId,
+    name: datasetName,
   }
 }
 
