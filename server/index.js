@@ -9,12 +9,15 @@
 import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
+import { createServer } from 'http'
 import OpenAI from 'openai'
 import config from './config.js'
-import { initDb } from './db/index.js'
+import { initDb, getDb } from './db/index.js'
 import datasetsRouter from './routes/datasets.js'
 import optimizeRouter from './routes/optimize.js'
 import conversationsRouter from './routes/conversations.js'
+import realtimeRouter from './routes/realtime.js'
+import { mountWebSocket, broadcastDataUpdate, broadcastAlert, broadcastOptimizationComplete, broadcastHealthUpdate, broadcastDatasetUpdated } from './ws.js'
 
 initDb()
 
@@ -25,6 +28,7 @@ app.use(express.json({ limit: '10mb' }))
 app.use('/api/datasets', datasetsRouter)
 app.use('/api/optimize', optimizeRouter)
 app.use('/api/conversations', conversationsRouter)
+app.use('/api/realtime', realtimeRouter)
 
 const apiKey = config.apiKey
 const baseURL = process.env.API_BASE_URL || config.apiBaseUrl
@@ -92,7 +96,14 @@ const AGENT_SYSTEM_PROMPT = SYSTEM_PROMPT + `
 ### Pareto 分析
 - **pareto_scan** - 多轮参数扫描：对指定参数取 15-20 个值分别求解，得到成本-碳排 Pareto 前沿散点图。与 run_whatif 区别：run_whatif 是单情景对比 6 策略；pareto_scan 是同一策略下多参数值扫描。values 必须为 15-20 个均匀分布的值，如 n_PV 5000-30000 可取 [5000,6250,7500,...,28750,30000] 共约 18 个点。
 
-**重要**：优化求解可能需要 10-60 秒，请提前告知用户正在计算。求解完成后自动对比前后差异并给出建议。`
+**重要**：优化求解可能需要 10-60 秒，请提前告知用户正在计算。求解完成后自动对比前后差异并给出建议。
+
+### 实时数据与市场分析（新能力）
+- **get_realtime_data** - 获取当前实时外部数据：电价(元/kWh)、太阳辐射(W/m²)、碳因子(tCO2/kWh)的24h曲线及数据来源标识。可指定日期查看历史。
+- **get_alerts** - 获取最近的市场异动预警事件：电价波动、碳因子突变等，包含预警等级和详情。
+- **carbon_electricity_analysis** - 碳电协同分析：计算含碳税等效电价 P_eff = P_grid + EF_grid × C_carbon，找出"便宜但碳高"和"贵但碳低"的时段。当用户询问"到底是省钱还是减碳"、"碳电套利"等问题时使用。
+
+当检测到市场异动时，你应主动分析其对当前调度方案的影响，并建议用户是否需要重新优化。`
 
 const TOOLS = [
   {
@@ -220,6 +231,47 @@ const TOOLS = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'get_realtime_data',
+      description: '获取当前实时外部数据（电价、太阳辐射、碳因子），用于分析市场趋势和制定策略。返回今日24h的电价曲线、光照曲线、碳因子曲线及数据来源标识。',
+      parameters: {
+        type: 'object',
+        properties: {
+          date: { type: 'string', description: '日期 YYYY-MM-DD，省略则取今天' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_alerts',
+      description: '获取最近的市场异动预警事件列表，包含电价波动、碳因子突变等预警信息。',
+      parameters: {
+        type: 'object',
+        properties: {
+          limit: { type: 'integer', description: '返回条数，默认5' },
+          severity: { type: 'string', enum: ['info', 'warning', 'critical'], description: '筛选严重程度' },
+        },
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'carbon_electricity_analysis',
+      description: '碳电协同分析：将实时电价与碳因子叠加，计算含碳税等效电价曲线 P_eff(t) = P_grid(t) + EF_grid(t) × C_carbon。找出"便宜但碳高"和"贵但碳低"的时段，揭示碳电套利机会。',
+      parameters: {
+        type: 'object',
+        properties: {
+          carbon_price: { type: 'number', description: '碳交易价格(元/tCO2)，默认90' },
+          date: { type: 'string', description: '日期 YYYY-MM-DD，省略则取今天' },
+        },
+      },
+    },
+  },
 ]
 
 app.post('/api/chat', async (req, res) => {
@@ -324,8 +376,201 @@ app.post('/api/chat', async (req, res) => {
 })
 
 const PORT = process.env.PORT || 5000
-app.listen(PORT, () => {
+const server = createServer(app)
+mountWebSocket(server)
+
+// ═══ 数据采集调度 + 影子优化 ═══
+import { spawn } from 'child_process'
+import { fileURLToPath } from 'url'
+import { dirname, join } from 'path'
+
+const __indexDir = dirname(fileURLToPath(import.meta.url))
+const FETCHER_SCRIPT = join(__indexDir, 'python', 'data_fetcher.py')
+const OPTIMIZER_SCRIPT = join(__indexDir, 'python', 'optimizer.py')
+
+/**
+ * 执行一次数据采集并触发影子优化（如有异动）
+ */
+async function scheduledFetch() {
+  try {
+    const db = getDb()
+    // 读取园区坐标
+    const latRow = db.prepare("SELECT value FROM park_config WHERE key='latitude'").get()
+    const lonRow = db.prepare("SELECT value FROM park_config WHERE key='longitude'").get()
+    const lat = latRow ? latRow.value : '30.26'
+    const lon = lonRow ? lonRow.value : '120.19'
+
+    const py = spawn('python', [FETCHER_SCRIPT, '--once', '--lat', lat, '--lon', lon, '--dramatic'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 60_000,
+    })
+
+    let stdout = ''
+    let stderr = ''
+    py.stdout.on('data', (d) => { stdout += d.toString() })
+    py.stderr.on('data', (d) => { stderr += d.toString() })
+
+    py.on('close', async (code) => {
+      if (stderr) console.log('[scheduler stderr]', stderr.slice(0, 300))
+      if (code !== 0) {
+        console.error('[scheduler] 数据采集失败, exit:', code)
+        return
+      }
+
+      try {
+        const result = JSON.parse(stdout)
+
+        // 广播数据更新
+        broadcastDataUpdate({
+          date: result.date,
+          prices: result.prices,
+          solar: result.solar,
+          carbon: result.carbon,
+          sources: result.sources,
+          fetched_at: result.fetched_at,
+        })
+
+        // 广播健康状态
+        broadcastHealthUpdate(result.sources)
+
+        // 如果有异动，广播预警事件
+        if (result.alerts && result.alerts.length > 0) {
+          for (const alert of result.alerts) {
+            broadcastAlert(alert)
+          }
+        }
+
+        // 每次采集后自动重新优化 → 结果推送前端刷新所有页面图表
+        triggerAutoOptimization(result)
+      } catch (e) {
+        console.error('[scheduler] 解析结果失败:', e.message)
+      }
+    })
+  } catch (e) {
+    console.error('[scheduler] 调度出错:', e.message)
+  }
+}
+
+/**
+ * 自动优化：每次数据采集后运行优化器，将完整结果推送前端。
+ * 如有 critical 异动，还额外生成 LLM 预警话术并推送 ProactiveAlert。
+ */
+async function triggerAutoOptimization(fetchResult) {
+  try {
+    console.log('[auto-opt] 正在使用最新实时数据运行优化...')
+    const overrides = fetchResult.optimizer_overrides || {}
+
+    const py = spawn('python', [OPTIMIZER_SCRIPT], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 300_000,
+    })
+
+    let stdout = ''
+    let stderr = ''
+    py.stdout.on('data', (d) => { stdout += d.toString() })
+    py.stderr.on('data', (d) => { stderr += d.toString() })
+
+    py.stdin.write(JSON.stringify({ mode: 'all', params: overrides }))
+    py.stdin.end()
+
+    py.on('close', async (code) => {
+      if (code !== 0) {
+        console.error('[auto-opt] 优化失败:', stderr.slice(0, 300))
+        return
+      }
+
+      try {
+        const optResult = JSON.parse(stdout)
+
+        // 保存到数据库
+        const db = getDb()
+        const dsName = `实时优化 ${new Date().toLocaleString('zh-CN')}`
+        const stmt = db.prepare('INSERT INTO datasets (name, data) VALUES (?, ?)')
+        const info = stmt.run(dsName, JSON.stringify(optResult))
+        const datasetId = Number(info.lastInsertRowid)
+
+        // 广播完整数据集 → 前端 StrategyContext 自动更新 → 所有页面图表刷新
+        broadcastDatasetUpdated({
+          datasetId,
+          datasetName: dsName,
+          data: optResult,
+        })
+
+        console.log('[auto-opt] 优化完成, datasetId:', datasetId)
+
+        // 如有 critical 异动，追加预警话术推送
+        const hasCritical = (fetchResult.alerts || []).some(a => a.severity === 'critical')
+        if (hasCritical) {
+          const alertText = await generateAlertText(fetchResult, optResult)
+          broadcastOptimizationComplete({
+            datasetId,
+            datasetName: dsName,
+            summary: optResult.summary,
+            alerts: fetchResult.alerts,
+            suggestion: alertText,
+          })
+        }
+      } catch (e) {
+        console.error('[auto-opt] 处理结果失败:', e.message)
+      }
+    })
+  } catch (e) {
+    console.error('[auto-opt] 触发失败:', e.message)
+  }
+}
+
+/**
+ * 生成 Agent 预警话术（LLM 降级为模板）
+ */
+async function generateAlertText(fetchResult, optResult) {
+  // 尝试 LLM 生成
+  if (openai) {
+    try {
+      const alertSummary = (fetchResult.alerts || []).map(a => `${a.severity}: ${a.title}`).join('\n')
+      const esSummary = optResult.summary?.es
+      const prompt = `你是智慧园区调度平台的预警播报员，请基于以下异动信息和优化结果生成一条简洁的预警播报（约100字）：
+
+异动事件：
+${alertSummary}
+
+重新优化后 ES 方案：
+成本 = ${esSummary?.cost?.toFixed(2) ?? '-'} 元
+碳排 = ${esSummary?.carbon?.toFixed(2) ?? '-'} tCO2
+
+请给出：1. 异动概述 2. 建议操作（一句话）`
+
+      const completion = await openai.chat.completions.create({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        max_tokens: 300,
+        temperature: 0.7,
+      })
+      const text = completion.choices[0]?.message?.content
+      if (text) return text
+    } catch (e) {
+      console.warn('[shadow] LLM 话术生成失败，降级为模板:', e.message)
+    }
+  }
+
+  // 降级模板
+  const alerts = fetchResult.alerts || []
+  const critical = alerts.find(a => a.severity === 'critical')
+  const esSummary = optResult.summary?.es
+  if (critical && esSummary) {
+    return `⚠️ ${critical.title}。系统已自动重新优化调度方案，ES方案预估成本 ${esSummary.cost?.toFixed(0)} 元，碳排 ${esSummary.carbon?.toFixed(2)} tCO2。建议查看并应用新方案。`
+  }
+  return '检测到市场异动，系统已自动重新优化，建议查看最新调度方案。'
+}
+
+// 启动时立即执行一次数据采集
+setTimeout(() => scheduledFetch(), 3000)
+
+// 每小时执行一次
+setInterval(() => scheduledFetch(), 60 * 60 * 1000)
+
+server.listen(PORT, () => {
   console.log(`Agent API: http://localhost:${PORT}`)
+  console.log(`WebSocket: ws://localhost:${PORT}/ws`)
   if (!apiKey) console.warn('警告: 未配置 API Key，/api/chat 将返回 503')
   else console.log(`模型: ${model} | API: ${baseURL}`)
 })

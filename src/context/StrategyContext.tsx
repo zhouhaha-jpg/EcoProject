@@ -25,6 +25,7 @@ const StrategyContext = createContext<(StrategyContextValue & {
   loadParetoData: (data: ParetoData, label: string) => void
   paretoLabel: string | null
   paretoData: ParetoData | null
+  updateDataset: (data: Record<string, unknown>) => void
 }) | null>(null)
 
 const ALL_STRATEGIES: StrategyKey[] = ['uci', 'cicos', 'cicar', 'cicom', 'pv', 'es']
@@ -91,6 +92,11 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
     setScenarioLabel(null)
   }, [])
 
+  /** 接收实时优化推送的完整数据集，更新所有页面图表 */
+  const updateDataset = useCallback((data: Record<string, unknown>) => {
+    setDataset(data as unknown as typeof DATASET)
+  }, [])
+
   useEffect(() => {
     fetchDefaultDataset()
       .then((data) => {
@@ -125,6 +131,7 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
       loadParetoData,
       paretoLabel,
       paretoData,
+      updateDataset,
     }}>
       {children}
     </StrategyContext.Provider>

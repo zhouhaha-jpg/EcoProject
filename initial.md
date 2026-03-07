@@ -2,7 +2,7 @@
 
 > **新 Agent 必须在开始开发前完整阅读此文档。**
 > 本文档以当前仓库代码为准，记录真实架构、已落地能力、遗留限制与注意事项。
-> 生成日期：2026-03-07
+> 生成日期：2026-03-07（最后更新：自动优化链路闭环 + 实时数据面板 + 全页面图表自动刷新）
 
 ---
 
@@ -39,7 +39,9 @@
 | 后端框架 | Express 4.21 | Agent、数据集、优化接口 |
 | LLM SDK | OpenAI SDK 4.52 | 兼容 OpenAI / 智谱等 OpenAI 风格接口 |
 | 数据库存储 | better-sqlite3 | 数据集和对话历史持久化 |
+| WebSocket | ws | 实时数据推送 |
 | 优化求解 | Python + NumPy + SciPy | 当前主求解链路 |
+| 实时数据采集 | Python + requests + APScheduler | Open-Meteo 气象 / 电价模拟 / 碳因子建模 |
 | 桌面端 | Electron | 仓库含 `electron/`，用于 Windows 客户端构建 |
 
 > ⚠️ `zustand` 已安装，但当前主状态管理仍是 React Context，不是 Zustand。
@@ -57,18 +59,23 @@ EcoProject/
 │   ├── main.js                           ← Electron 主进程入口
 │   └── preload.cjs                       ← 预加载脚本
 ├── server/
-│   ├── index.js                          ← Express 后端入口 + /api/chat
+│   ├── index.js                          ← Express 后端入口 + /api/chat + WebSocket + 定时采集
 │   ├── config.js                         ← API Key / Base URL / 模型配置
+│   ├── ws.js                             ← WebSocket 服务 (实时推送数据更新/预警/优化结果)
 │   ├── routes/
 │   │   ├── conversations.js              ← 对话历史 API
 │   │   ├── datasets.js                   ← 数据集 API
-│   │   └── optimize.js                   ← 优化求解 API
+│   │   ├── optimize.js                   ← 优化求解 API (已集成实时数据自动注入)
+│   │   └── realtime.js                   ← 实时数据 API (气象/电价/碳因子/健康度/预警/配置)
 │   ├── db/
 │   │   ├── index.js                      ← SQLite 初始化与访问
-│   │   ├── schema.sql                    ← 数据集与对话历史表结构
+│   │   ├── schema.sql                    ← 数据集、对话、实时数据、健康度、预警、园区配置表
 │   │   └── seed.js                       ← 默认数据集种子
 │   ├── python/
 │   │   ├── optimizer.py                  ← 当前主优化器（Python + SciPy）
+│   │   ├── data_fetcher.py               ← 实时数据采集调度器 (Open-Meteo + 电价模拟 + 碳因子)
+│   │   ├── carbon_model.py               ← 风光 → 碳排放因子估算模型
+│   │   ├── price_simulator.py            ← GBM 电价模拟器 (浙江TOU基准 + 戏剧性种子)
 │   │   └── requirements.txt              ← Python 依赖
 │   └── matlab/
 │       └── optimize_system.m             ← 参数化 MATLAB 版本，当前非主执行链路
@@ -82,16 +89,18 @@ EcoProject/
 │   │   └── StrategyContext.tsx           ← 全局数据、场景数据、Pareto 数据状态
 │   ├── hooks/
 │   │   ├── useAgentChat.ts               ← Ask/Agent 对话与 tool_calls 编排
-│   │   └── useAgentContext.ts            ← 注入 LLM 的完整上下文
+│   │   ├── useAgentContext.ts            ← 注入 LLM 的完整上下文
+│   │   └── useRealtimeData.ts            ← WebSocket 客户端 + 实时数据状态管理
 │   ├── lib/
-│   │   ├── agentActions.ts               ← Agent 工具映射与执行
+│   │   ├── agentActions.ts               ← Agent 工具映射与执行 (含实时数据工具)
 │   │   └── api.ts                        ← 前端 API 客户端
 │   ├── components/
 │   │   ├── agent/
-│   │   │   ├── AgentSidebar.tsx          ← 侧边栏容器、历史对话、拖拽宽度
+│   │   │   ├── AgentSidebar.tsx          ← 侧边栏容器、历史对话、拖拽宽度、主动预警
 │   │   │   ├── AgentChat.tsx             ← 聊天窗口、工具链显示
 │   │   │   ├── AgentModeSwitch.tsx       ← Ask / Agent 模式切换
-│   │   │   └── ConversationList.tsx      ← 历史对话列表
+│   │   │   ├── ConversationList.tsx      ← 历史对话列表
+│   │   │   └── ProactiveAlert.tsx        ← Agent 主动预警弹窗 (影子优化/市场异动)
 │   │   ├── charts/
 │   │   │   ├── PrefixPowerChart.tsx      ← 按设备前缀的 6 方案功率图
 │   │   │   ├── EconomicIndicatorChart.tsx← 成本/碳排/综合指标图
@@ -109,7 +118,9 @@ EcoProject/
 │   │       ├── PanelBox.tsx              ← 通用面板容器
 │   │       ├── DigitalNumber.tsx         ← KPI 数字卡
 │   │       ├── StatusBadge.tsx           ← 状态标签
-│   │       └── SystemLog.tsx             ← 系统日志
+│   │       ├── SystemLog.tsx             ← 系统日志
+│   │       ├── DataSourceHealth.tsx      ← 数据源健康度指示器 (顶栏3路状态)
+│   │       └── ParkConfigPopover.tsx     ← 园区坐标配置弹窗
 │   ├── pages/
 │   │   ├── OverviewPage.tsx              ← 总览页
 │   │   ├── EconomicIndicatorsPage.tsx    ← 经济指标页
@@ -209,9 +220,18 @@ interface EcoDataset {
 | `GET /api/datasets` | 数据集列表 |
 | `GET /api/datasets/default` | 默认基准数据集 |
 | `GET /api/datasets/:id` | 指定数据集详情 |
-| `POST /api/optimize` | 全 6 策略求解，支持参数覆写与附加约束 |
+| `POST /api/optimize` | 全 6 策略求解，支持参数覆写与附加约束，自动注入实时数据 |
 | `POST /api/optimize/single` | 单策略求解，用于 Pareto 扫描 |
+| `GET /api/realtime/latest` | 最新 24h 实时数据（电价/光照/碳因子） |
+| `GET /api/realtime/history?date=` | 指定日期历史数据 |
+| `GET /api/realtime/health` | 三路数据源健康状态 |
+| `GET /api/realtime/alerts` | 预警事件列表 |
+| `POST /api/realtime/fetch` | 手动触发数据采集 |
+| `GET /api/realtime/config` | 获取园区配置（坐标等） |
+| `PUT /api/realtime/config` | 更新园区配置（支持前端修改坐标） |
+| `GET /api/realtime/dates` | 可用数据日期列表 |
 | `GET/POST/PUT/DELETE /api/conversations...` | 对话历史增删改查 |
+| `WebSocket /ws` | 实时推送：data_updated / alert / optimization_complete / health_update / dataset_updated |
 
 ### 6.2 Ask / Agent 两种模式
 
@@ -231,6 +251,9 @@ interface EcoDataset {
 | `trace_causality` | ✅ 完成 | 从完整 24h 数据中抽取指定时段设备状态，交给 LLM 解释 |
 | `pareto_scan` | ✅ 完成 | 多次调用 `/api/optimize/single` 扫描参数区间，并在前端生成 Pareto 图 |
 | `generate_chart` | ⚠️ 部分完成 | 当前只返回图表元信息，不会动态插入任意 ECharts 图表面板 |
+| `get_realtime_data` | ✅ 完成 | 获取最新或指定日期的 24h 实时数据（电价/光照/碳因子） |
+| `get_alerts` | ✅ 完成 | 获取预警事件列表，支持按严重程度与数量筛选 |
+| `carbon_electricity_analysis` | ✅ 完成 | 碳电联合分析，计算有效电力成本 P_eff 并找出最优/最贵时段 |
 
 ### 6.4 当前优化求解链路
 
@@ -251,6 +274,10 @@ interface EcoDataset {
 - `datasets`：存储默认数据集和每次推演/约束求解生成的新数据集
 - `conversations`：存储对话元信息（标题、模式、时间）
 - `conversation_messages`：存储具体消息和工具执行记录
+- `realtime_data`：24h 实时数据存储（电价/光照/碳因子/来源标签），UNIQUE(data_date, hour) + UPSERT
+- `data_source_health`：三路数据源健康状态（solar/price/carbon）
+- `alert_events`：预警事件日志（电价尖峰/碳排突变等）
+- `park_config`：园区配置键值对（lat/lon/park_name，支持前端修改）
 
 ---
 
@@ -312,14 +339,15 @@ interface EcoDataset {
 
 当前布局由三部分组成：
 
-1. 顶栏：平台标题 + 3 个状态芯片
+1. 顶栏：平台标题 + 数据源健康度指示器 + 园区坐标配置 + 3 个状态芯片
 2. 导航栏：总览、Agent工作区、经济指标、存储模块、5 个设备页 + 策略切换器
-3. 右侧 Agent 侧边栏：可折叠、可拖拽宽度、可切换历史对话
+3. 右侧 Agent 侧边栏：可折叠、可拖拽宽度、可切换历史对话、主动预警弹窗
 
 ### 8.3 Agent 侧边栏
 
-- `AgentSidebar.tsx`：负责注册 Agent 处理器，并承载历史对话列表
+- `AgentSidebar.tsx`：负责注册 Agent 处理器，并承载历史对话列表和主动预警弹窗
 - `AgentChat.tsx`：展示聊天内容、模式切换、工具链执行过程
+- `ProactiveAlert.tsx`：影子优化结果弹窗 + 普通预警列表，支持一键应用方案
 - 工具链显示风格参考 Cursor，显示为非气泡背景条
 
 ---
@@ -335,6 +363,12 @@ interface EcoDataset {
 5. 对话历史与求解结果都会落库，前端可重复打开历史对话。
 6. 总览页已进入 3D 化改造阶段，第一版采用白模园区而不是外部模型资源，优先验证布局、交互和数据映射。
 7. 总览页 3D 已完成镜头聚焦、Hover 动效、能量流线与动态导入，但真实 glb 资源仍处于准备阶段。
+8. 实时数据管线已建成：Open-Meteo 气象采集 → 浙江 TOU 电价 GBM 模拟 → 碳因子风光建模 → SQLite 存储 → WebSocket 推送 → 前端实时展示。
+9. Agent 新增主动预警能力：检测市场异动（电价尖峰/碳排突变）后自动触发影子优化，通过 WebSocket 推送结果，用户可一键应用。
+10. 园区坐标支持前端配置：通过 ParkConfigPopover 修改经纬度，影响 Open-Meteo 气象查询区域。
+11. 三级电价降级策略已实现：优先爬虫（预留）→ GBM 模拟器 → 静态 TOU 兜底。LLM 预警文本同样有降级兜底。
+12. 自动优化闭环已打通：每次数据采集后自动运行 Python 优化器 → 保存到 datasets 表 → 通过 WS `dataset_updated` 广播完整数据集 → 前端 StrategyContext 自动更新 → 所有页面图表同步刷新（经济指标/存储/电解槽/光伏/燃气轮机/PEM/电网）。
+13. 数据源指示器可点击：顶栏 ☀️⚡🌿 标签点击后弹出 24h 三路数据曲线面板（RealtimeDataPanel），展示电价/光照/碳因子实时折线图及统计值。
 
 ### 9.2 当前限制与未完成项
 
@@ -348,6 +382,16 @@ interface EcoDataset {
 | 镜头聚焦 / Hover / 能量流线 | ✅ 已完成 | 已用于总览页演示增强 |
 | 空白点击回默认纵览视角 | ✅ 已完成 | 可回到覆盖全园区模型的默认机位 |
 | 总览页 3D 动态导入 | ✅ 已完成 | 3D 场景已从主包拆分 |
+| 实时气象数据采集 | ✅ 已完成 | Open-Meteo API → solar/wind → SQLite |
+| 电价模拟 | ✅ 已完成 | 浙江 TOU 基准 + GBM 模拟器 + 三级降级 |
+| 碳因子建模 | ✅ 已完成 | 风光出力 → 新能源占比 → 碳排放因子 |
+| 实时数据注入优化器 | ✅ 已完成 | optimize.js 自动从 SQLite 读取并注入 overrides |
+| 自动优化全链路闭环 | ✅ 已完成 | 每次采集 → 自动重新优化 → WS 推送 → StrategyContext 更新 → 全页面图表刷新 |
+| WebSocket 实时推送 | ✅ 已完成 | 数据更新/预警/影子优化/dataset_updated 四类事件推送 |
+| 数据源健康度指示器 | ✅ 已完成 | 顶栏三路状态可点击查看 24h 数据曲线面板 |
+| Agent 主动预警 | ✅ 已完成 | 影子优化弹窗 + 一键应用方案 |
+| 园区坐标前端配置 | ✅ 已完成 | ParkConfigPopover + PUT /api/realtime/config |
+| LLM 降级兜底 | ✅ 已完成 | generateAlertText() 先尝试 LLM 生成，失败则模板兜底 |
 | 动态图表生成 | ⚠️ 部分完成 | 工具存在，但尚未落成通用动态图表面板 |
 | Brush 区间统计表 | ⏳ 未实现 | PrefixPage 底部仍是提示占位 |
 | 真实 glb/gltf 模型替换 | ⏳ 未实现 | 当前先用程序化白模跑通交互 |
@@ -364,7 +408,7 @@ interface EcoDataset {
 - ❌ 不要修改 `tailwind.config.cjs` 的后缀，必须保持 `.cjs`
 - ❌ 不要在未核实代码的情况下把 `agent能力升级方案_168d7722.plan.md` 中的设想直接写成“已完成”
 - ❌ 不要误以为旧页面 `Energy.tsx` / `Production.tsx` / `Equipment.tsx` / `HSE.tsx` 仍是当前主路由
-- ❌ 不要擅自删除 Agent 工具名或接口名，前后端已有耦合：`run_whatif`、`add_constraint`、`trace_causality`、`generate_chart`、`pareto_scan`
+- ❌ 不要擅自删除 Agent 工具名或接口名，前后端已有耦合：`run_whatif`、`add_constraint`、`trace_causality`、`generate_chart`、`pareto_scan`、`get_realtime_data`、`get_alerts`、`carbon_electricity_analysis`
 - ❌ 任何视觉改动前，必须先对照 `power_dashboard.html`
 - ❌ 只要改动了项目结构、能力边界、路由或架构事实，就必须同步更新本 `initial.md`
 
@@ -392,7 +436,7 @@ cd "e:\科研绘图\EcoProject"
 npm run build
 ```
 
-默认开发时前端可通过 Vite 代理访问 `/api`，后端默认监听 `5000`。
+默认开发时前端可通过 Vite 代理访问 `/api`，后端默认监听 `5000`。后端启动时自动初始化 WebSocket（路径 `/ws`）并启动每小时定时数据采集。首次启动后 3 秒会自动执行一次数据采集。
 
 ---
 

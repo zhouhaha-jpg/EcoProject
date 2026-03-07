@@ -1,6 +1,11 @@
 import { Link, useLocation, Outlet } from 'react-router-dom'
+import { useEffect } from 'react'
 import StrategySwitcher from '@/components/ui/StrategySwitcher'
 import AgentSidebar from '@/components/agent/AgentSidebar'
+import DataSourceHealth from '@/components/ui/DataSourceHealth'
+import ParkConfigPopover from '@/components/ui/ParkConfigPopover'
+import { useRealtimeData } from '@/hooks/useRealtimeData'
+import { useStrategy } from '@/context/StrategyContext'
 import { LayoutDashboard, Zap, Sun, Flame, Battery, Plug, TrendingUp, Database, GitCompare } from 'lucide-react'
 
 const NAV = [
@@ -17,6 +22,15 @@ const NAV = [
 
 export default function MainLayout() {
   const location = useLocation()
+  const realtime = useRealtimeData()
+  const { updateDataset } = useStrategy()
+
+  // 当 WS 收到自动优化结果时，更新 StrategyContext.dataset → 所有页面图表自动刷新
+  useEffect(() => {
+    if (realtime.latestOptDataset) {
+      updateDataset(realtime.latestOptDataset)
+    }
+  }, [realtime.latestOptDataset, updateDataset])
 
   return (
     <div className="scanlines h-screen w-full flex flex-col overflow-hidden" style={{ background: '#070c14' }}>
@@ -26,7 +40,9 @@ export default function MainLayout() {
         <h1 style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: 20, fontWeight: 600, letterSpacing: 2, color: '#e8f4ff' }}>
           智慧园区 <span style={{ color: '#00d4ff', fontWeight: 700 }}>节能减排</span> 调度平台
         </h1>
-        <div className="ml-auto flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-3">
+          <DataSourceHealth sources={realtime.sources} health={realtime.health} connected={realtime.connected} lastUpdated={realtime.lastUpdated} prices={realtime.prices} solar={realtime.solar} carbon={realtime.carbon} />
+          <ParkConfigPopover />
           <span className="hud-chip">24 H</span>
           <span className="hud-chip">6 STRATEGIES</span>
           <span className="hud-chip live">● INTERACTIVE</span>
@@ -60,7 +76,7 @@ export default function MainLayout() {
           <Outlet />
         </main>
         <div className="relative shrink-0 h-full">
-          <AgentSidebar />
+          <AgentSidebar realtimeData={realtime} />
         </div>
       </div>
     </div>

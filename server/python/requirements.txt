@@ -1,2 +1,4 @@
 numpy>=1.24
 scipy>=1.10
+requests>=2.31
+apscheduler>=3.10

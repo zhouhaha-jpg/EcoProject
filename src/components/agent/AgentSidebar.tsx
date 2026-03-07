@@ -10,6 +10,7 @@ import { useAgentContext } from '@/hooks/useAgentContext'
 import { useAgentChat } from '@/hooks/useAgentChat'
 import AgentChat from './AgentChat'
 import ConversationList from './ConversationList'
+import ProactiveAlert from './ProactiveAlert'
 import { MessageSquare, ChevronRight, History } from 'lucide-react'
 import {
   fetchConversationsList,
@@ -18,12 +19,20 @@ import {
 } from '@/lib/api'
 import type { ConversationItem } from '@/lib/api'
 import type { ChatMessage } from '@/hooks/useAgentChat'
+import type { RealtimeState, ShadowOptimization } from '@/hooks/useRealtimeData'
 
 const MIN_WIDTH = 280
 const MAX_WIDTH = 520
 const DEFAULT_WIDTH = 380
 
-export default function AgentSidebar() {
+interface AgentSidebarProps {
+  realtimeData?: RealtimeState & {
+    dismissAlert: (index: number) => void
+    dismissShadowOpt: () => void
+  }
+}
+
+export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
   const navigate = useNavigate()
   const { setActiveStrategy, loadScenarioDataset, loadParetoData } = useStrategy()
   const ctx = useAgentContext()
@@ -105,13 +114,20 @@ export default function AgentSidebar() {
   const startXRef = useRef(0)
   const startWidthRef = useRef(0)
 
+  const handlers_ref = useRef<{
+    navigate: (path: string) => void
+    loadScenarioDataset: (ds: Record<string, unknown>, label: string) => void
+  } | null>(null)
+
   useEffect(() => {
-    registerAgentHandlers({
-      navigate: (path) => navigate(path),
-      switchStrategy: (key) => setActiveStrategy(key),
-      loadScenarioDataset: (ds, label) => loadScenarioDataset(ds, label),
-      loadParetoData: (data, label) => loadParetoData(data, label),
-    })
+    const h = {
+      navigate: (path: string) => navigate(path),
+      switchStrategy: setActiveStrategy,
+      loadScenarioDataset,
+      loadParetoData,
+    }
+    handlers_ref.current = h
+    registerAgentHandlers(h)
   }, [navigate, setActiveStrategy, loadScenarioDataset, loadParetoData])
 
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
@@ -211,6 +227,28 @@ export default function AgentSidebar() {
               </div>
             </div>
             <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+              {/* 主动预警卡片 */}
+              {realtimeData && (realtimeData.shadowOptimization || realtimeData.alerts.length > 0) && !showHistory && (
+                <div className="shrink-0 px-3 pt-2">
+                  <ProactiveAlert
+                    shadowOptimization={realtimeData.shadowOptimization}
+                    alerts={realtimeData.alerts}
+                    onApplyOptimization={(opt: ShadowOptimization) => {
+                      // 加载影子优化结果到方案对比页
+                      if (handlers_ref.current) {
+                        handlers_ref.current.loadScenarioDataset(
+                          opt as unknown as Record<string, unknown>,
+                          opt.datasetName
+                        )
+                        handlers_ref.current.navigate('/scenario')
+                      }
+                      realtimeData.dismissShadowOpt()
+                    }}
+                    onDismissOptimization={() => realtimeData.dismissShadowOpt()}
+                    onDismissAlert={(i: number) => realtimeData.dismissAlert(i)}
+                  />
+                </div>
+              )}
               {showHistory ? (
                 <ConversationList
                   list={conversationList}

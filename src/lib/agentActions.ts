@@ -14,6 +14,9 @@ export type AgentActionType =
   | 'trace_causality'
   | 'generate_chart'
   | 'pareto_scan'
+  | 'get_realtime_data'
+  | 'get_alerts'
+  | 'carbon_electricity_analysis'
 
 import type { ParetoData } from '@/context/StrategyContext'
 
@@ -217,6 +220,54 @@ export async function executeAction(
           success: true,
           message: `Pareto 扫描完成: ${paramName} 取 ${values.length} 个值，策略=${strategy}`,
           data: paretoPayload,
+        }
+      }
+
+      case 'get_realtime_data': {
+        const date = params.date ? String(params.date) : undefined
+        const url = date
+          ? `${API_BASE}/api/realtime/history?date=${encodeURIComponent(date)}`
+          : `${API_BASE}/api/realtime/latest`
+        const res = await fetch(url)
+        if (!res.ok) throw new Error(await res.text())
+        const data = await res.json()
+        return {
+          success: true,
+          message: `已获取${date ? ` ${date} 的` : '最新'}实时数据`,
+          data,
+        }
+      }
+
+      case 'get_alerts': {
+        const severity = params.severity ? String(params.severity) : undefined
+        const limitNum = params.limit ? Number(params.limit) : 10
+        let url = `${API_BASE}/api/realtime/alerts?limit=${limitNum}`
+        if (severity) url += `&severity=${encodeURIComponent(severity)}`
+        const res = await fetch(url)
+        if (!res.ok) throw new Error(await res.text())
+        const data = await res.json()
+        return {
+          success: true,
+          message: `获取到 ${Array.isArray(data) ? data.length : 0} 条预警`,
+          data,
+        }
+      }
+
+      case 'carbon_electricity_analysis': {
+        const res = await fetch(`${API_BASE}/api/realtime/latest`)
+        if (!res.ok) throw new Error(await res.text())
+        const data = await res.json()
+        const prices: number[] = data.prices || []
+        const carbons: number[] = data.carbon || []
+        // 计算有效电力成本 P_eff = price + carbon * carbon_price（碳价按 70 元/tCO2 估算）
+        const CARBON_PRICE = 70
+        const pEff = prices.map((p: number, i: number) => p + (carbons[i] || 0) * CARBON_PRICE)
+        const minHour = pEff.indexOf(Math.min(...pEff))
+        const maxHour = pEff.indexOf(Math.max(...pEff))
+        return {
+          success: true,
+          message: `碳电联合分析完成: 最优时段=${minHour + 1}h (P_eff=${pEff[minHour]?.toFixed(3)}), 最贵时段=${maxHour + 1}h (P_eff=${pEff[maxHour]?.toFixed(3)})`,
+          data: { prices, carbon: carbons, p_eff: pEff, best_hour: minHour + 1, worst_hour: maxHour + 1 },
         }
       }
 
