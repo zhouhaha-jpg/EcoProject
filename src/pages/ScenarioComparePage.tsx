@@ -79,7 +79,7 @@ export default function ScenarioComparePage() {
   }
 
   const baseSummary = dataset.summary
-  const scenSummary = scenarioDataset.summary as Record<StrategyKey, { cost: number; carbon: number; combined: number }>
+  const scenSummary = scenarioDataset!.summary as Record<StrategyKey, { cost: number; carbon: number; combined: number }>
 
   return (
     <div className="h-full min-h-0 overflow-auto" style={{ display: 'grid', gridTemplateRows: 'auto auto 1fr', gap: 12 }}>

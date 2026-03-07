@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "basePath": "/models/equipment",
+  "items": [
+    {
+      "id": "ca-main",
+      "name": "氯碱电解槽区",
+      "file": "chlor-alkali-electrolyzer.glb",
+      "status": "planned",
+      "searchKeywords": [
+        "chlor alkali electrolyzer skid",
+        "industrial electrolyzer stack",
+        "electrolysis plant"
+      ]
+    },
+    {
+      "id": "pem-unit",
+      "name": "PEM 区",
+      "file": "pem-fuel-cell.glb",
+      "status": "planned",
+      "searchKeywords": [
+        "PEM fuel cell skid",
+        "hydrogen fuel cell container",
+        "industrial fuel cell module"
+      ]
+    },
+    {
+      "id": "pv-field",
+      "name": "光伏阵列区",
+      "file": "solar-array.glb",
+      "status": "planned",
+      "searchKeywords": [
+        "solar array tracker",
+        "photovoltaic field",
+        "solar panel industrial"
+      ]
+    },
+    {
+      "id": "gm-unit",
+      "name": "燃气轮机区",
+      "file": "gas-turbine.glb",
+      "status": "planned",
+      "searchKeywords": [
+        "gas turbine package",
+        "industrial turbine skid",
+        "combined heat and power turbine"
+      ]
+    },
+    {
+      "id": "hs-tank",
+      "name": "储氢罐区",
+      "file": "hydrogen-storage-tank.glb",
+      "status": "planned",
+      "searchKeywords": [
+        "hydrogen storage tank",
+        "cryogenic storage vessel",
+        "industrial pressure vessel"
+      ]
+    },
+    {
+      "id": "es-bank",
+      "name": "储能模块区",
+      "file": "battery-energy-storage.glb",
+      "status": "planned",
+      "searchKeywords": [
+        "battery energy storage container",
+        "BESS container",
+        "industrial battery cabinet"
+      ]
+    }
+  ]
+}
