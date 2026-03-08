@@ -1,30 +1,39 @@
-/**
- * 实时数据 API
- * GET  /api/realtime/latest       — 最新 24h 三路数据
- * GET  /api/realtime/history      — 历史某日数据 (时光回溯)
- * GET  /api/realtime/health       — 数据源健康状态
- * GET  /api/realtime/alerts       — 最近预警事件
- * POST /api/realtime/fetch        — 手动触发一次数据采集
- * GET  /api/realtime/config       — 获取园区配置（坐标等）
- * PUT  /api/realtime/config       — 修改园区配置
- * GET  /api/realtime/dates        — 获取有数据的日期列表
- */
-
 import { Router } from 'express'
 import { spawn } from 'child_process'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { getDb, findRuntimeDatasetByViewDate, getLatestRuntimeDataset } from '../db/index.js'
-import { formatBeijingDateTime, formatSqliteUtcToBeijing, getBeijingDate } from '../lib/time.js'
+import {
+  formatBeijingDateTime,
+  formatSqliteUtcToBeijing,
+  getBeijingDate,
+  parseSqliteUtcTimestamp,
+} from '../lib/time.js'
+import { pushServerLog } from '../ws.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const FETCHER_SCRIPT = join(__dirname, '..', 'python', 'data_fetcher.py')
 const OPTIMIZER_SCRIPT = join(__dirname, '..', 'python', 'optimizer.py')
+const LIVE_REFRESH_INTERVAL_MS = 5 * 60 * 1000
 
 const router = Router()
 
-/** 运行 data_fetcher.py 并返回 JSON 结果 */
-function runFetcher(args = []) {
+function runFetcher(args = [], context = {}) {
+  const targetDate = context.targetDate || readArgValue(args, '--date') || getBeijingDate()
+  const latitude = readArgValue(args, '--lat')
+  const longitude = readArgValue(args, '--lon')
+
+  pushServerLog({
+    level: 'info',
+    status: 'start',
+    scope: 'fetch',
+    message: '开始获取外部实时数据',
+    targetDate,
+    range: `${targetDate} 00:00-23:00`,
+    algorithm: 'DataFetcher aggregator',
+    detail: latitude && longitude ? `坐标 ${latitude}, ${longitude}` : '使用默认园区坐标',
+  })
+
   return new Promise((resolve, reject) => {
     const py = spawn('python', [FETCHER_SCRIPT, ...args], {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -34,27 +43,91 @@ function runFetcher(args = []) {
     let stdout = ''
     let stderr = ''
 
-    py.stdout.on('data', (d) => { stdout += d.toString() })
-    py.stderr.on('data', (d) => { stderr += d.toString() })
+    py.stdout.on('data', (chunk) => {
+      stdout += chunk.toString()
+    })
+
+    py.stderr.on('data', (chunk) => {
+      stderr += chunk.toString()
+    })
 
     py.on('close', (code) => {
-      if (stderr) console.log('[data_fetcher stderr]', stderr.slice(0, 500))
+      if (stderr) {
+        console.log('[data_fetcher stderr]', stderr.slice(0, 500))
+      }
+
       if (code !== 0) {
-        reject(new Error(`data_fetcher exited ${code}: ${stderr.slice(0, 300)}`))
-      } else {
-        try {
-          resolve(JSON.parse(stdout))
-        } catch (e) {
-          reject(new Error(`Invalid JSON from data_fetcher: ${stdout.slice(0, 200)}`))
-        }
+        const error = new Error(`data_fetcher exited ${code}: ${stderr.slice(0, 300)}`)
+        pushServerLog({
+          level: 'err',
+          status: 'error',
+          scope: 'fetch',
+          message: '外部实时数据获取失败',
+          targetDate,
+          range: `${targetDate} 00:00-23:00`,
+          algorithm: 'DataFetcher aggregator',
+          detail: stderr.slice(0, 240) || error.message,
+        })
+        reject(error)
+        return
+      }
+
+      try {
+        const result = JSON.parse(stdout)
+        pushServerLog({
+          level: 'ok',
+          status: 'done',
+          scope: 'fetch',
+          message: '外部实时数据获取完成',
+          targetDate: result.date || targetDate,
+          range: `${result.date || targetDate} 00:00-23:00`,
+          algorithm: 'DataFetcher aggregator',
+          detail: `price=${result.sources?.price || '-'} | solar=${result.sources?.solar || '-'} | carbon=${result.sources?.carbon || '-'}`,
+        })
+        resolve(result)
+      } catch {
+        const error = new Error(`Invalid JSON from data_fetcher: ${stdout.slice(0, 200)}`)
+        pushServerLog({
+          level: 'err',
+          status: 'error',
+          scope: 'fetch',
+          message: '外部实时数据解析失败',
+          targetDate,
+          algorithm: 'DataFetcher aggregator',
+          detail: error.message,
+        })
+        reject(error)
       }
     })
 
-    py.on('error', (err) => reject(err))
+    py.on('error', (error) => {
+      pushServerLog({
+        level: 'err',
+        status: 'error',
+        scope: 'fetch',
+        message: '数据抓取进程启动失败',
+        targetDate,
+        algorithm: 'DataFetcher aggregator',
+        detail: error.message,
+      })
+      reject(error)
+    })
   })
 }
 
-function runOptimizer(params = {}) {
+function runOptimizer(params = {}, context = {}) {
+  const targetDate = context.targetDate || getBeijingDate()
+  pushServerLog({
+    level: 'info',
+    status: 'start',
+    scope: 'optimize',
+    message: '开始计算展示用优化结果',
+    targetDate,
+    range: `${targetDate} 00:00-23:00`,
+    algorithm: 'MILP 6-strategy dispatch',
+    detail: '基于数据库中最新 24h 实时参数',
+  })
+
   return new Promise((resolve, reject) => {
     const py = spawn('python', [OPTIMIZER_SCRIPT], {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -63,32 +136,79 @@ function runOptimizer(params = {}) {
 
     let stdout = ''
     let stderr = ''
+    const startedAt = Date.now()
 
-    py.stdout.on('data', (d) => { stdout += d.toString() })
-    py.stderr.on('data', (d) => { stderr += d.toString() })
+    py.stdout.on('data', (chunk) => {
+      stdout += chunk.toString()
+    })
+
+    py.stderr.on('data', (chunk) => {
+      stderr += chunk.toString()
+    })
 
     py.on('close', (code) => {
       if (code !== 0) {
-        reject(new Error(`optimizer exited ${code}: ${stderr.slice(0, 300)}`))
-      } else {
-        try {
-          resolve(JSON.parse(stdout))
-        } catch {
-          reject(new Error(`Invalid JSON from optimizer: ${stdout.slice(0, 200)}`))
-        }
+        const error = new Error(`optimizer exited ${code}: ${stderr.slice(0, 300)}`)
+        pushServerLog({
+          level: 'err',
+          status: 'error',
+          scope: 'optimize',
+          message: '展示优化计算失败',
+          targetDate,
+          range: `${targetDate} 00:00-23:00`,
+          algorithm: 'MILP 6-strategy dispatch',
+          detail: stderr.slice(0, 240) || error.message,
+        })
+        reject(error)
+        return
+      }
+
+      try {
+        const result = JSON.parse(stdout)
+        pushServerLog({
+          level: 'ok',
+          status: 'done',
+          scope: 'optimize',
+          message: '展示优化计算完成',
+          targetDate,
+          range: `${targetDate} 00:00-23:00`,
+          algorithm: 'MILP 6-strategy dispatch',
+          detail: `耗时 ${((Date.now() - startedAt) / 1000).toFixed(1)}s`,
+        })
+        resolve(result)
+      } catch {
+        const error = new Error(`Invalid JSON from optimizer: ${stdout.slice(0, 200)}`)
+        pushServerLog({
+          level: 'err',
+          status: 'error',
+          scope: 'optimize',
+          message: '展示优化输出解析失败',
+          targetDate,
+          algorithm: 'MILP 6-strategy dispatch',
+          detail: error.message,
+        })
+        reject(error)
       }
     })
 
-    py.on('error', (err) => reject(err))
+    py.on('error', (error) => {
+      pushServerLog({
+        level: 'err',
+        status: 'error',
+        scope: 'optimize',
+        message: '展示优化进程启动失败',
+        targetDate,
+        algorithm: 'MILP 6-strategy dispatch',
+        detail: error.message,
+      })
+      reject(error)
+    })
+
     py.stdin.write(JSON.stringify({ mode: 'all', params }))
     py.stdin.end()
   })
 }
 
-/**
- * GET /api/realtime/latest
- * 返回今天的 24h 实时数据（若无数据则自动触发采集）
- */
 router.get('/latest', async (req, res) => {
   try {
     const db = getDb()
@@ -96,20 +216,49 @@ router.get('/latest', async (req, res) => {
     const rows = db.prepare(
       'SELECT * FROM realtime_data WHERE data_date = ? ORDER BY hour'
     ).all(today)
+    const stale = isLiveRawDataStale(db, today)
 
-    if (rows.length >= 24) {
+    if (rows.length >= 24 && !stale) {
+      pushServerLog({
+        level: 'info',
+        status: 'done',
+        scope: 'cache',
+        message: '命中北京时间今日实时数据缓存',
+        targetDate: today,
+        range: `${today} 00:00-23:00`,
+        detail: `共 ${rows.length} 条小时数据`,
+      })
       return res.json(formatRows(rows, today))
     }
 
-    // 无数据, 自动触发一次采集
+    pushServerLog({
+      level: stale ? 'warn' : 'info',
+      status: 'progress',
+      scope: 'fetch',
+      message: stale ? '今日实时数据已过期，开始刷新' : '今日实时数据不足 24 条，开始补抓',
+      targetDate: today,
+      range: `${today} 00:00-23:00`,
+      detail: `当前 ${rows.length} 条 | 刷新窗口 ${LIVE_REFRESH_INTERVAL_MS / 60000} 分钟`,
+    })
+
     const config = getParkConfig(db)
     const result = await runFetcher([
-      '--once', '--lat', String(config.latitude), '--lon', String(config.longitude)
-    ])
+      '--once',
+      '--lat', String(config.latitude),
+      '--lon', String(config.longitude),
+    ], { targetDate: today })
     res.json(result)
-  } catch (err) {
-    console.error('[realtime/latest]', err)
-    res.status(500).json({ error: err.message })
+  } catch (error) {
+    console.error('[realtime/latest]', error)
+    pushServerLog({
+      level: 'err',
+      status: 'error',
+      scope: 'api',
+      message: '读取最新实时数据失败',
+      targetDate: getBeijingDate(),
+      detail: error.message,
+    })
+    res.status(500).json({ error: error.message })
   }
 })
 
@@ -119,46 +268,110 @@ router.get('/display', async (req, res) => {
     const requestedDate = req.query.date ? String(req.query.date) : ''
 
     if (requestedDate && !/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) {
-      return res.status(400).json({ error: 'date 参数格式必须为 YYYY-MM-DD' })
+      return res.status(400).json({ error: 'date must be YYYY-MM-DD' })
     }
 
     if (requestedDate) {
       const cached = findRuntimeDatasetByViewDate(requestedDate)
       if (cached) {
-        const response = normalizeDatasetResponse(cached, requestedDate, 'history')
-        return res.json(response)
+        pushServerLog({
+          level: 'info',
+          status: 'done',
+          scope: 'cache',
+          message: '命中时光回溯展示缓存',
+          targetDate: requestedDate,
+          range: `${requestedDate} 00:00-23:00`,
+          detail: `${cached.name} | datasetId ${cached.id}`,
+        })
+        return res.json(normalizeDatasetResponse(cached, requestedDate, 'history'))
       }
 
-      const built = await buildDatasetForDate(db, requestedDate, { save: true, datasetType: 'history' })
+      pushServerLog({
+        level: 'warn',
+        status: 'progress',
+        scope: 'history',
+        message: '历史展示缓存未命中，开始构建回溯结果',
+        targetDate: requestedDate,
+        range: `${requestedDate} 00:00-23:00`,
+        algorithm: 'Archive fetch + MILP 6-strategy dispatch',
+      })
+
+      const built = await buildDatasetForDate(db, requestedDate, {
+        save: true,
+        datasetType: 'history',
+      })
       return res.json(built)
     }
 
+    const today = getBeijingDate()
     const latestDateRow = db.prepare(
       'SELECT data_date FROM realtime_data ORDER BY data_date DESC LIMIT 1'
     ).get()
-    const latestDate = latestDateRow?.data_date || getBeijingDate()
-
+    const latestDate = latestDateRow?.data_date || today
     const latestDataset = getLatestRuntimeDataset('realtime') || getLatestRuntimeDataset()
-    if (latestDataset) {
+    const shouldRefreshLive = latestDate === today && isLiveRawDataStale(db, today)
+
+    if (latestDataset && !shouldRefreshLive) {
+      pushServerLog({
+        level: 'info',
+        status: 'done',
+        scope: 'cache',
+        message: '加载数据库中最新展示结果',
+        targetDate: latestDate,
+        range: `${latestDate} 00:00-23:00`,
+        detail: `${latestDataset.name} | datasetId ${latestDataset.id}`,
+      })
       return res.json(normalizeDatasetResponse(latestDataset, latestDate))
     }
-    const built = await buildDatasetForDate(db, latestDate, { save: true, datasetType: 'realtime' })
+
+    if (shouldRefreshLive) {
+      pushServerLog({
+        level: 'warn',
+        status: 'progress',
+        scope: 'display',
+        message: '实时展示快照已过期，开始重抓并重算',
+        targetDate: today,
+        range: `${today} 00:00-23:00`,
+        algorithm: 'Realtime fetch + MILP 6-strategy dispatch',
+        detail: `刷新窗口 ${LIVE_REFRESH_INTERVAL_MS / 60000} 分钟`,
+      })
+    } else {
+      pushServerLog({
+        level: 'warn',
+        status: 'progress',
+        scope: 'display',
+        message: '尚无展示结果缓存，开始即时构建',
+        targetDate: latestDate,
+        range: `${latestDate} 00:00-23:00`,
+        algorithm: 'Realtime cache + MILP 6-strategy dispatch',
+      })
+    }
+
+    const built = await buildDatasetForDate(db, shouldRefreshLive ? today : latestDate, {
+      save: true,
+      datasetType: shouldRefreshLive ? 'realtime' : latestDate === today ? 'realtime' : 'history',
+      forceRefresh: shouldRefreshLive,
+    })
     res.json(built)
-  } catch (err) {
-    console.error('[realtime/display]', err)
-    res.status(500).json({ error: err.message })
+  } catch (error) {
+    console.error('[realtime/display]', error)
+    pushServerLog({
+      level: 'err',
+      status: 'error',
+      scope: 'api',
+      message: '加载展示数据失败',
+      targetDate: String(req.query.date || getBeijingDate()),
+      detail: error.message,
+    })
+    res.status(500).json({ error: error.message })
   }
 })
 
-/**
- * GET /api/realtime/history?date=YYYY-MM-DD
- * 返回指定日期的 24h 数据
- */
 router.get('/history', async (req, res) => {
   try {
-    const dateStr = req.query.date
+    const dateStr = String(req.query.date || '')
     if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-      return res.status(400).json({ error: '需要 date 参数，格式 YYYY-MM-DD' })
+      return res.status(400).json({ error: 'date must be YYYY-MM-DD' })
     }
 
     const db = getDb()
@@ -167,50 +380,72 @@ router.get('/history', async (req, res) => {
     ).all(dateStr)
 
     if (rows.length >= 24) {
+      pushServerLog({
+        level: 'info',
+        status: 'done',
+        scope: 'history',
+        message: '命中历史 24h 数据缓存',
+        targetDate: dateStr,
+        range: `${dateStr} 00:00-23:00`,
+        detail: `共 ${rows.length} 条小时数据`,
+      })
       return res.json(formatRows(rows, dateStr))
     }
 
-    // 自动从 Archive API 获取历史数据
+    pushServerLog({
+      level: 'warn',
+      status: 'progress',
+      scope: 'history',
+      message: '历史数据不足 24 条，开始补抓',
+      targetDate: dateStr,
+      range: `${dateStr} 00:00-23:00`,
+      algorithm: 'Archive fetch',
+      detail: `当前 ${rows.length} 条`,
+    })
+
     const config = getParkConfig(db)
     const result = await runFetcher([
-      '--once', '--date', dateStr,
-      '--lat', String(config.latitude), '--lon', String(config.longitude)
-    ])
+      '--once',
+      '--date', dateStr,
+      '--lat', String(config.latitude),
+      '--lon', String(config.longitude),
+    ], { targetDate: dateStr })
+
     res.json(result)
-  } catch (err) {
-    console.error('[realtime/history]', err)
-    res.status(500).json({ error: err.message })
+  } catch (error) {
+    console.error('[realtime/history]', error)
+    pushServerLog({
+      level: 'err',
+      status: 'error',
+      scope: 'api',
+      message: '读取历史实时数据失败',
+      targetDate: String(req.query.date || ''),
+      detail: error.message,
+    })
+    res.status(500).json({ error: error.message })
   }
 })
 
-/**
- * GET /api/realtime/health
- * 返回三路数据源健康状态
- */
 router.get('/health', (req, res) => {
   try {
     const db = getDb()
     const rows = db.prepare('SELECT * FROM data_source_health').all()
     const health = {}
-    for (const r of rows) {
-      health[r.source_name] = {
-        status: r.status,
-        lastSuccess: r.last_success,
-        lastError: r.last_error,
-        fallbackActive: !!r.fallback_active,
-        updatedAt: r.updated_at,
+    for (const row of rows) {
+      health[row.source_name] = {
+        status: row.status,
+        lastSuccess: row.last_success,
+        lastError: row.last_error,
+        fallbackActive: !!row.fallback_active,
+        updatedAt: row.updated_at,
       }
     }
     res.json(health)
-  } catch (err) {
-    res.status(500).json({ error: err.message })
+  } catch (error) {
+    res.status(500).json({ error: error.message })
   }
 })
 
-/**
- * GET /api/realtime/alerts?limit=10&severity=warning
- * 返回最近预警事件
- */
 router.get('/alerts', (req, res) => {
   try {
     const db = getDb()
@@ -228,20 +463,16 @@ router.get('/alerts', (req, res) => {
 
     const rows = db.prepare(sql).all(...params)
     res.json(rows)
-  } catch (err) {
-    res.status(500).json({ error: err.message })
+  } catch (error) {
+    res.status(500).json({ error: error.message })
   }
 })
 
-/**
- * POST /api/realtime/fetch
- * 手动触发数据采集
- * body: { date?: string, seed?: number, dramatic?: boolean }
- */
 router.post('/fetch', async (req, res) => {
   try {
     const db = getDb()
     const config = getParkConfig(db)
+    const targetDate = req.body.date || getBeijingDate()
     const args = ['--once', '--lat', String(config.latitude), '--lon', String(config.longitude)]
 
     if (req.body.date) {
@@ -253,38 +484,49 @@ router.post('/fetch', async (req, res) => {
       args.push('--seed', String(req.body.seed))
     }
 
-    const result = await runFetcher(args)
+    pushServerLog({
+      level: 'info',
+      status: 'progress',
+      scope: 'api',
+      message: '收到手动数据抓取请求',
+      targetDate,
+      range: `${targetDate} 00:00-23:00`,
+      algorithm: 'DataFetcher aggregator',
+      detail: req.body.dramatic ? 'dramatic mode' : (req.body.seed != null ? `seed=${req.body.seed}` : 'normal mode'),
+    })
+
+    const result = await runFetcher(args, { targetDate })
     res.json(result)
-  } catch (err) {
-    console.error('[realtime/fetch]', err)
-    res.status(500).json({ error: err.message })
+  } catch (error) {
+    console.error('[realtime/fetch]', error)
+    pushServerLog({
+      level: 'err',
+      status: 'error',
+      scope: 'api',
+      message: '手动数据抓取失败',
+      targetDate: req.body?.date || getBeijingDate(),
+      detail: error.message,
+    })
+    res.status(500).json({ error: error.message })
   }
 })
 
-/**
- * GET /api/realtime/config
- * 获取园区配置
- */
 router.get('/config', (req, res) => {
   try {
     const db = getDb()
     const config = getParkConfig(db)
     res.json(config)
-  } catch (err) {
-    res.status(500).json({ error: err.message })
+  } catch (error) {
+    res.status(500).json({ error: error.message })
   }
 })
 
-/**
- * PUT /api/realtime/config
- * 修改园区配置
- * body: { latitude?: number, longitude?: number, park_name?: string }
- */
 router.put('/config', (req, res) => {
   try {
     const db = getDb()
     const allowed = ['latitude', 'longitude', 'park_name']
     const updates = []
+
     for (const key of allowed) {
       if (req.body[key] != null) {
         db.prepare(
@@ -293,40 +535,47 @@ router.put('/config', (req, res) => {
         updates.push(key)
       }
     }
+
+    if (updates.length) {
+      pushServerLog({
+        level: 'ok',
+        status: 'done',
+        scope: 'config',
+        message: '园区配置已更新',
+        detail: updates.join(', '),
+      })
+    }
+
     res.json({ updated: updates, config: getParkConfig(db) })
-  } catch (err) {
-    res.status(500).json({ error: err.message })
+  } catch (error) {
+    res.status(500).json({ error: error.message })
   }
 })
 
-/**
- * GET /api/realtime/dates
- * 获取数据库中有数据的日期列表
- */
 router.get('/dates', (req, res) => {
   try {
     const db = getDb()
     const rows = db.prepare(
       'SELECT DISTINCT data_date FROM realtime_data ORDER BY data_date DESC LIMIT 365'
     ).all()
-    res.json(rows.map(r => r.data_date))
-  } catch (err) {
-    res.status(500).json({ error: err.message })
+    res.json(rows.map((row) => row.data_date))
+  } catch (error) {
+    res.status(500).json({ error: error.message })
   }
 })
-
-// ─── helpers ───
 
 function getParkConfig(db) {
   const rows = db.prepare('SELECT key, value FROM park_config').all()
   const config = { latitude: 30.26, longitude: 120.19, park_name: '杭州示范园区' }
-  for (const r of rows) {
-    if (r.key === 'latitude' || r.key === 'longitude') {
-      config[r.key] = parseFloat(r.value)
+
+  for (const row of rows) {
+    if (row.key === 'latitude' || row.key === 'longitude') {
+      config[row.key] = parseFloat(row.value)
     } else {
-      config[r.key] = r.value
+      config[row.key] = row.value
     }
   }
+
   return config
 }
 
@@ -342,23 +591,21 @@ function formatRows(rows, dateStr) {
   let carbonSrc = 'fallback'
   let fetchedAt = ''
 
-  for (const r of rows) {
-    prices.push(r.price_grid)
-    solar.push(r.shortwave_radiation)
-    carbon.push(r.ef_grid)
-    wind10.push(r.wind_speed_10m)
-    wind80.push(r.wind_speed_80m)
-    temperature.push(r.temperature)
-    priceSrc = r.price_source
-    solarSrc = r.solar_source
-    carbonSrc = r.carbon_source
-    fetchedAt = formatSqliteUtcToBeijing(r.fetched_at)
+  for (const row of rows) {
+    prices.push(row.price_grid)
+    solar.push(row.shortwave_radiation)
+    carbon.push(row.ef_grid)
+    wind10.push(row.wind_speed_10m)
+    wind80.push(row.wind_speed_80m)
+    temperature.push(row.temperature)
+    priceSrc = row.price_source
+    solarSrc = row.solar_source
+    carbonSrc = row.carbon_source
+    fetchedAt = formatSqliteUtcToBeijing(row.fetched_at)
   }
 
-  // 构造 optimizer_overrides
-  const radArr = solar
-  const gMax = Math.max(...radArr, 1)
-  const gProfile = radArr.map(v => v / gMax)
+  const gMax = Math.max(...solar, 1)
+  const gProfile = solar.map((value) => value / gMax)
   const gScale = gMax / 1000 * 1.5
 
   return {
@@ -401,8 +648,8 @@ function buildDatasetMeta({ row, datasetType = 'realtime', viewDate, snapshotAt 
 
 function normalizeSnapshotAt(value) {
   if (!value) return ''
-  const parsed = new Date(value)
-  if (!Number.isNaN(parsed.getTime())) {
+  const parsed = parseBeijingTimestamp(value) ?? new Date(value)
+  if (!Number.isNaN(parsed?.getTime?.())) {
     return formatBeijingDateTime(parsed)
   }
   return String(value).replace('T', ' ').slice(0, 19)
@@ -419,12 +666,55 @@ function extractDateFromName(name = '') {
   return match?.[0] ?? ''
 }
 
-async function ensureRowsForDate(db, dateStr) {
+function readArgValue(args, flag) {
+  const index = args.indexOf(flag)
+  if (index === -1) return ''
+  return args[index + 1] ? String(args[index + 1]) : ''
+}
+
+function parseBeijingTimestamp(value) {
+  if (!value) return null
+  const text = String(value).trim()
+  if (!text) return null
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(text)) {
+    return new Date(text.replace(' ', 'T') + '+08:00')
+  }
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/.test(text)) {
+    return new Date(text + '+08:00')
+  }
+  const parsed = new Date(text)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+function getLatestRawFetchDate(db, dateStr) {
+  const row = db.prepare(
+    'SELECT fetched_at FROM realtime_data WHERE data_date = ? ORDER BY fetched_at DESC LIMIT 1'
+  ).get(dateStr)
+  return row?.fetched_at ? parseSqliteUtcTimestamp(row.fetched_at) : null
+}
+
+function isLiveRawDataStale(db, dateStr) {
+  if (dateStr !== getBeijingDate()) return false
+  const latestFetch = getLatestRawFetchDate(db, dateStr)
+  if (!latestFetch) return true
+  return Date.now() - latestFetch.getTime() > LIVE_REFRESH_INTERVAL_MS
+}
+
+async function ensureRowsForDate(db, dateStr, { forceRefresh = false } = {}) {
   const existing = db.prepare(
     'SELECT * FROM realtime_data WHERE data_date = ? ORDER BY hour'
   ).all(dateStr)
 
-  if (existing.length >= 24) {
+  if (existing.length >= 24 && !forceRefresh) {
+    pushServerLog({
+      level: 'info',
+      status: 'done',
+      scope: 'cache',
+      message: '构建展示结果时命中原始 24h 数据缓存',
+      targetDate: dateStr,
+      range: `${dateStr} 00:00-23:00`,
+      detail: `共 ${existing.length} 条小时数据`,
+    })
     return formatRows(existing, dateStr)
   }
 
@@ -434,12 +724,13 @@ async function ensureRowsForDate(db, dateStr) {
     '--date', dateStr,
     '--lat', String(config.latitude),
     '--lon', String(config.longitude),
-  ])
+  ], { targetDate: dateStr })
 }
 
-async function buildDatasetForDate(db, dateStr, { save = false, datasetType = 'history' } = {}) {
-  const realtimePayload = await ensureRowsForDate(db, dateStr)
-  const optimized = await runOptimizer(realtimePayload.optimizer_overrides || {})
+async function buildDatasetForDate(db, dateStr, options = {}) {
+  const { save = false, datasetType = 'history', forceRefresh = false } = options
+  const realtimePayload = await ensureRowsForDate(db, dateStr, { forceRefresh })
+  const optimized = await runOptimizer(realtimePayload.optimizer_overrides || {}, { targetDate: dateStr })
   const meta = buildDatasetMeta({
     datasetType,
     viewDate: dateStr,
@@ -456,6 +747,17 @@ async function buildDatasetForDate(db, dateStr, { save = false, datasetType = 'h
     const info = db.prepare('INSERT INTO datasets (name, data) VALUES (?, ?)').run(datasetName, JSON.stringify(data))
     datasetId = Number(info.lastInsertRowid)
     data._meta = { ...meta, datasetId, datasetName }
+
+    pushServerLog({
+      level: 'ok',
+      status: 'done',
+      scope: 'storage',
+      message: datasetType === 'history' ? '历史展示结果已入库' : '实时展示结果已入库',
+      targetDate: dateStr,
+      range: `${dateStr} 00:00-23:00`,
+      algorithm: 'SQLite datasets',
+      detail: `datasetId ${datasetId} | ${datasetName}`,
+    })
   }
 
   return {

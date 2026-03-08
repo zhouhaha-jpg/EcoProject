@@ -17,7 +17,7 @@ import datasetsRouter from './routes/datasets.js'
 import optimizeRouter from './routes/optimize.js'
 import conversationsRouter from './routes/conversations.js'
 import realtimeRouter from './routes/realtime.js'
-import { mountWebSocket, broadcastDataUpdate, broadcastAlert, broadcastOptimizationComplete, broadcastHealthUpdate, broadcastDatasetUpdated } from './ws.js'
+import { mountWebSocket, broadcastDataUpdate, broadcastAlert, broadcastOptimizationComplete, broadcastHealthUpdate, broadcastDatasetUpdated, pushServerLog } from './ws.js'
 import { formatBeijingDateTime } from './lib/time.js'
 
 initDb()
@@ -326,6 +326,24 @@ app.post('/api/chat', async (req, res) => {
         }
         res.write('data: [DONE]\n\n')
         res.end()
+        pushServerLog({
+          level: 'err',
+          status: 'error',
+          scope: 'scheduler',
+          message: '定时任务抓取实时外部数据失败',
+          algorithm: 'DataFetcher aggregator',
+          detail: stderr.slice(0, 240) || `exit ${code}`,
+        })
+        pushServerLog({
+          level: 'err',
+          status: 'error',
+          scope: 'optimize',
+          message: '后台自动实时优化失败',
+          targetDate: fetchResult.date,
+          range: `${fetchResult.date} 00:00-23:00`,
+          algorithm: 'MILP 6-strategy dispatch',
+          detail: stderr.slice(0, 240) || `exit ${code}`,
+        })
         return
       }
 
@@ -378,7 +396,6 @@ app.post('/api/chat', async (req, res) => {
 
 const PORT = process.env.PORT || 5000
 const server = createServer(app)
-mountWebSocket(server)
 
 // ═══ 数据采集调度 + 影子优化 ═══
 import { spawn } from 'child_process'
@@ -400,6 +417,14 @@ async function scheduledFetch() {
     const lonRow = db.prepare("SELECT value FROM park_config WHERE key='longitude'").get()
     const lat = latRow ? latRow.value : '30.26'
     const lon = lonRow ? lonRow.value : '120.19'
+    pushServerLog({
+      level: 'info',
+      status: 'start',
+      scope: 'scheduler',
+      message: '定时任务开始抓取实时外部数据',
+      detail: `坐标 ${lat}, ${lon}`,
+      algorithm: 'DataFetcher aggregator',
+    })
 
     const py = spawn('python', [FETCHER_SCRIPT, '--once', '--lat', lat, '--lon', lon], {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -420,6 +445,16 @@ async function scheduledFetch() {
 
       try {
         const result = JSON.parse(stdout)
+        pushServerLog({
+          level: 'ok',
+          status: 'done',
+          scope: 'scheduler',
+          message: '定时任务已完成实时数据抓取',
+          targetDate: result.date,
+          range: `${result.date} 00:00-23:00`,
+          algorithm: 'DataFetcher aggregator',
+          detail: `price=${result.sources?.price || '-'} | solar=${result.sources?.solar || '-'} | carbon=${result.sources?.carbon || '-'}`,
+        })
 
         // 广播数据更新
         broadcastDataUpdate({
@@ -438,6 +473,15 @@ async function scheduledFetch() {
         if (result.alerts && result.alerts.length > 0) {
           for (const alert of result.alerts) {
             broadcastAlert(alert)
+            pushServerLog({
+              level: alert.severity === 'critical' ? 'err' : 'warn',
+              status: 'progress',
+              scope: 'alert',
+              message: alert.title || '检测到异常预警',
+              targetDate: result.date,
+              range: `${result.date} 00:00-23:00`,
+              detail: alert.detail || alert.event_type || '',
+            })
           }
         }
 
@@ -460,6 +504,16 @@ async function triggerAutoOptimization(fetchResult) {
   try {
     console.log('[auto-opt] 正在使用最新实时数据运行优化...')
     const overrides = fetchResult.optimizer_overrides || {}
+    pushServerLog({
+      level: 'info',
+      status: 'start',
+      scope: 'optimize',
+      message: '后台开始执行自动实时优化',
+      targetDate: fetchResult.date,
+      range: `${fetchResult.date} 00:00-23:00`,
+      algorithm: 'MILP 6-strategy dispatch',
+      detail: '基于最新抓取的 24h 数据',
+    })
 
     const py = spawn('python', [OPTIMIZER_SCRIPT], {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -507,12 +561,31 @@ async function triggerAutoOptimization(fetchResult) {
           meta: datasetWithMeta._meta,
           data: datasetWithMeta,
         })
+        pushServerLog({
+          level: 'ok',
+          status: 'done',
+          scope: 'optimize',
+          message: '后台自动实时优化完成并已推送前端',
+          targetDate: fetchResult.date,
+          range: `${fetchResult.date} 00:00-23:00`,
+          algorithm: 'MILP 6-strategy dispatch',
+          detail: `datasetId ${datasetId} | ${dsName}`,
+        })
 
         console.log('[auto-opt] 优化完成, datasetId:', datasetId)
 
         // 如有 critical 异动，追加预警话术推送
         const hasCritical = (fetchResult.alerts || []).some(a => a.severity === 'critical')
         if (hasCritical) {
+          pushServerLog({
+            level: 'warn',
+            status: 'progress',
+            scope: 'alert',
+            message: '检测到 critical 异常，开始生成主动告警文案',
+            targetDate: fetchResult.date,
+            range: `${fetchResult.date} 00:00-23:00`,
+            algorithm: 'LLM proactive alert',
+          })
           const alertText = await generateAlertText(fetchResult, datasetWithMeta)
           broadcastOptimizationComplete({
             datasetId,
@@ -520,6 +593,15 @@ async function triggerAutoOptimization(fetchResult) {
             summary: datasetWithMeta.summary,
             alerts: fetchResult.alerts,
             suggestion: alertText,
+          })
+          pushServerLog({
+            level: 'ok',
+            status: 'done',
+            scope: 'alert',
+            message: '主动告警文案已生成并推送',
+            targetDate: fetchResult.date,
+            range: `${fetchResult.date} 00:00-23:00`,
+            algorithm: 'LLM proactive alert',
           })
         }
       } catch (e) {
@@ -575,12 +657,31 @@ ${alertSummary}
 }
 
 // 启动时立即执行一次数据采集
-setTimeout(() => scheduledFetch(), 3000)
+setTimeout(() => {
+  pushServerLog({
+    level: 'info',
+    status: 'progress',
+    scope: 'scheduler',
+    message: '初始化抓取将在 3 秒后启动',
+    algorithm: 'DataFetcher aggregator',
+  })
+  scheduledFetch()
+}, 3000)
 
 // 每小时执行一次
 setInterval(() => scheduledFetch(), 60 * 60 * 1000)
 
+server.on('error', (error) => {
+  if (error?.code === 'EADDRINUSE') {
+    console.error(`[server] Port ${PORT} is already in use. Stop the existing process or start with a different PORT.`)
+    console.error('[server] PowerShell example: $env:PORT=5001; npm run dev')
+    return
+  }
+  console.error('[server] startup error:', error)
+})
+
 server.listen(PORT, () => {
+  mountWebSocket(server)
   console.log(`Agent API: http://localhost:${PORT}`)
   console.log(`WebSocket: ws://localhost:${PORT}/ws`)
   if (!apiKey) console.warn('警告: 未配置 API Key，/api/chat 将返回 503')

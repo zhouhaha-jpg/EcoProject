@@ -43,6 +43,21 @@ export interface DatasetMeta {
   datasetName?: string
 }
 
+export type ServerLogLevel = 'info' | 'warn' | 'ok' | 'err'
+
+export interface ServerLogEntry {
+  id: string
+  time: string
+  level: ServerLogLevel
+  status: 'start' | 'progress' | 'done' | 'error' | 'info' | string
+  scope: string
+  message: string
+  detail?: string
+  targetDate?: string
+  range?: string
+  algorithm?: string
+}
+
 /** 完整数据集 */
 export interface EcoDataset {
   /** 各方案成本/碳排放汇总 */

@@ -1,16 +1,5 @@
-/**
- * WebSocket 客户端 + 实时数据状态管理
- *
- * 功能：
- * - 连接后端 WebSocket (/ws)，自动重连
- * - 维护 24h 电价/光照/碳因子实时数据
- * - 维护数据源健康状态
- * - 维护预警事件队列
- * - 轮询兜底（WS 断连时每 60s GET /api/realtime/latest）
- */
-
 import { useState, useEffect, useRef, useCallback } from 'react'
-import type { DatasetMeta } from '@/types'
+import type { DatasetMeta, ServerLogEntry } from '@/types'
 
 export interface DataSources {
   price: 'crawler' | 'simulator' | 'fallback'
@@ -58,6 +47,7 @@ export interface RealtimeState {
   shadowOptimization: ShadowOptimization | null
   loading: boolean
   latestOptDataset: LatestOptDatasetPayload | null
+  serverLogs: ServerLogEntry[]
 }
 
 const DEFAULT_SOURCES: DataSources = {
@@ -90,10 +80,18 @@ export function useRealtimeData(): RealtimeState & {
   const [shadowOptimization, setShadowOptimization] = useState<ShadowOptimization | null>(null)
   const [loading, setLoading] = useState(true)
   const [latestOptDataset, setLatestOptDataset] = useState<LatestOptDatasetPayload | null>(null)
+  const [serverLogs, setServerLogs] = useState<ServerLogEntry[]>([])
 
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>()
   const pollTimer = useRef<ReturnType<typeof setInterval>>()
+
+  const appendServerLog = useCallback((entry: ServerLogEntry) => {
+    setServerLogs((prev) => {
+      const next = [entry, ...prev.filter((item) => item.id !== entry.id)]
+      return next.slice(0, 200)
+    })
+  }, [])
 
   const fetchLatest = useCallback(async () => {
     try {
@@ -107,11 +105,11 @@ export function useRealtimeData(): RealtimeState & {
         setSources(data.sources || DEFAULT_SOURCES)
         setLastUpdated(data.fetched_at || new Date().toISOString())
         if (data.alerts?.length) {
-          setAlerts(prev => [...data.alerts, ...prev].slice(0, 20))
+          setAlerts((prev) => [...data.alerts, ...prev].slice(0, 20))
         }
       }
-    } catch (e) {
-      console.warn('[realtime] fetch 失败:', e)
+    } catch (error) {
+      console.warn('[realtime] fetch failed:', error)
     } finally {
       setLoading(false)
     }
@@ -128,13 +126,12 @@ export function useRealtimeData(): RealtimeState & {
     }
   }, [])
 
-  // WebSocket 连接
   const connectWs = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return
 
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
     const host = window.location.hostname
-    const port = 5000 // backend port
+    const port = 5000
     const url = `${protocol}://${host}:${port}/ws`
 
     try {
@@ -143,7 +140,6 @@ export function useRealtimeData(): RealtimeState & {
 
       ws.onopen = () => {
         setConnected(true)
-        // WS 连接成功，清除轮询
         if (pollTimer.current) {
           clearInterval(pollTimer.current)
           pollTimer.current = undefined
@@ -164,7 +160,7 @@ export function useRealtimeData(): RealtimeState & {
               }
               break
             case 'alert':
-              setAlerts(prev => [msg.payload, ...prev].slice(0, 20))
+              setAlerts((prev) => [msg.payload, ...prev].slice(0, 20))
               break
             case 'optimization_complete':
               setShadowOptimization(msg.payload)
@@ -177,6 +173,16 @@ export function useRealtimeData(): RealtimeState & {
             case 'health_update':
               fetchHealth()
               break
+            case 'server_logs_snapshot':
+              setServerLogs(Array.isArray(msg.payload) ? msg.payload.slice(0, 200) : [])
+              break
+            case 'server_log':
+              if (msg.payload?.id) {
+                appendServerLog(msg.payload)
+              }
+              break
+            default:
+              break
           }
         } catch {
           // ignore invalid messages
@@ -186,9 +192,7 @@ export function useRealtimeData(): RealtimeState & {
       ws.onclose = () => {
         setConnected(false)
         wsRef.current = null
-        // 启动重连
         reconnectTimer.current = setTimeout(connectWs, 5000)
-        // 启动轮询兜底
         if (!pollTimer.current) {
           pollTimer.current = setInterval(fetchLatest, 60_000)
         }
@@ -201,17 +205,16 @@ export function useRealtimeData(): RealtimeState & {
       setConnected(false)
       reconnectTimer.current = setTimeout(connectWs, 5000)
     }
-  }, [fetchLatest, fetchHealth])
+  }, [appendServerLog, fetchHealth, fetchLatest])
 
   const dismissAlert = useCallback((index: number) => {
-    setAlerts(prev => prev.filter((_, i) => i !== index))
+    setAlerts((prev) => prev.filter((_, i) => i !== index))
   }, [])
 
   const dismissShadowOpt = useCallback(() => {
     setShadowOptimization(null)
   }, [])
 
-  // 初始化
   useEffect(() => {
     fetchLatest()
     fetchHealth()
@@ -222,12 +225,23 @@ export function useRealtimeData(): RealtimeState & {
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
       if (pollTimer.current) clearInterval(pollTimer.current)
     }
-  }, [fetchLatest, fetchHealth, connectWs])
+  }, [connectWs, fetchHealth, fetchLatest])
 
   return {
-    prices, solar, carbon, sources, lastUpdated,
-    health, connected, alerts, shadowOptimization, loading,
+    prices,
+    solar,
+    carbon,
+    sources,
+    lastUpdated,
+    health,
+    connected,
+    alerts,
+    shadowOptimization,
+    loading,
     latestOptDataset,
-    fetchLatest, dismissAlert, dismissShadowOpt,
+    serverLogs,
+    fetchLatest,
+    dismissAlert,
+    dismissShadowOpt,
   }
 }

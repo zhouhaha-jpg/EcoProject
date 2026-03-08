@@ -23,9 +23,9 @@ import os
 import sqlite3
 import sys
 import traceback
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from urllib.request import Request, urlopen
 from urllib.error import URLError
 
@@ -40,7 +40,11 @@ DB_PATH = str(Path(__file__).parent.parent / 'db' / 'eco.db')
 USER_AGENT = 'EcoProject/1.0 (Smart Park Energy Platform)'
 OPEN_METEO_FORECAST = 'https://api.open-meteo.com/v1/forecast'
 OPEN_METEO_ARCHIVE = 'https://archive-api.open-meteo.com/v1/archive'
-BEIJING_TZ = ZoneInfo('Asia/Shanghai')
+try:
+    BEIJING_TZ = ZoneInfo('Asia/Shanghai')
+except ZoneInfoNotFoundError:
+    # Some Windows Python environments miss tzdata. Fall back to fixed UTC+8.
+    BEIJING_TZ = timezone(timedelta(hours=8))
 
 
 def beijing_today():

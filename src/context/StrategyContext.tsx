@@ -147,6 +147,32 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
   }, [loadLatestDataset])
 
   useEffect(() => {
+    if (datasetMeta.isHistorical) return
+
+    const refresh = () => {
+      loadLatestDataset().catch(() => {
+        // keep the last visible dataset on transient failures
+      })
+    }
+
+    const interval = setInterval(refresh, 2 * 60 * 1000)
+    const handleVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        refresh()
+      }
+    }
+
+    window.addEventListener('focus', refresh)
+    document.addEventListener('visibilitychange', handleVisibility)
+
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener('focus', refresh)
+      document.removeEventListener('visibilitychange', handleVisibility)
+    }
+  }, [datasetMeta.isHistorical, loadLatestDataset])
+
+  useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000)
     return () => clearInterval(timer)
   }, [])
