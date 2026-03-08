@@ -3,12 +3,13 @@
  */
 import { Suspense, lazy, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { ArrowRight, Activity, BatteryCharging, Factory, Gauge, Leaf, TriangleAlert } from 'lucide-react'
 import { useStrategy } from '@/context/StrategyContext'
-import type { PrefixKey, StrategyKey } from '@/types'
+import type { PrefixKey } from '@/types'
 import { PREFIX_TO_METRIC } from '@/types'
 import MetricSparkline from '@/components/3d/MetricSparkline'
 import { PARK_DEVICES, buildDeviceDetail, type ParkDeviceStatus } from '@/components/3d/parkDeviceConfig'
-import { ArrowRight, Activity, BatteryCharging, Factory, Gauge, Leaf, TriangleAlert } from 'lucide-react'
+import { buildTwinSceneSnapshot } from '@/components/3d/digitalTwin/buildSnapshot'
 
 const Park3DScene = lazy(() => import('@/components/3d/Park3DScene'))
 
@@ -18,7 +19,7 @@ const PREFIX_LABELS: Record<PrefixKey, string> = {
   ca: '电解槽',
   pv: '光伏',
   gm: '燃气轮机',
-  pem: '质子膜燃料电池',
+  pem: 'PEM',
   g: '电网',
 }
 
@@ -56,7 +57,7 @@ function OverviewMiniTrendCard({
       className="panel min-h-0 flex flex-col"
       style={{
         padding: 12,
-        boxShadow: hovered ? `inset 0 0 0 1px rgba(0,212,255,0.16), 0 0 18px rgba(0,212,255,0.08)` : undefined,
+        boxShadow: hovered ? 'inset 0 0 0 1px rgba(0,212,255,0.16), 0 0 18px rgba(0,212,255,0.08)' : undefined,
         transition: 'box-shadow 180ms ease',
       }}
       onMouseEnter={() => setHovered(true)}
@@ -83,7 +84,19 @@ function OverviewMiniTrendCard({
   )
 }
 
-function KpiCard({ title, value, unit, accent, icon: Icon }: { title: string; value: string; unit: string; accent: string; icon: typeof Factory }) {
+function KpiCard({
+  title,
+  value,
+  unit,
+  accent,
+  icon: Icon,
+}: {
+  title: string
+  value: string
+  unit: string
+  accent: string
+  icon: typeof Factory
+}) {
   return (
     <div className="panel" style={{ padding: 12 }}>
       <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
@@ -101,7 +114,7 @@ function SceneLoadingFallback() {
     <div className="h-full w-full flex items-center justify-center" style={{ background: 'radial-gradient(circle at center, rgba(0,212,255,0.08), rgba(8,17,31,0.9) 58%)' }}>
       <div className="panel" style={{ padding: '14px 18px', minWidth: 220, textAlign: 'center' }}>
         <div style={{ color: '#e8f4ff', fontFamily: "'Rajdhani', sans-serif", fontSize: 18, letterSpacing: 1 }}>加载 3D 园区场景</div>
-        <div style={{ color: '#5a7a9a', fontSize: 11, marginTop: 6 }}>当前总览页已改为动态导入，优先压缩首屏体积。</div>
+        <div style={{ color: '#5a7a9a', fontSize: 11, marginTop: 6 }}>数字孪生主视图已改为动态导入，优先压缩首屏体积。</div>
       </div>
     </div>
   )
@@ -132,9 +145,17 @@ export default function OverviewPage() {
     [dataset, activeStrategy, hourIndex]
   )
 
-  const statusMap = useMemo(
-    () => Object.fromEntries(PARK_DEVICES.map((device) => [device.id, deviceDetails[device.id].status])) as Record<string, ParkDeviceStatus>,
-    [deviceDetails]
+  const sceneSnapshot = useMemo(
+    () =>
+      buildTwinSceneSnapshot({
+        dataset,
+        activeStrategy,
+        hourIndex,
+        strategyLabel: strategyMeta[activeStrategy].fullLabel,
+        devices: PARK_DEVICES,
+        deviceDetails,
+      }),
+    [dataset, activeStrategy, hourIndex, strategyMeta, deviceDetails]
   )
 
   const currentSummary = dataset.summary[activeStrategy]
@@ -145,6 +166,7 @@ export default function OverviewPage() {
   const storageNow = dataset.H_HS[activeStrategy][hourIndex] ?? 0
   const currentGrid = dataset.P_G[activeStrategy][hourIndex] ?? 0
   const activeSeriesColor = activeDetail.metrics.find((metric) => metric.tone)?.tone ?? STATUS_STYLE[activeDetail.status].color
+
   const trendColors: Record<PrefixKey, string> = {
     ca: '#4e9eff',
     pv: '#c6f135',
@@ -156,7 +178,7 @@ export default function OverviewPage() {
   if (datasetLoading) {
     return (
       <div className="h-full flex items-center justify-center text-text-muted">
-        加载数据中…
+        加载数据中...
       </div>
     )
   }
@@ -183,13 +205,14 @@ export default function OverviewPage() {
         {PREFIX_ORDER.map((prefix) => {
           const metricKey = PREFIX_TO_METRIC[prefix]
           const values = dataset[metricKey][activeStrategy] as number[]
+
           return (
             <OverviewMiniTrendCard
               key={prefix}
               title={PREFIX_LABELS[prefix]}
               values={values}
               color={trendColors[prefix]}
-              unit={prefix === 'g' || prefix === 'gm' || prefix === 'pv' || prefix === 'ca' || prefix === 'pem' ? 'kW' : 'kg/s'}
+              unit="kW"
               hourIndex={hourIndex}
             />
           )
@@ -209,15 +232,16 @@ export default function OverviewPage() {
           <div className="panel-title-bar flex items-center justify-between">
             <span>智慧园区 3D 总览</span>
             <span style={{ color: '#3d6080', fontSize: 10 }}>
-              {strategyMeta[activeStrategy].fullLabel} · {hourIndex + 1}h
-              {datasetError ? ' · 本地数据' : ''}
+              {strategyMeta[activeStrategy].fullLabel} / {hourIndex + 1}h
+              {datasetError ? ' / 本地数据' : ''}
             </span>
           </div>
           <div style={{ flex: 1, minHeight: 0 }}>
             <Suspense fallback={<SceneLoadingFallback />}>
               <Park3DScene
                 devices={PARK_DEVICES}
-                statuses={statusMap}
+                deviceDetails={deviceDetails}
+                snapshot={sceneSnapshot}
                 activeDeviceId={activeDeviceId}
                 focusedDeviceId={cameraFocus.deviceId}
                 focusVersion={cameraFocus.version}
@@ -227,17 +251,18 @@ export default function OverviewPage() {
             </Suspense>
           </div>
         </div>
+
         <div className="panel flex items-center justify-between" style={{ padding: '0 16px' }}>
           <div>
-            <div style={{ color: '#8ba9cc', fontSize: 11 }}>当前交互提示</div>
+            <div style={{ color: '#8ba9cc', fontSize: 11 }}>3D 场景交互提示</div>
             <div style={{ color: '#e8f4ff', fontFamily: "'Rajdhani', sans-serif", fontSize: 16, letterSpacing: 1 }}>
-              点击园区设备查看实时指标与 24h 时序
+              点击关键区域联动镜头、标签卡和右侧实时设备指标
             </div>
           </div>
           <div className="flex items-center gap-4" style={{ color: '#5a7a9a', fontSize: 11 }}>
-            <span>白模 + 动态流线</span>
-            <span>·</span>
-            <span>已预留 glb 替换目录</span>
+            <span>数字孪生 + 发光能量流</span>
+            <span>路</span>
+            <span>程序化建模 + Bloom 后处理</span>
           </div>
         </div>
       </div>
@@ -253,7 +278,7 @@ export default function OverviewPage() {
       >
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
           <KpiCard title="当前综合指标" value={currentSummary.combined.toFixed(2)} unit={strategyMeta[activeStrategy].label} accent="#00d4ff" icon={Factory} />
-          <KpiCard title="当前总供给" value={currentSupply.toFixed(0)} unit="kW" accent="#4e9eff" icon={Gauge} />
+          <KpiCard title="当前总供能" value={currentSupply.toFixed(0)} unit="kW" accent="#4e9eff" icon={Gauge} />
           <KpiCard title="当前购电" value={currentGrid.toFixed(0)} unit="kW" accent="#ce93d8" icon={Activity} />
           <KpiCard title="当前储氢" value={storageNow.toFixed(3)} unit="t" accent="#ce93d8" icon={BatteryCharging} />
         </div>

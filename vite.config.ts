@@ -4,6 +4,9 @@ import path from 'path'
 
 export default defineConfig({
   plugins: [react()],
+  optimizeDeps: {
+    include: ['react', 'react-dom', 'three', '@react-three/fiber', '@react-three/drei', 'postprocessing'],
+  },
   build: {
     rollupOptions: {
       output: {
@@ -30,8 +33,15 @@ export default defineConfig({
     },
   },
   resolve: {
+    dedupe: ['react', 'react-dom', 'three', '@react-three/fiber', '@react-three/drei', 'postprocessing'],
     alias: {
       '@': path.resolve(__dirname, './src'),
+      react: path.resolve(__dirname, './node_modules/react'),
+      'react-dom': path.resolve(__dirname, './node_modules/react-dom'),
+      three: path.resolve(__dirname, './node_modules/three'),
+      '@react-three/fiber': path.resolve(__dirname, './node_modules/@react-three/fiber'),
+      '@react-three/drei': path.resolve(__dirname, './node_modules/@react-three/drei'),
+      postprocessing: path.resolve(__dirname, './node_modules/postprocessing'),
     },
   },
   server: {

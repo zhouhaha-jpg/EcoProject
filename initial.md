@@ -451,3 +451,18 @@ npm run build
 
 > **核心原则**：代码事实优先于规划文档；视觉标准优先于个人发挥；架构变化后必须回写本文件。
 
+## 0. 2026-03-08 3D Update
+
+- 总览页 3D 主视图已从“单文件程序化白模”升级为“模块化数字孪生场景”。
+- 新增依赖：`@react-three/postprocessing`，当前已接入 `Bloom`、`SMAA`、`Noise`、`Vignette`。
+- 新增目录：`src/components/3d/digitalTwin/`
+  - `buildSnapshot.ts`：根据当前策略/时刻构造 3D HUD 指标、设备标签和能量流线快照。
+  - `config.ts` / `types.ts`：数字孪生场景配置与类型定义。
+  - `GroundPlatform.tsx`：科技底座平台、扫描环、电路刻线、数据立柱。
+  - `ParkAssets.tsx`：建筑群、厂房、光伏阵列、储能柜、储氢罐、能源枢纽及交互。
+  - `EnergyFlows.tsx`：管线、粒子流、脉冲球动画。
+  - `LabelsAndMarkers.tsx`：悬浮标签、指标立柱、ACTIVE NODE 提示。
+  - `SceneLights.tsx` / `ScenePostFX.tsx`：灯光与后处理。
+- `src/components/3d/Park3DScene.tsx` 已改为场景编排器，负责相机导演、模块装配和 DOM HUD 叠层。
+- `src/pages/OverviewPage.tsx` 已改为向 3D 场景传入 `deviceDetails` 和 `sceneSnapshot`，使 3D 园区与右侧设备详情、当前策略和当前小时联动。
+- 当前 3D 状态：已完成程序化数字孪生园区、交互聚焦、设备标签、HUD 和后处理；真实 `glb/gltf` 资源仍未接入，后续可逐类替换场景资产。

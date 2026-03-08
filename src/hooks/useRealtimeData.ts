@@ -118,16 +118,46 @@ export function useRealtimeData(): RealtimeState & {
   const fetchHealth = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE}/api/realtime/health`)
-      if (!res.ok) return
+      if (!res.ok) return false
       const data = await res.json()
       setHealth(data)
+      return true
     } catch {
-      // ignore
+      return false
     }
   }, [])
 
-  const connectWs = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return
+  const startPolling = useCallback(() => {
+    if (pollTimer.current) return
+    pollTimer.current = setInterval(() => {
+      void fetchLatest()
+    }, 60_000)
+  }, [fetchLatest])
+
+  const stopPolling = useCallback(() => {
+    if (!pollTimer.current) return
+    clearInterval(pollTimer.current)
+    pollTimer.current = undefined
+  }, [])
+
+  const scheduleReconnect = useCallback((connect: () => Promise<void>) => {
+    if (reconnectTimer.current) return
+    reconnectTimer.current = setTimeout(() => {
+      reconnectTimer.current = undefined
+      void connect()
+    }, 5000)
+  }, [])
+
+  const connectWs = useCallback(async () => {
+    if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return
+
+    const backendReady = await fetchHealth()
+    if (!backendReady) {
+      setConnected(false)
+      startPolling()
+      scheduleReconnect(connectWs)
+      return
+    }
 
     const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws'
     const host = window.location.hostname
@@ -140,10 +170,7 @@ export function useRealtimeData(): RealtimeState & {
 
       ws.onopen = () => {
         setConnected(true)
-        if (pollTimer.current) {
-          clearInterval(pollTimer.current)
-          pollTimer.current = undefined
-        }
+        stopPolling()
       }
 
       ws.onmessage = (event) => {
@@ -192,10 +219,8 @@ export function useRealtimeData(): RealtimeState & {
       ws.onclose = () => {
         setConnected(false)
         wsRef.current = null
-        reconnectTimer.current = setTimeout(connectWs, 5000)
-        if (!pollTimer.current) {
-          pollTimer.current = setInterval(fetchLatest, 60_000)
-        }
+        startPolling()
+        scheduleReconnect(connectWs)
       }
 
       ws.onerror = () => {
@@ -203,9 +228,10 @@ export function useRealtimeData(): RealtimeState & {
       }
     } catch {
       setConnected(false)
-      reconnectTimer.current = setTimeout(connectWs, 5000)
+      startPolling()
+      scheduleReconnect(connectWs)
     }
-  }, [appendServerLog, fetchHealth, fetchLatest])
+  }, [appendServerLog, fetchHealth, fetchLatest, scheduleReconnect, startPolling, stopPolling])
 
   const dismissAlert = useCallback((index: number) => {
     setAlerts((prev) => prev.filter((_, i) => i !== index))
@@ -216,16 +242,26 @@ export function useRealtimeData(): RealtimeState & {
   }, [])
 
   useEffect(() => {
-    fetchLatest()
-    fetchHealth()
-    connectWs()
+    void fetchLatest()
+    void connectWs()
 
     return () => {
-      wsRef.current?.close()
+      const socket = wsRef.current
+      wsRef.current = null
+
+      if (socket) {
+        socket.onopen = null
+        socket.onmessage = null
+        socket.onclose = null
+        socket.onerror = null
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.close()
+        }
+      }
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
       if (pollTimer.current) clearInterval(pollTimer.current)
     }
-  }, [connectWs, fetchHealth, fetchLatest])
+  }, [connectWs, fetchLatest])
 
   return {
     prices,
