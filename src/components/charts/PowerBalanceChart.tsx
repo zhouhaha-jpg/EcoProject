@@ -3,6 +3,7 @@ import { useStrategy } from '@/context/StrategyContext'
 import { useEChart } from './useEChart'
 import { getHours } from '@/data/realData'
 import type { StrategyKey } from '@/types'
+import { getDynamicAxisRange } from './axisRange'
 
 /** 与 power_dashboard.html SERIES 定义完全一致的策略颜色 */
 const STRATEGY_COLORS: Record<StrategyKey, string> = {
@@ -38,6 +39,11 @@ export default function PowerBalanceChart({ onHourHover }: PowerBalanceChartProp
   const lastHoverHourRef = useRef(-1)
 
   const option = useMemo(() => {
+    const yAxisRange = getDynamicAxisRange(
+      STRATEGY_ORDER.map((sk) => dataset.P_CA[sk]),
+      { paddingRatio: 0.12, minPadding: 200, splitNumber: 5 }
+    )
+
     const series = STRATEGY_ORDER.map((sk) => {
       const data = dataset.P_CA[sk]
       const color = STRATEGY_COLORS[sk]
@@ -137,8 +143,9 @@ export default function PowerBalanceChart({ onHourHover }: PowerBalanceChartProp
       },
       yAxis: {
         type: 'value' as const,
-        min: 7000,
-        max: 11200,
+        min: yAxisRange.min,
+        max: yAxisRange.max,
+        splitNumber: 5,
         axisLine: { lineStyle: { color: '#1e3256' } },
         axisLabel: {
           color: '#3d6080',

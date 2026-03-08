@@ -18,11 +18,18 @@
 """
 
 import argparse
+import io
 import json
 import os
 import sqlite3
 import sys
 import traceback
+
+# Windows 默认 stdout 编码为 cp1252，中文会乱码，强制 UTF-8
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+if sys.stderr.encoding != 'utf-8':
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError

@@ -9,6 +9,7 @@ import { getHours } from '@/data/realData'
 import type { StrategyKey } from '@/types'
 import type { PrefixKey } from '@/types'
 import { PREFIX_TO_METRIC } from '@/types'
+import { getDynamicAxisRange } from './axisRange'
 
 const STRATEGY_COLORS: Record<StrategyKey, string> = {
   uci: '#4e9eff', cicos: '#ff7043', cicar: '#29d4ff',
@@ -26,12 +27,12 @@ const STRATEGY_ORDER: StrategyKey[] = ['uci', 'cicos', 'cicar', 'cicom', 'pv', '
 const HOURS = getHours()
 
 /** 各指标的 Y 轴范围 */
-const METRIC_AXIS: Record<string, { min?: number; max?: number; formatter?: (v: number) => string }> = {
-  P_CA: { min: 7000, max: 11200, formatter: (v) => `${(v / 1000).toFixed(1)}k` },
-  P_PV: { min: 0, max: 6000, formatter: (v) => `${(v / 1000).toFixed(1)}k` },
-  P_GM: { min: 0, max: 600, formatter: (v) => v.toFixed(0) },
-  P_PEM: { min: 0, max: 9000, formatter: (v) => `${(v / 1000).toFixed(1)}k` },
-  P_G: { min: 0, max: 10000, formatter: (v) => `${(v / 1000).toFixed(1)}k` },
+const METRIC_AXIS: Record<string, { floor?: number; minPadding?: number; formatter?: (v: number) => string }> = {
+  P_CA: { minPadding: 200, formatter: (v) => `${(v / 1000).toFixed(1)}k` },
+  P_PV: { floor: 0, minPadding: 120, formatter: (v) => `${(v / 1000).toFixed(1)}k` },
+  P_GM: { floor: 0, minPadding: 20, formatter: (v) => v.toFixed(0) },
+  P_PEM: { floor: 0, minPadding: 180, formatter: (v) => `${(v / 1000).toFixed(1)}k` },
+  P_G: { floor: 0, minPadding: 180, formatter: (v) => `${(v / 1000).toFixed(1)}k` },
 }
 
 interface PrefixPowerChartProps {
@@ -52,6 +53,11 @@ export default function PrefixPowerChart({ prefix, title, onHourHover }: PrefixP
   const lastHoverHourRef = useRef(-1)
 
   const option = useMemo(() => {
+    const yAxisRange = getDynamicAxisRange(
+      STRATEGY_ORDER.map((sk) => metricData?.[sk]),
+      { floor: axisConfig.floor, paddingRatio: 0.12, minPadding: axisConfig.minPadding, splitNumber: 5 }
+    )
+
     const allSelected = selectedStrategies.size === 0 || selectedStrategies.size === 6
     const series = STRATEGY_ORDER.map((sk) => {
       const data = metricData?.[sk] ?? []
@@ -152,8 +158,9 @@ export default function PrefixPowerChart({ prefix, title, onHourHover }: PrefixP
       },
       yAxis: {
         type: 'value' as const,
-        min: axisConfig.min,
-        max: axisConfig.max,
+        min: yAxisRange.min,
+        max: yAxisRange.max,
+        splitNumber: 5,
         axisLine: { lineStyle: { color: '#1e3256' } },
         axisLabel: {
           color: '#3d6080',

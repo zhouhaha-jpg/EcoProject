@@ -5,11 +5,19 @@ Pure Python implementation using scipy, replacing MATLAB + YALMIP + Gurobi.
 Supports: UCI / CICOS / CICAR / CICOM / PV / ES scenarios.
 """
 
-import numpy as np
-from scipy.optimize import minimize
-import time as _time
+import io
 import json
 import sys
+import time as _time
+
+import numpy as np
+from scipy.optimize import minimize
+
+# Windows 默认 stdout 编码为 cp1252，中文会乱码，强制 UTF-8
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+if sys.stderr.encoding != 'utf-8':
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 F_CONST = 96485.33289
 Z = 2

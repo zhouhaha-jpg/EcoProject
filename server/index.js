@@ -429,6 +429,7 @@ async function scheduledFetch() {
     const py = spawn('python', [FETCHER_SCRIPT, '--once', '--lat', lat, '--lon', lon], {
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 60_000,
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
     })
 
     let stdout = ''
@@ -518,6 +519,7 @@ async function triggerAutoOptimization(fetchResult) {
     const py = spawn('python', [OPTIMIZER_SCRIPT], {
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout: 300_000,
+      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
     })
 
     let stdout = ''

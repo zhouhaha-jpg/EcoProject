@@ -369,6 +369,7 @@ interface EcoDataset {
 11. 三级电价降级策略已实现：优先爬虫（预留）→ GBM 模拟器 → 静态 TOU 兜底。LLM 预警文本同样有降级兜底。
 12. 自动优化闭环已打通：每次数据采集后自动运行 Python 优化器 → 保存到 datasets 表 → 通过 WS `dataset_updated` 广播完整数据集 → 前端 StrategyContext 自动更新 → 所有页面图表同步刷新（经济指标/存储/电解槽/光伏/燃气轮机/PEM/电网）。
 13. 数据源指示器可点击：顶栏 ☀️⚡🌿 标签点击后弹出 24h 三路数据曲线面板（RealtimeDataPanel），展示电价/光照/碳因子实时折线图及统计值。
+14. Python 子进程 stdout 已强制 UTF-8 编码（`io.TextIOWrapper` + `PYTHONIOENCODING=utf-8`），解决 Windows 下中文告警文本乱码问题。
 
 ### 9.2 当前限制与未完成项
 
