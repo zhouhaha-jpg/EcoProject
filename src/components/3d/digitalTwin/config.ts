@@ -44,11 +44,13 @@ export const CIRCUIT_LINES: [number, number, number][][] = [
 ]
 
 export const OFFICE_BUILDINGS = [
-  { id: 'ops-core', position: [-5.8, 2.8, -3.8] as [number, number, number], size: [5.2, 5.6, 4.4] as [number, number, number] },
-  { id: 'dispatch-west', position: [-11.8, 2.2, 1.5] as [number, number, number], size: [3.6, 4.2, 3.8] as [number, number, number] },
-  { id: 'data-center', position: [2.6, 3.6, -6.4] as [number, number, number], size: [6.6, 7.4, 4.8] as [number, number, number] },
-  { id: 'command-north', position: [9.6, 2.9, -2.8] as [number, number, number], size: [4.8, 5.8, 3.8] as [number, number, number] },
-  { id: 'lab-east', position: [12.8, 2.2, 3.4] as [number, number, number], size: [3.8, 4.2, 3.4] as [number, number, number] },
+  { id: 'ops-core', position: [-5.8, 2.9, -3.8] as [number, number, number], size: [5.6, 5.8, 4.6] as [number, number, number] },
+  { id: 'dispatch-west', position: [-12.2, 2.2, 1.7] as [number, number, number], size: [4.2, 4.6, 4.0] as [number, number, number] },
+  { id: 'admin-south', position: [-17.0, 1.7, 4.7] as [number, number, number], size: [3.5, 3.4, 3.2] as [number, number, number] },
+  { id: 'data-center', position: [2.6, 3.7, -6.6] as [number, number, number], size: [6.8, 7.6, 5.2] as [number, number, number] },
+  { id: 'command-north', position: [9.6, 3.0, -2.8] as [number, number, number], size: [4.9, 6.0, 3.9] as [number, number, number] },
+  { id: 'lab-east', position: [13.2, 2.2, 3.6] as [number, number, number], size: [4.0, 4.4, 3.6] as [number, number, number] },
+  { id: 'research-east', position: [18.0, 1.9, 0.5] as [number, number, number], size: [3.4, 3.8, 3.2] as [number, number, number] },
 ]
 
 export const DATA_MARKERS = [
