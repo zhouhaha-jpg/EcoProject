@@ -123,16 +123,28 @@ function SceneLoadingFallback() {
 export default function OverviewPage() {
   const { datasetLoading, datasetError, dataset, activeStrategy, strategyMeta, currentTime } = useStrategy()
   const [activeDeviceId, setActiveDeviceId] = useState(PARK_DEVICES[0].id)
-  const [cameraFocus, setCameraFocus] = useState<{ deviceId: string | null; version: number }>({ deviceId: null, version: 0 })
+  const [activeFlowId, setActiveFlowId] = useState<string | null>(null)
+  const [cameraFocus, setCameraFocus] = useState<{ type: 'device' | 'flow' | 'default'; id: string | null; version: number }>({
+    type: 'default',
+    id: null,
+    version: 0,
+  })
   const hourIndex = currentTime.getHours() % 24
 
   const handleSelectDevice = (id: string) => {
     setActiveDeviceId(id)
-    setCameraFocus((current) => ({ deviceId: id, version: current.version + 1 }))
+    setActiveFlowId(null)
+    setCameraFocus((current) => ({ type: 'device', id, version: current.version + 1 }))
+  }
+
+  const handleSelectFlow = (id: string) => {
+    setActiveFlowId(id)
+    setCameraFocus((current) => ({ type: 'flow', id, version: current.version + 1 }))
   }
 
   const handleResetView = () => {
-    setCameraFocus((current) => ({ deviceId: null, version: current.version + 1 }))
+    setActiveFlowId(null)
+    setCameraFocus((current) => ({ type: 'default', id: null, version: current.version + 1 }))
   }
 
   const activeDetail = useMemo(
@@ -243,9 +255,12 @@ export default function OverviewPage() {
                 deviceDetails={deviceDetails}
                 snapshot={sceneSnapshot}
                 activeDeviceId={activeDeviceId}
-                focusedDeviceId={cameraFocus.deviceId}
+                activeFlowId={activeFlowId}
+                focusedTargetType={cameraFocus.type}
+                focusedTargetId={cameraFocus.id}
                 focusVersion={cameraFocus.version}
                 onSelectDevice={handleSelectDevice}
+                onSelectFlow={handleSelectFlow}
                 onResetView={handleResetView}
               />
             </Suspense>

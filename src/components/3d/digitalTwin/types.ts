@@ -23,6 +23,14 @@ export interface TwinFlow {
   id: string
   from: string
   to: string
+  title: string
+  subtitle: string
+  description: string
+  medium: 'power' | 'hydrogen' | 'grid' | 'storage'
+  valueLabel: string
+  popupPosition: [number, number, number]
+  focusTarget: [number, number, number]
+  focusCamera: [number, number, number]
   color: string
   value: number
   direction: 1 | -1

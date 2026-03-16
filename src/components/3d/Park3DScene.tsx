@@ -4,7 +4,7 @@ import { useEffect, useRef, type ComponentType } from 'react'
 import { Vector3 } from 'three'
 import type { ParkDeviceConfig, ParkDeviceDetail } from './parkDeviceConfig'
 import { DEFAULT_CAMERA_POSITION, DEFAULT_CAMERA_TARGET, TWIN_COLORS } from './digitalTwin/config'
-import type { TwinSceneSnapshot } from './digitalTwin/types'
+import type { TwinFlow, TwinSceneSnapshot } from './digitalTwin/types'
 import GroundPlatform from './digitalTwin/GroundPlatform'
 import ParkAssets from './digitalTwin/ParkAssets'
 import EnergyFlows from './digitalTwin/EnergyFlows'
@@ -20,20 +20,27 @@ interface Park3DSceneProps {
   deviceDetails: Record<string, ParkDeviceDetail>
   snapshot: TwinSceneSnapshot
   activeDeviceId: string
-  focusedDeviceId: string | null
+  activeFlowId: string | null
+  focusedTargetType: 'device' | 'flow' | 'default'
+  focusedTargetId: string | null
   focusVersion: number
   onSelectDevice: (id: string) => void
+  onSelectFlow: (id: string) => void
   onResetView: () => void
 }
 
 function CameraDirector({
   devices,
-  focusedDeviceId,
+  flows,
+  focusedTargetType,
+  focusedTargetId,
   focusVersion,
   controlsRef,
 }: {
   devices: ParkDeviceConfig[]
-  focusedDeviceId: string | null
+  flows: TwinFlow[]
+  focusedTargetType: 'device' | 'flow' | 'default'
+  focusedTargetId: string | null
   focusVersion: number
   controlsRef: { current: any }
 }) {
@@ -47,23 +54,27 @@ function CameraDirector({
   const isAnimatingRef = useRef(false)
 
   useEffect(() => {
-    const activeDevice = devices.find((device) => device.id === focusedDeviceId)
+    const activeDevice = focusedTargetType === 'device' ? devices.find((device) => device.id === focusedTargetId) : null
+    const activeFlow = focusedTargetType === 'flow' ? flows.find((flow) => flow.id === focusedTargetId) : null
     const currentTarget = controlsRef.current?.target ?? targetRef.current
 
     startCameraRef.current.copy(camera.position)
     startTargetRef.current.copy(currentTarget)
 
-    if (!activeDevice) {
-      endTargetRef.current.set(...DEFAULT_CAMERA_TARGET)
-      endCameraRef.current.set(...DEFAULT_CAMERA_POSITION)
-    } else {
+    if (activeFlow) {
+      endTargetRef.current.set(...activeFlow.focusTarget)
+      endCameraRef.current.set(...activeFlow.focusCamera)
+    } else if (activeDevice) {
       endTargetRef.current.set(...activeDevice.focusTarget)
       endCameraRef.current.set(...activeDevice.focusCamera)
+    } else {
+      endTargetRef.current.set(...DEFAULT_CAMERA_TARGET)
+      endCameraRef.current.set(...DEFAULT_CAMERA_POSITION)
     }
 
     animationProgressRef.current = 0
     isAnimatingRef.current = true
-  }, [camera.position, controlsRef, devices, focusedDeviceId, focusVersion])
+  }, [camera.position, controlsRef, devices, flows, focusedTargetId, focusedTargetType, focusVersion])
 
   useFrame(() => {
     if (!isAnimatingRef.current) {
@@ -97,19 +108,29 @@ function SceneContent({
   deviceDetails,
   snapshot,
   activeDeviceId,
-  focusedDeviceId,
+  activeFlowId,
+  focusedTargetType,
+  focusedTargetId,
   focusVersion,
   onSelectDevice,
+  onSelectFlow,
 }: Park3DSceneProps) {
   const controlsRef = useRef<any>(null)
 
   return (
     <>
       <SceneLights />
-      <CameraDirector devices={devices} focusedDeviceId={focusedDeviceId} focusVersion={focusVersion} controlsRef={controlsRef} />
+      <CameraDirector
+        devices={devices}
+        flows={snapshot.flows}
+        focusedTargetType={focusedTargetType}
+        focusedTargetId={focusedTargetId}
+        focusVersion={focusVersion}
+        controlsRef={controlsRef}
+      />
       <GroundPlatform />
       <ParkAssets devices={devices} deviceDetails={deviceDetails} activeDeviceId={activeDeviceId} onSelectDevice={onSelectDevice} />
-      <EnergyFlows flows={snapshot.flows} />
+      <EnergyFlows flows={snapshot.flows} activeFlowId={activeFlowId} onSelectFlow={onSelectFlow} />
       <LabelsAndMarkers snapshot={snapshot} activeDeviceId={activeDeviceId} />
       <ScenePostFX />
 
@@ -118,7 +139,7 @@ function SceneContent({
         enablePan={false}
         enableDamping
         dampingFactor={0.08}
-        autoRotate={!focusedDeviceId}
+        autoRotate={!focusedTargetId}
         autoRotateSpeed={0.2}
         minDistance={24}
         maxDistance={60}
