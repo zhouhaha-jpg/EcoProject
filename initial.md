@@ -137,6 +137,8 @@ EcoProject/
 │           ├── README.md                 ← 真实模型资源命名规范与下载建议
 │           └── manifest.json             ← 计划接入的 glb 资源清单
 ├── initial.md                            ← 本文档
+├── 可视化平台设计方案.md                  ← 可视化平台细化设计说明
+├── Agent模块设计方案.md                   ← Agent 模块细化设计说明
 └── agent能力升级方案_168d7722.plan.md     ← Agent 能力设计方案文档（可参考，不可替代代码事实）
 ```
 
@@ -447,6 +449,8 @@ npm run build
 |---|---|
 | `e:\科研绘图\power_dashboard.html` | UI 视觉最终参照 |
 | `e:\科研绘图\EcoProject\src\data\realData.ts` | 前端本地兜底数据 |
+| `e:\科研绘图\EcoProject\可视化平台设计方案.md` | 可视化平台模块细化设计说明 |
+| `e:\科研绘图\EcoProject\Agent模块设计方案.md` | Agent 模块细化设计说明 |
 | `e:\科研绘图\EcoProject\agent能力升级方案_168d7722.plan.md` | Agent 能力扩展方案文档，仅作规划参考 |
 
 > **核心原则**：代码事实优先于规划文档；视觉标准优先于个人发挥；架构变化后必须回写本文件。
