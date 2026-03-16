@@ -622,31 +622,88 @@ function TurbineZone({
   const [hovered, setHovered] = useState(false)
   const rootRef = useRef<Group>(null)
   const accent = getStatusAccent(detail.status, device.color)
+  const skidOffsets = useMemo(() => [-1.9, 0, 1.9], [])
   useCursor(hovered)
   useZoneMotion(rootRef, device.position[1], active, hovered)
 
   return (
     <group ref={rootRef} position={device.position}>
-      <SelectionPulse radius={3.7} color={accent} active={active || hovered} warning={detail.status === 'warning'} />
-      <mesh position={[0, 1.25, 0]} rotation={[0, 0, Math.PI / 2]}>
-        <cylinderGeometry args={[1.15, 1.15, 4.5, 18]} />
-        <meshStandardMaterial color="#142a40" emissive={accent} emissiveIntensity={active ? 0.58 : 0.2} roughness={0.38} metalness={0.64} />
+      <SelectionPulse radius={4.4} color={accent} active={active || hovered} warning={detail.status === 'warning'} />
+
+      <mesh position={[0, 0.16, 0]}>
+        <boxGeometry args={[7.6, 0.34, 5.2]} />
+        <meshStandardMaterial color="#102233" emissive={accent} emissiveIntensity={0.16} />
+      </mesh>
+      <mesh position={[0, 0.34, 0]}>
+        <boxGeometry args={[7.1, 0.14, 4.7]} />
+        <meshStandardMaterial color="#173149" emissive={accent} emissiveIntensity={0.2} />
+      </mesh>
+
+      <group position={[0.35, 1.54, -0.2]}>
+        <mesh rotation={[0, 0, Math.PI / 2]}>
+          <cylinderGeometry args={[0.92, 1.02, 4.6, 24]} />
+          <meshStandardMaterial color="#142a40" emissive={accent} emissiveIntensity={active ? 0.6 : 0.22} roughness={0.34} metalness={0.66} />
+          <Edges color={accent} />
+        </mesh>
+        <mesh rotation={[0, 0, Math.PI / 2]}>
+          <cylinderGeometry args={[0.68, 0.82, 4.05, 24]} />
+          <meshStandardMaterial color="#1a3954" emissive={accent} emissiveIntensity={0.24} roughness={0.24} metalness={0.6} transparent opacity={0.18} />
+        </mesh>
+      </group>
+
+      <mesh position={[-2.8, 1.52, -0.2]} rotation={[0, 0, Math.PI / 2]}>
+        <coneGeometry args={[0.94, 1.22, 24]} />
+        <meshStandardMaterial color="#17344c" emissive={accent} emissiveIntensity={0.34} roughness={0.32} metalness={0.56} />
         <Edges color={accent} />
       </mesh>
-      <mesh position={[2.3, 1.9, -0.2]}>
-        <cylinderGeometry args={[0.36, 0.55, 2.7, 12]} />
-        <meshStandardMaterial color="#1a3047" emissive={TWIN_COLORS.storageSoft} emissiveIntensity={0.34} />
+      <mesh position={[-3.5, 1.52, -0.2]} rotation={[0, 0, Math.PI / 2]}>
+        <cylinderGeometry args={[0.44, 0.62, 0.8, 20]} />
+        <meshStandardMaterial color="#214e72" emissive={accent} emissiveIntensity={0.42} />
       </mesh>
-      <mesh position={[0, 0.1, 0]}>
-        <boxGeometry args={[5.6, 0.34, 3.2]} />
-        <meshStandardMaterial color="#102233" emissive={accent} emissiveIntensity={0.18} />
-      </mesh>
-      <mesh position={[-1.4, 1.1, 1.25]}>
-        <boxGeometry args={[1.8, 1.8, 1.4]} />
-        <meshStandardMaterial color="#173149" emissive={accent} emissiveIntensity={0.18} />
-      </mesh>
-      <group position={[0, 1.25, 0]}>
-        <ZoneHitBox size={[6.3, 4.2, 4.2]} onSelect={onSelect} onHover={setHovered} />
+
+      <group position={[2.65, 1.46, -0.18]}>
+        <RoundedPrism size={[1.5, 1.9, 1.78]} radius={0.18} color="#153149" accent={accent} emissiveIntensity={active ? 0.46 : 0.2} roughness={0.36} metalness={0.54} />
+        <mesh position={[0, 1.12, 0]}>
+          <boxGeometry args={[1.1, 0.18, 1.24]} />
+          <meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={0.6} />
+        </mesh>
+      </group>
+
+      <group position={[3.18, 2.28, -0.62]}>
+        <mesh>
+          <cylinderGeometry args={[0.28, 0.4, 2.6, 20]} />
+          <meshStandardMaterial color="#1c3f5b" emissive={accent} emissiveIntensity={0.34} roughness={0.28} metalness={0.58} />
+          <Edges color={accent} />
+        </mesh>
+        <mesh position={[0, 1.38, 0]}>
+          <cylinderGeometry args={[0.38, 0.46, 0.36, 18]} />
+          <meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={0.72} />
+        </mesh>
+      </group>
+
+      <group position={[-0.2, 0.58, 1.78]}>
+        {skidOffsets.map((offset) => (
+          <group key={offset} position={[offset, 0, 0]}>
+            <mesh position={[0, 0.44, 0]}>
+              <boxGeometry args={[1.32, 0.88, 0.68]} />
+              <meshStandardMaterial color="#173149" emissive={accent} emissiveIntensity={0.24} />
+            </mesh>
+            <mesh position={[0, 0.96, 0]}>
+              <boxGeometry args={[1.08, 0.08, 0.52]} />
+              <meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={0.74} />
+            </mesh>
+          </group>
+        ))}
+      </group>
+
+      <group position={[0.1, 0.82, -1.95]}>
+        <IndustrialPipeRack width={5.8} height={1.7} levels={[0.76, 1.12]} accent={accent} active={active || hovered} />
+      </group>
+
+      <Line points={[[-3.2, 1.88, -1.38], [-0.1, 2.14, -1.18], [2.95, 1.82, -1.24]]} color={accent} lineWidth={1.05} transparent opacity={0.82} />
+
+      <group position={[0, 1.55, 0]}>
+        <ZoneHitBox size={[8.2, 5, 5.6]} onSelect={onSelect} onHover={setHovered} />
       </group>
     </group>
   )
@@ -807,6 +864,12 @@ function SolarArrayZone({
   return (
     <group ref={rootRef} position={device.position}>
       <SelectionPulse radius={7.5} color={accent} active={active || hovered} warning={detail.status === 'warning'} />
+      <mesh position={[0, 0.12, 0]}>
+        <boxGeometry args={[18.9, 0.24, 11.8]} />
+        <meshStandardMaterial color="#0f1f2f" emissive={accent} emissiveIntensity={0.12} />
+      </mesh>
+      <Line points={buildRectLoop(18.1, 10.9, 0.18)} color={accent} lineWidth={0.9} transparent opacity={0.5} />
+
       <Instances limit={panelPositions.length}>
         <boxGeometry args={[2.1, 0.08, 1.22]} />
         <meshStandardMaterial color="#102238" emissive={accent} emissiveIntensity={active ? 0.72 : hovered ? 0.48 : 0.22} roughness={0.16} metalness={0.52} />
@@ -821,6 +884,15 @@ function SolarArrayZone({
           <Instance key={index} position={[panel.x, 1.03, panel.z]} rotation={[-0.52, 0.22, 0]} />
         ))}
       </Instances>
+
+      <Instances limit={panelPositions.length}>
+        <boxGeometry args={[1.86, 0.05, 0.08]} />
+        <meshStandardMaterial color="#1e4666" emissive={accent} emissiveIntensity={0.26} />
+        {panelPositions.map((panel, index) => (
+          <Instance key={index} position={[panel.x, 0.8, panel.z]} rotation={[-0.52, 0.22, 0]} />
+        ))}
+      </Instances>
+
       {panelPositions.filter((_, index) => index % 2 === 0).map((panel, index) => (
         <group key={index} position={[panel.x, 0.52, panel.z]} rotation={[0, 0.22, 0]}>
           <mesh position={[0, 0.28, 0]}>
@@ -833,9 +905,73 @@ function SolarArrayZone({
           </mesh>
         </group>
       ))}
-      <group position={[0, 1.2, 0]}>
-        <ZoneHitBox size={[18.8, 4.2, 11.6]} onSelect={onSelect} onHover={setHovered} />
+
+      {panelPositions.map((panel, index) => (
+        <group key={`support-${index}`} position={[panel.x, 0.18, panel.z]} rotation={[0, 0.22, 0]}>
+          <mesh position={[-0.58, 0.34, 0.34]}>
+            <boxGeometry args={[0.06, 0.68, 0.06]} />
+            <meshStandardMaterial color="#18344d" emissive={accent} emissiveIntensity={0.16} />
+          </mesh>
+          <mesh position={[0.58, 0.34, 0.34]}>
+            <boxGeometry args={[0.06, 0.68, 0.06]} />
+            <meshStandardMaterial color="#18344d" emissive={accent} emissiveIntensity={0.16} />
+          </mesh>
+          <mesh position={[0, 0.62, -0.26]} rotation={[0.56, 0, 0]}>
+            <boxGeometry args={[1.52, 0.05, 0.06]} />
+            <meshStandardMaterial color="#214a68" emissive={accent} emissiveIntensity={0.18} />
+          </mesh>
+        </group>
+      ))}
+
+      {[-6.2, 6.2].map((offset) => (
+        <group key={offset} position={[offset, 0.64, 4.75]}>
+          <RoundedPrism size={[1.42, 1.12, 1.1]} radius={0.12} color="#173149" accent={accent} emissiveIntensity={active ? 0.44 : 0.18} roughness={0.42} metalness={0.46} />
+          <mesh position={[0, 0.74, 0]}>
+            <boxGeometry args={[0.96, 0.12, 0.08]} />
+            <meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={0.78} />
+          </mesh>
+        </group>
+      ))}
+
+      <Line points={[[-7.6, 0.28, 4.7], [-3.2, 0.28, 2.8], [0, 0.28, 0.2], [3.2, 0.28, -2.6], [7.5, 0.28, -4.8]]} color={accent} lineWidth={0.95} transparent opacity={0.72} />
+
+      <group position={[0, 1.22, 0]}>
+        <ZoneHitBox size={[19.2, 4.6, 12]} onSelect={onSelect} onHover={setHovered} />
       </group>
+    </group>
+  )
+}
+
+function BatteryCabinet({
+  position,
+  accent,
+  active,
+}: {
+  position: [number, number, number]
+  accent: string
+  active: boolean
+}) {
+  return (
+    <group position={position}>
+      <RoundedPrism size={[1.12, 2.42, 1.24]} radius={0.12} color="#13263a" accent={accent} emissiveIntensity={active ? 0.5 : 0.18} roughness={0.5} metalness={0.44} />
+      <mesh position={[0, 0.04, 0.66]}>
+        <boxGeometry args={[0.74, 1.64, 0.05]} />
+        <meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={0.88} />
+      </mesh>
+      <mesh position={[0, 1.28, 0.02]}>
+        <boxGeometry args={[0.82, 0.14, 0.12]} />
+        <meshStandardMaterial color={TWIN_COLORS.storage} emissive={TWIN_COLORS.storage} emissiveIntensity={0.8} />
+      </mesh>
+      {[-1, 1].flatMap((side) => [-1, 1].map((depth) => ({ side, depth }))).map(({ side, depth }) => (
+        <mesh key={`${side}-${depth}`} position={[side * 0.44, -0.06, depth * 0.5]}>
+          <boxGeometry args={[0.12, 1.92, 0.12]} />
+          <meshStandardMaterial color="#1c4361" emissive={accent} emissiveIntensity={0.2} />
+        </mesh>
+      ))}
+      <mesh position={[0, 1.46, 0]}>
+        <boxGeometry args={[0.84, 0.16, 0.78]} />
+        <meshStandardMaterial color="#1d4969" emissive={accent} emissiveIntensity={0.24} />
+      </mesh>
     </group>
   )
 }
@@ -876,27 +1012,50 @@ function StorageBankZone({
         <boxGeometry args={[8.6, 0.34, 5.2]} />
         <meshStandardMaterial color="#10202f" emissive={accent} emissiveIntensity={0.15} />
       </mesh>
-      <Instances limit={cabinetSlots.length}>
-        <boxGeometry args={[1.15, 2.4, 1.32]} />
-        <meshStandardMaterial color="#13263a" emissive={accent} emissiveIntensity={active ? 0.48 : 0.16} roughness={0.52} metalness={0.46} />
-        {cabinetSlots.map((cabinet, index) => (
-          <Instance key={index} position={[cabinet.x, 1.34, cabinet.z]} />
-        ))}
-      </Instances>
+      <mesh position={[0, 0.26, 0]}>
+        <boxGeometry args={[8.1, 0.1, 4.7]} />
+        <meshStandardMaterial color="#173149" emissive={accent} emissiveIntensity={0.18} />
+      </mesh>
+
       {cabinetSlots.map((cabinet, index) => (
-        <group key={index} position={[cabinet.x, 1.34, cabinet.z]}>
-          <mesh position={[0, 0, 0.69]}>
-            <boxGeometry args={[0.74, 1.6, 0.05]} />
-            <meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={0.86} />
+        <group key={index}>
+          <mesh position={[cabinet.x, 0.26, cabinet.z]}>
+            <boxGeometry args={[1.34, 0.22, 1.5]} />
+            <meshStandardMaterial color="#102233" emissive={accent} emissiveIntensity={0.14} />
           </mesh>
-          <mesh position={[0, 1.26, 0]}>
-            <boxGeometry args={[0.78, 0.14, 0.08]} />
-            <meshStandardMaterial color={TWIN_COLORS.storage} emissive={TWIN_COLORS.storage} emissiveIntensity={0.78} />
+          <BatteryCabinet position={[cabinet.x, 1.48, cabinet.z]} accent={accent} active={active || hovered} />
+        </group>
+      ))}
+
+      {[-2.55, 2.55].map((offset) => (
+        <group key={offset} position={[offset, 0.82, -2.32]}>
+          <RoundedPrism size={[2.1, 1.52, 0.96]} radius={0.12} color="#173149" accent={accent} emissiveIntensity={active ? 0.42 : 0.18} roughness={0.42} metalness={0.46} />
+          <mesh position={[0, 0.92, 0]}>
+            <boxGeometry args={[1.3, 0.14, 0.08]} />
+            <meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={0.74} />
           </mesh>
         </group>
       ))}
-      <group position={[0, 1.34, 0]}>
-        <ZoneHitBox size={[8.8, 4.4, 5.5]} onSelect={onSelect} onHover={setHovered} />
+
+      <group position={[0, 2.72, 0]}>
+        <mesh>
+          <boxGeometry args={[6.4, 0.14, 0.18]} />
+          <meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={0.82} />
+        </mesh>
+        {[-2.55, -0.85, 0.85, 2.55].map((offset) => (
+          <mesh key={offset} position={[offset, -0.86, 0]}>
+            <boxGeometry args={[0.08, 1.72, 0.08]} />
+            <meshStandardMaterial color="#1d4b68" emissive={accent} emissiveIntensity={0.24} />
+          </mesh>
+        ))}
+      </group>
+
+      <group position={[0, 0.46, 2.18]}>
+        <IndustrialPipeRack width={6.2} height={0.9} levels={[0.28, 0.52]} accent={accent} active={active || hovered} />
+      </group>
+
+      <group position={[0, 1.56, 0]}>
+        <ZoneHitBox size={[9.2, 5, 5.8]} onSelect={onSelect} onHover={setHovered} />
       </group>
     </group>
   )
