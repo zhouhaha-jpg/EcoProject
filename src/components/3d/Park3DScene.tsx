@@ -1,6 +1,6 @@
 import { Canvas as FiberCanvas, useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls as DreiOrbitControls } from '@react-three/drei'
-import { useEffect, useRef, type ComponentType } from 'react'
+import { useEffect, useRef, useState, type ComponentType } from 'react'
 import { MOUSE, Vector3 } from 'three'
 import type { ParkDeviceConfig, ParkDeviceDetail } from './parkDeviceConfig'
 import { DEFAULT_CAMERA_POSITION, DEFAULT_CAMERA_TARGET, TWIN_COLORS } from './digitalTwin/config'
@@ -214,6 +214,158 @@ function RatioBar({
   )
 }
 
+const FLOW_LEGEND_LABELS: Record<string, string> = {
+  'pv-hub': '光伏绿电流',
+  'gm-hub': '燃机供电流',
+  'grid-hub': '电网购电流',
+  'hub-ca': '主供电流',
+  'hub-pem': 'PEM 配电流',
+  'ca-hs': '制氢入罐流',
+  'hs-pem': '储氢供氢流',
+  'hub-es': '储能充放电流',
+}
+
+function FlowLegend({
+  flows,
+}: {
+  flows: TwinFlow[]
+}) {
+  const [collapsed, setCollapsed] = useState(false)
+  const legendItems = flows.map((flow) => ({
+    id: flow.id,
+    label: FLOW_LEGEND_LABELS[flow.id] || flow.title,
+    color: flow.color,
+  }))
+
+  if (collapsed) {
+    return (
+      <button
+        type="button"
+        onClick={() => setCollapsed(false)}
+        aria-label="展开粒子流图例"
+        title="展开图例"
+        style={{
+          position: 'absolute',
+          top: 104,
+          right: 20,
+          width: 30,
+          height: 30,
+          border: '1px solid rgba(21,61,87,0.95)',
+          borderRadius: 10,
+          background: 'rgba(4,12,22,0.88)',
+          backdropFilter: 'blur(10px)',
+          color: '#d9fdff',
+          fontFamily: "'Rajdhani', sans-serif",
+          fontSize: 16,
+          fontWeight: 700,
+          cursor: 'pointer',
+          boxShadow: '0 0 16px rgba(0,215,255,0.08)',
+          pointerEvents: 'auto',
+        }}
+      >
+        {'<'}
+      </button>
+    )
+  }
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        top: 104,
+        right: 20,
+        width: 214,
+        padding: '12px 14px',
+        borderRadius: 14,
+        border: '1px solid rgba(21,61,87,0.95)',
+        background: 'rgba(4,12,22,0.76)',
+        backdropFilter: 'blur(10px)',
+        boxShadow: '0 0 18px rgba(0,215,255,0.06)',
+        pointerEvents: 'auto',
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => setCollapsed(true)}
+        aria-label="收起粒子流图例"
+        title="收起图例"
+        style={{
+          position: 'absolute',
+          top: 12,
+          right: 12,
+          width: 24,
+          height: 24,
+          border: '1px solid rgba(21,61,87,0.95)',
+          borderRadius: 8,
+          background: 'rgba(4,12,22,0.88)',
+          color: '#d9fdff',
+          fontFamily: "'Rajdhani', sans-serif",
+          fontSize: 14,
+          fontWeight: 700,
+          lineHeight: 1,
+          cursor: 'pointer',
+          boxShadow: '0 0 16px rgba(0,215,255,0.08)',
+        }}
+      >
+        {'>'}
+      </button>
+      <div style={{ color: '#d9fdff', fontFamily: "'Rajdhani', sans-serif", fontSize: 14, fontWeight: 700, letterSpacing: 1 }}>
+        粒子流图例
+      </div>
+      <div style={{ color: '#7ea6c7', fontSize: 10, marginTop: 3, marginBottom: 10 }}>
+        颜色对应的粒子管道流类型
+      </div>
+      <div style={{ display: 'grid', gap: 8 }}>
+        {legendItems.map((item) => (
+          <div
+            key={item.id}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '52px minmax(0, 1fr)',
+              alignItems: 'center',
+              gap: 10,
+            }}
+          >
+            <div
+              style={{
+                position: 'relative',
+                height: 10,
+                display: 'flex',
+                alignItems: 'center',
+              }}
+            >
+              <div
+                style={{
+                  width: '100%',
+                  height: 3,
+                  borderRadius: 999,
+                  background: `linear-gradient(90deg, ${item.color}66 0%, ${item.color} 100%)`,
+                  boxShadow: `0 0 14px ${item.color}55`,
+                }}
+              />
+              <div
+                style={{
+                  position: 'absolute',
+                  right: -1,
+                  width: 8,
+                  height: 8,
+                  borderRadius: 999,
+                  background: '#ffffff',
+                  border: `2px solid ${item.color}`,
+                  boxShadow: `0 0 10px ${item.color}`,
+                }}
+              />
+            </div>
+            <div style={{ color: '#cfe8f4', fontSize: 11, lineHeight: 1.35 }}>
+              {item.label}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function SceneOverlay({
   snapshot,
   activeDetail,
@@ -266,6 +418,8 @@ function SceneOverlay({
           <OverlayMeter key={metric.id} label={metric.label} value={metric.value} accent={metric.accent} />
         ))}
       </div>
+
+      <FlowLegend flows={snapshot.flows} />
 
       <div
         style={{
