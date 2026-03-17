@@ -1,7 +1,7 @@
 import { Canvas as FiberCanvas, useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls as DreiOrbitControls } from '@react-three/drei'
 import { useEffect, useRef, type ComponentType } from 'react'
-import { Vector3 } from 'three'
+import { MOUSE, Vector3 } from 'three'
 import type { ParkDeviceConfig, ParkDeviceDetail } from './parkDeviceConfig'
 import { DEFAULT_CAMERA_POSITION, DEFAULT_CAMERA_TARGET, TWIN_COLORS } from './digitalTwin/config'
 import type { TwinFlow, TwinSceneSnapshot } from './digitalTwin/types'
@@ -136,7 +136,9 @@ function SceneContent({
 
       <OrbitControls
         ref={controlsRef}
-        enablePan={false}
+        enablePan
+        panSpeed={0.72}
+        screenSpacePanning
         enableDamping
         dampingFactor={0.08}
         autoRotate={!focusedTargetId}
@@ -145,6 +147,11 @@ function SceneContent({
         maxDistance={60}
         minPolarAngle={Math.PI / 4.6}
         maxPolarAngle={Math.PI / 2.12}
+        mouseButtons={{
+          LEFT: MOUSE.ROTATE,
+          MIDDLE: MOUSE.DOLLY,
+          RIGHT: MOUSE.PAN,
+        }}
         target={DEFAULT_CAMERA_TARGET}
       />
     </>

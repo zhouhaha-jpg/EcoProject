@@ -346,6 +346,58 @@ function EnergyHubNode() {
   )
 }
 
+function ExternalGridNode() {
+  const ref = useRef<Group>(null)
+
+  useFrame(({ clock }) => {
+    if (!ref.current) return
+    const elapsed = clock.getElapsedTime()
+    ref.current.position.y = 0.96 + Math.sin(elapsed * 1.1) * 0.04
+  })
+
+  return (
+    <group ref={ref} position={[23.2, 0.96, -2.3]}>
+      <mesh position={[0, 0.12, 0]}>
+        <boxGeometry args={[4.6, 0.26, 4.8]} />
+        <meshStandardMaterial color="#0f1d2c" emissive="#ce93d8" emissiveIntensity={0.12} />
+      </mesh>
+
+      {[-1.35, 1.35].map((offset) => (
+        <group key={offset} position={[offset, 1.42, -0.65]}>
+          <mesh>
+            <boxGeometry args={[0.14, 2.9, 0.14]} />
+            <meshStandardMaterial color="#173149" emissive="#ce93d8" emissiveIntensity={0.28} />
+          </mesh>
+          <mesh position={[0, 1.08, 0]}>
+            <boxGeometry args={[1.1, 0.1, 0.12]} />
+            <meshStandardMaterial color="#ce93d8" emissive="#ce93d8" emissiveIntensity={0.74} />
+          </mesh>
+          {[-0.34, 0, 0.34].map((cross) => (
+            <mesh key={cross} position={[cross, 0.9, 0.08]}>
+              <cylinderGeometry args={[0.07, 0.09, 0.18, 12]} />
+              <meshStandardMaterial color="#e7dcff" emissive="#ce93d8" emissiveIntensity={0.28} />
+            </mesh>
+          ))}
+        </group>
+      ))}
+
+      <group position={[0, 0.9, 0.7]}>
+        <RoundedPrism size={[1.72, 1.48, 1.44]} radius={0.14} color="#173149" accent="#ce93d8" emissiveIntensity={0.24} roughness={0.38} metalness={0.46} />
+        <mesh position={[0, 0.92, 0]}>
+          <boxGeometry args={[1.1, 0.14, 0.2]} />
+          <meshStandardMaterial color="#ce93d8" emissive="#ce93d8" emissiveIntensity={0.68} />
+        </mesh>
+      </group>
+
+      <mesh position={[0, 3.02, -0.66]}>
+        <boxGeometry args={[3.5, 0.08, 0.1]} />
+        <meshStandardMaterial color="#ce93d8" emissive="#ce93d8" emissiveIntensity={0.8} transparent opacity={0.84} />
+      </mesh>
+      <Line points={[[-1.2, 2.92, -0.66], [0, 3.18, -0.24], [1.24, 2.92, -0.66]]} color="#ce93d8" lineWidth={0.9} transparent opacity={0.8} />
+    </group>
+  )
+}
+
 function CAFactoryZone({
   device,
   detail,
@@ -874,14 +926,14 @@ function SolarArrayZone({
         <boxGeometry args={[2.1, 0.08, 1.22]} />
         <meshStandardMaterial color="#102238" emissive={accent} emissiveIntensity={active ? 0.72 : hovered ? 0.48 : 0.22} roughness={0.16} metalness={0.52} />
         {panelPositions.map((panel, index) => (
-          <Instance key={index} position={[panel.x, 1.1, panel.z]} rotation={[-0.52, 0.22, 0]} />
+          <Instance key={index} position={[panel.x, 1.1, panel.z]} rotation={[0.52, 0.22, 0]} />
         ))}
       </Instances>
       <Instances limit={panelPositions.length}>
         <boxGeometry args={[2.22, 0.04, 1.34]} />
         <meshStandardMaterial color={accent} emissive={accent} emissiveIntensity={0.92} transparent opacity={0.85} />
         {panelPositions.map((panel, index) => (
-          <Instance key={index} position={[panel.x, 1.03, panel.z]} rotation={[-0.52, 0.22, 0]} />
+          <Instance key={index} position={[panel.x, 1.03, panel.z]} rotation={[0.52, 0.22, 0]} />
         ))}
       </Instances>
 
@@ -889,7 +941,7 @@ function SolarArrayZone({
         <boxGeometry args={[1.86, 0.05, 0.08]} />
         <meshStandardMaterial color="#1e4666" emissive={accent} emissiveIntensity={0.26} />
         {panelPositions.map((panel, index) => (
-          <Instance key={index} position={[panel.x, 0.8, panel.z]} rotation={[-0.52, 0.22, 0]} />
+          <Instance key={index} position={[panel.x, 0.8, panel.z]} rotation={[0.52, 0.22, 0]} />
         ))}
       </Instances>
 
@@ -908,15 +960,15 @@ function SolarArrayZone({
 
       {panelPositions.map((panel, index) => (
         <group key={`support-${index}`} position={[panel.x, 0.18, panel.z]} rotation={[0, 0.22, 0]}>
-          <mesh position={[-0.58, 0.34, 0.34]}>
+          <mesh position={[-0.58, 0.34, -0.34]}>
             <boxGeometry args={[0.06, 0.68, 0.06]} />
             <meshStandardMaterial color="#18344d" emissive={accent} emissiveIntensity={0.16} />
           </mesh>
-          <mesh position={[0.58, 0.34, 0.34]}>
+          <mesh position={[0.58, 0.34, -0.34]}>
             <boxGeometry args={[0.06, 0.68, 0.06]} />
             <meshStandardMaterial color="#18344d" emissive={accent} emissiveIntensity={0.16} />
           </mesh>
-          <mesh position={[0, 0.62, -0.26]} rotation={[0.56, 0, 0]}>
+          <mesh position={[0, 0.62, 0.26]} rotation={[-0.56, 0, 0]}>
             <boxGeometry args={[1.52, 0.05, 0.06]} />
             <meshStandardMaterial color="#214a68" emissive={accent} emissiveIntensity={0.18} />
           </mesh>
@@ -1081,6 +1133,7 @@ export default function ParkAssets({
     <group>
       <OfficeCluster />
       <EnergyHubNode />
+      <ExternalGridNode />
 
       <CAFactoryZone
         device={deviceMap['ca-main']}
