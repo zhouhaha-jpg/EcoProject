@@ -12,13 +12,13 @@ import cors from 'cors'
 import { createServer } from 'http'
 import OpenAI from 'openai'
 import config from './config.js'
-import { initDb, getDb } from './db/index.js'
+import { initDb } from './db/index.js'
 import datasetsRouter from './routes/datasets.js'
 import optimizeRouter from './routes/optimize.js'
 import conversationsRouter from './routes/conversations.js'
 import realtimeRouter from './routes/realtime.js'
-import { mountWebSocket, broadcastDataUpdate, broadcastAlert, broadcastOptimizationComplete, broadcastHealthUpdate, broadcastDatasetUpdated, pushServerLog } from './ws.js'
-import { formatBeijingDateTime } from './lib/time.js'
+import { mountWebSocket, pushServerLog } from './ws.js'
+import { refreshRealtimeCycle } from './services/realtimeRefresh.js'
 
 initDb()
 
@@ -398,18 +398,11 @@ const PORT = process.env.PORT || 5000
 const server = createServer(app)
 
 // ═══ 数据采集调度 + 影子优化 ═══
-import { spawn } from 'child_process'
-import { fileURLToPath } from 'url'
-import { dirname, join } from 'path'
-
-const __indexDir = dirname(fileURLToPath(import.meta.url))
-const FETCHER_SCRIPT = join(__indexDir, 'python', 'data_fetcher.py')
-const OPTIMIZER_SCRIPT = join(__indexDir, 'python', 'optimizer.py')
-
 /**
  * 执行一次数据采集并触发影子优化（如有异动）
  */
 async function scheduledFetch() {
+  return runScheduledRefresh()
   try {
     const db = getDb()
     // 读取园区坐标
@@ -659,6 +652,44 @@ ${alertSummary}
 }
 
 // 启动时立即执行一次数据采集
+async function runScheduledRefresh() {
+  try {
+    pushServerLog({
+      level: 'info',
+      status: 'start',
+      scope: 'scheduler',
+      message: '定时任务开始刷新今日 24h 快照',
+      targetDate: new Date().toISOString().slice(0, 10),
+      algorithm: 'Realtime refresh cycle',
+    })
+
+    const { fetchResult, dataset } = await refreshRealtimeCycle({
+      generateAlertText,
+    })
+
+    pushServerLog({
+      level: 'ok',
+      status: 'done',
+      scope: 'scheduler',
+      message: '定时任务已完成今日快照刷新',
+      targetDate: fetchResult.date,
+      range: `${fetchResult.date} 00:00-23:00`,
+      algorithm: 'Realtime refresh cycle',
+      detail: `${dataset.datasetName} | ${fetchResult.contains_forecast ? `forecast ${String(fetchResult.forecast_from_hour).padStart(2, '0')}:00-23:00` : 'no forecast hours'}`,
+    })
+  } catch (error) {
+    console.error('[scheduler] refresh failed:', error.message)
+    pushServerLog({
+      level: 'err',
+      status: 'error',
+      scope: 'scheduler',
+      message: '定时任务刷新失败',
+      algorithm: 'Realtime refresh cycle',
+      detail: error.message,
+    })
+  }
+}
+
 setTimeout(() => {
   pushServerLog({
     level: 'info',
@@ -667,11 +698,11 @@ setTimeout(() => {
     message: '初始化抓取将在 3 秒后启动',
     algorithm: 'DataFetcher aggregator',
   })
-  scheduledFetch()
+  runScheduledRefresh()
 }, 3000)
 
 // 每小时执行一次
-setInterval(() => scheduledFetch(), 60 * 60 * 1000)
+setInterval(() => runScheduledRefresh(), 60 * 60 * 1000)
 
 server.on('error', (error) => {
   if (error?.code === 'EADDRINUSE') {

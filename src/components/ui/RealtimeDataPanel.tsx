@@ -7,8 +7,13 @@ interface Props {
   prices: number[]
   solar: number[]
   carbon: number[]
+  forecastMask: boolean[]
+  containsForecast: boolean
+  forecastFromHour: number | null
   sources: DataSources
   lastUpdated: string
+  manualRefreshing: boolean
+  onManualRefresh: () => Promise<void>
   onClose: () => void
 }
 
@@ -20,18 +25,22 @@ function MiniChart({
   unit,
   label,
   sourceTag,
+  forecastMask,
 }: {
   data: number[]
   color: string
   unit: string
   label: string
   sourceTag: string
+  forecastMask: boolean[]
 }) {
   const ref = useRef<HTMLDivElement>(null)
 
   const max = data.length ? Math.max(...data) : 1
   const min = data.length ? Math.min(...data) : 0
   const avg = data.length ? (data.reduce((sum, value) => sum + value, 0) / data.length) : 0
+  const actualSeries = data.map((value, index) => forecastMask[index] ? null : value)
+  const forecastSeries = data.map((value, index) => forecastMask[index] ? value : null)
 
   const option = data.length === 24 ? {
     grid: { top: 28, right: 12, bottom: 24, left: 48 },
@@ -41,7 +50,7 @@ function MiniChart({
       borderColor: '#1e3256',
       textStyle: { color: '#e8f4ff', fontSize: 11 },
       formatter: (params: Array<{ dataIndex: number; value: number }>) => {
-        const point = params[0]
+        const point = params.find((item) => item.value != null) || params[0]
         return `${point.dataIndex}:00<br/>${label}: <b style="color:${color}">${point.value} ${unit}</b>`
       },
     },
@@ -57,29 +66,40 @@ function MiniChart({
       axisLabel: { fontSize: 9, color: '#5a7a9a' },
       splitLine: { lineStyle: { color: '#1e325630' } },
     },
-    series: [{
-      type: 'line',
-      data,
-      smooth: true,
-      symbol: 'none',
-      lineStyle: { color, width: 2 },
-      areaStyle: {
-        color: {
-          type: 'linear',
-          x: 0,
-          y: 0,
-          x2: 0,
-          y2: 1,
-          colorStops: [
-            { offset: 0, color: `${color}40` },
-            { offset: 1, color: `${color}05` },
-          ],
+    series: [
+      {
+        type: 'line',
+        data: actualSeries,
+        smooth: true,
+        symbol: 'none',
+        connectNulls: false,
+        lineStyle: { color, width: 2 },
+        areaStyle: {
+          color: {
+            type: 'linear',
+            x: 0,
+            y: 0,
+            x2: 0,
+            y2: 1,
+            colorStops: [
+              { offset: 0, color: `${color}40` },
+              { offset: 1, color: `${color}05` },
+            ],
+          },
         },
       },
-    }],
+      {
+        type: 'line',
+        data: forecastSeries,
+        smooth: true,
+        symbol: 'none',
+        connectNulls: false,
+        lineStyle: { color, width: 2, type: 'dashed', opacity: 0.75 },
+      },
+    ],
   } : null
 
-  useEChart(ref, option, [data])
+  useEChart(ref, option, [data, forecastMask])
 
   return (
     <div className="rounded-lg p-2.5" style={{ background: '#0a1420', border: '1px solid #1e3256' }}>
@@ -100,9 +120,9 @@ function MiniChart({
         <>
           <div ref={ref} style={{ width: '100%', height: 140 }} />
           <div className="mt-1 flex justify-between text-[10px]" style={{ color: '#5a7a9a' }}>
-            <span>最小: {min.toFixed(4)} {unit}</span>
-            <span>均值: {avg.toFixed(4)} {unit}</span>
-            <span>最大: {max.toFixed(4)} {unit}</span>
+            <span>最小 {min.toFixed(4)} {unit}</span>
+            <span>均值 {avg.toFixed(4)} {unit}</span>
+            <span>最大 {max.toFixed(4)} {unit}</span>
           </div>
         </>
       ) : (
@@ -114,7 +134,19 @@ function MiniChart({
   )
 }
 
-export default function RealtimeDataPanel({ prices, solar, carbon, sources, lastUpdated, onClose }: Props) {
+export default function RealtimeDataPanel({
+  prices,
+  solar,
+  carbon,
+  forecastMask,
+  containsForecast,
+  forecastFromHour,
+  sources,
+  lastUpdated,
+  manualRefreshing,
+  onManualRefresh,
+  onClose,
+}: Props) {
   const panelRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -141,6 +173,10 @@ export default function RealtimeDataPanel({ prices, solar, carbon, sources, last
     openmeteo: 'Open-Meteo API',
     model: '风光反推模型',
   }
+
+  const forecastLabel = containsForecast && forecastFromHour != null
+    ? `${String(forecastFromHour).padStart(2, '0')}:00-23:00 为预测`
+    : '当前 24h 均已落地'
 
   return (
     <div
@@ -171,10 +207,35 @@ export default function RealtimeDataPanel({ prices, solar, carbon, sources, last
           >
             最后更新 {time}
           </span>
+          <span
+            className="rounded px-1.5 py-0.5 text-[10px]"
+            style={{
+              background: containsForecast ? 'rgba(255,204,0,0.12)' : 'rgba(0,255,136,0.12)',
+              color: containsForecast ? '#ffcc00' : '#00ff88',
+              border: `1px solid ${containsForecast ? '#ffcc0040' : '#00ff8840'}`,
+            }}
+          >
+            {forecastLabel}
+          </span>
         </div>
-        <button onClick={onClose} className="text-[#3d6080] transition-colors hover:text-[#8ba9cc]">
-          <X size={14} />
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void onManualRefresh()}
+            disabled={manualRefreshing}
+            className="rounded border px-2 py-1 text-[10px] transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+            style={{
+              borderColor: '#2a4a74',
+              color: manualRefreshing ? '#8ba9cc' : '#e8f4ff',
+              background: manualRefreshing ? '#162338' : '#102033',
+            }}
+          >
+            {manualRefreshing ? '抓取中...' : '立即抓取'}
+          </button>
+          <button onClick={onClose} className="text-[#3d6080] transition-colors hover:text-[#8ba9cc]">
+            <X size={14} />
+          </button>
+        </div>
       </div>
 
       <div className="space-y-2.5 p-3">
@@ -184,6 +245,7 @@ export default function RealtimeDataPanel({ prices, solar, carbon, sources, last
           unit="元/kWh"
           label="⚡ 电价曲线"
           sourceTag={sourceLabels[sources.price] || sources.price}
+          forecastMask={forecastMask}
         />
         <MiniChart
           data={solar}
@@ -191,18 +253,20 @@ export default function RealtimeDataPanel({ prices, solar, carbon, sources, last
           unit="W/m²"
           label="☀️ 光照辐射"
           sourceTag={sourceLabels[sources.solar] || sources.solar}
+          forecastMask={forecastMask}
         />
         <MiniChart
           data={carbon}
           color="#00d4ff"
           unit="tCO2/kWh"
-          label="🌶️ 碳排因子"
+          label="🌿 碳排因子"
           sourceTag={sourceLabels[sources.carbon] || sources.carbon}
+          forecastMask={forecastMask}
         />
       </div>
 
       <div className="border-t px-4 py-2 text-[10px]" style={{ borderColor: '#1e3256', color: '#3d6080' }}>
-        上述数据会自动注入优化器，影响新的调度求解。若后端实时快照已过期，系统会在加载时自动补抓并重算。
+        实线表示已发生小时，虚线表示当天未来预测小时。页面只读取缓存；若需演示新的快照，请使用“立即抓取”。
       </div>
     </div>
   )

@@ -41,6 +41,8 @@ export interface DatasetMeta {
   isHistorical: boolean
   datasetId?: number | null
   datasetName?: string
+  containsForecast?: boolean
+  forecastFromHour?: number | null
 }
 
 export type ServerLogLevel = 'info' | 'warn' | 'ok' | 'err'

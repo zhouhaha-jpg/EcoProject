@@ -150,6 +150,11 @@ export default function MainLayout() {
             prices={realtime.prices}
             solar={realtime.solar}
             carbon={realtime.carbon}
+            forecastMask={realtime.forecastMask}
+            containsForecast={realtime.containsForecast}
+            forecastFromHour={realtime.forecastFromHour}
+            manualRefreshing={realtime.manualRefreshing}
+            onManualRefresh={realtime.triggerManualRefresh}
           />
 
           <span className="hud-chip" title={`展示日期 ${datasetMeta.viewDate || '本地默认'} | 快照 ${datasetMeta.snapshotAt || '--'}`}>
@@ -158,6 +163,12 @@ export default function MainLayout() {
           <span className="hud-chip" title="当前图表展示的数据快照时间">
             截止 {datasetMeta.snapshotAt ? datasetMeta.snapshotAt.slice(5, 16) : '--'}
           </span>
+
+          {!datasetMeta.isHistorical && datasetMeta.containsForecast ? (
+            <span className="hud-chip" title="今日未来小时以 forecast 标识返回，不再伪装成已实时落地">
+              FCST {String(datasetMeta.forecastFromHour ?? 0).padStart(2, '0')}:00+
+            </span>
+          ) : null}
 
           <button
             ref={logButtonRef}

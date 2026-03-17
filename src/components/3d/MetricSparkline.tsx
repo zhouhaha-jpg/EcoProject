@@ -53,6 +53,13 @@ function normalizeRange(values: number[]) {
   }
 }
 
+function sanitizeValues(values: number[]) {
+  return values.map((value) => {
+    const numeric = Number(value)
+    return Number.isFinite(numeric) ? numeric : 0
+  })
+}
+
 export default function MetricSparkline({
   values,
   stroke = '#00d4ff',
@@ -63,19 +70,21 @@ export default function MetricSparkline({
   emphasized = false,
 }: MetricSparklineProps) {
   const uid = useId().replace(/:/g, '')
-  const rangeMeta = useMemo(() => (values.length ? normalizeRange(values) : null), [values])
+  const safeValues = useMemo(() => sanitizeValues(values), [values])
+  const rangeMeta = useMemo(() => (safeValues.length ? normalizeRange(safeValues) : null), [safeValues])
   const points = useMemo(() => {
-    if (!values.length) return [] as Array<{ x: number; y: number }>
+    if (!safeValues.length) return [] as Array<{ x: number; y: number }>
 
     const min = rangeMeta?.min ?? 0
     const max = rangeMeta?.max ?? 1
     const range = Math.max(max - min, 1e-6)
+    const flatLineY = Math.max(12, Math.min(height - 12, height * 0.42))
 
-    return values.map((value, index) => ({
-      x: (index / Math.max(values.length - 1, 1)) * width,
-      y: height - (((value - min) / range) * (height - 16)) - 8,
+    return safeValues.map((value, index) => ({
+      x: (index / Math.max(safeValues.length - 1, 1)) * width,
+      y: rangeMeta?.isFlat ? flatLineY : height - (((value - min) / range) * (height - 16)) - 8,
     }))
-  }, [height, rangeMeta, values, width])
+  }, [height, rangeMeta, safeValues, width])
 
   const linePath = points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(' ')
   const areaPath = points.length
@@ -90,8 +99,8 @@ export default function MetricSparkline({
   const clipPathId = `spark-clip-${uid}`
   const scanGradientId = `spark-scan-${uid}`
   const pulseOpacity = rangeMeta?.isLowVariation ? 0.34 : emphasized ? 0.28 : 0.2
-  const glowStrokeWidth = rangeMeta?.isLowVariation ? (emphasized ? 7 : 5.6) : emphasized ? 6 : 4.5
-  const lineStrokeWidth = rangeMeta?.isLowVariation ? (emphasized ? 3.4 : 2.8) : emphasized ? 2.8 : 2.4
+  const glowStrokeWidth = rangeMeta?.isFlat ? (emphasized ? 8 : 6.4) : rangeMeta?.isLowVariation ? (emphasized ? 7 : 5.6) : emphasized ? 6 : 4.5
+  const lineStrokeWidth = rangeMeta?.isFlat ? (emphasized ? 3.8 : 3.1) : rangeMeta?.isLowVariation ? (emphasized ? 3.4 : 2.8) : emphasized ? 2.8 : 2.4
 
   return (
     <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
@@ -156,6 +165,7 @@ export default function MetricSparkline({
             strokeWidth={lineStrokeWidth.toString()}
             strokeLinejoin="round"
             strokeLinecap="round"
+            opacity={rangeMeta?.isFlat ? '0.98' : undefined}
           />
         </>
       )}

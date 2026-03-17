@@ -12,6 +12,12 @@ const DB_PATH = join(__dirname, 'eco.db')
 
 let db = null
 
+function ensureColumn(database, tableName, columnName, definition) {
+  const columns = database.prepare(`PRAGMA table_info(${tableName})`).all()
+  if (columns.some((column) => column.name === columnName)) return
+  database.exec(`ALTER TABLE ${tableName} ADD COLUMN ${definition}`)
+}
+
 function parseDatasetRow(row) {
   if (!row) return null
   return { ...row, data: JSON.parse(row.data) }
@@ -37,6 +43,7 @@ export function initDb() {
   const database = getDb()
   const schema = readFileSync(join(__dirname, 'schema.sql'), 'utf-8')
   database.exec(schema)
+  ensureColumn(database, 'realtime_data', 'is_forecast', 'is_forecast INTEGER NOT NULL DEFAULT 0')
 
   const count = database.prepare('SELECT COUNT(*) as c FROM datasets').get()
   if (count.c === 0) {

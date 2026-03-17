@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS realtime_data (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   data_date TEXT NOT NULL,
   hour INTEGER NOT NULL CHECK(hour >= 0 AND hour <= 23),
+  is_forecast INTEGER NOT NULL DEFAULT 0,
   shortwave_radiation REAL,
   wind_speed_10m REAL,
   wind_speed_80m REAL,

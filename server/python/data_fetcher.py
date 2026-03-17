@@ -62,6 +62,17 @@ def beijing_now():
     return datetime.now(BEIJING_TZ)
 
 
+def build_forecast_mask(target_date):
+    today = beijing_today()
+    if target_date > today:
+        return [1] * 24
+    if target_date < today:
+        return [0] * 24
+
+    current_hour = beijing_now().hour
+    return [1 if hour > current_hour else 0 for hour in range(24)]
+
+
 def get_db():
     """获取 SQLite 连接（WAL 模式）"""
     conn = sqlite3.connect(DB_PATH, timeout=10)
@@ -253,15 +264,16 @@ def detect_anomalies(new_prices, carbon_factors):
 # ═══════════════════════════════════════
 
 def save_to_db(conn, data_date_str, radiation, wind10, wind80, temp,
-               prices, carbon_factors, price_source, solar_source, carbon_source):
+               prices, carbon_factors, price_source, solar_source, carbon_source, forecast_mask):
     """将 24h 数据写入 realtime_data 表（UPSERT）"""
     sql = """
         INSERT INTO realtime_data
-          (data_date, hour, shortwave_radiation, wind_speed_10m, wind_speed_80m,
+          (data_date, hour, is_forecast, shortwave_radiation, wind_speed_10m, wind_speed_80m,
            temperature, price_grid, ef_grid, price_source, solar_source, carbon_source)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(data_date, hour)
         DO UPDATE SET
+          is_forecast=excluded.is_forecast,
           shortwave_radiation=excluded.shortwave_radiation,
           wind_speed_10m=excluded.wind_speed_10m,
           wind_speed_80m=excluded.wind_speed_80m,
@@ -275,7 +287,7 @@ def save_to_db(conn, data_date_str, radiation, wind10, wind80, temp,
     """
     for h in range(24):
         conn.execute(sql, (
-            data_date_str, h,
+            data_date_str, h, forecast_mask[h],
             radiation[h], wind10[h], wind80[h], temp[h],
             prices[h], carbon_factors[h],
             price_source, solar_source, carbon_source,
@@ -333,6 +345,7 @@ def fetch_all(lat=None, lon=None, target_date=None, seed=None):
         target_date = beijing_today()
 
     data_date_str = target_date.isoformat()
+    forecast_mask = build_forecast_mask(target_date)
 
     # 1. 采集太阳辐射和风速
     radiation, wind10, wind80, temp, solar_source = get_solar_data(lat, lon, target_date)
@@ -356,7 +369,7 @@ def fetch_all(lat=None, lon=None, target_date=None, seed=None):
 
     # 4. 写入 DB
     save_to_db(conn, data_date_str, radiation, wind10, wind80, temp,
-               prices, carbon_factors, price_source, solar_source, carbon_source)
+               prices, carbon_factors, price_source, solar_source, carbon_source, forecast_mask)
 
     # 5. 异动检测
     alerts = detect_anomalies(prices, carbon_factors)
@@ -384,6 +397,9 @@ def fetch_all(lat=None, lon=None, target_date=None, seed=None):
             'solar': solar_source,
             'carbon': carbon_source,
         },
+        'forecast_mask': forecast_mask,
+        'contains_forecast': any(forecast_mask),
+        'forecast_from_hour': next((index for index, value in enumerate(forecast_mask) if value), None),
         'alerts': alerts,
         'optimizer_overrides': {
             'price_grid': prices,

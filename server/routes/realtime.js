@@ -10,6 +10,7 @@ import {
   parseSqliteUtcTimestamp,
 } from '../lib/time.js'
 import { pushServerLog } from '../ws.js'
+import { refreshRealtimeCycle } from '../services/realtimeRefresh.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const FETCHER_SCRIPT = join(__dirname, '..', 'python', 'data_fetcher.py')
@@ -208,6 +209,207 @@ function runOptimizer(params = {}, context = {}) {
     py.stdin.end()
   })
 }
+
+router.get('/latest', async (req, res, next) => {
+  try {
+    const db = getDb()
+    const today = getBeijingDate()
+    const rows = db.prepare(
+      'SELECT * FROM realtime_data WHERE data_date = ? ORDER BY hour'
+    ).all(today)
+
+    if (rows.length >= 24) {
+      pushServerLog({
+        level: 'info',
+        status: 'done',
+        scope: 'cache',
+        message: '命中北京时间今日 24h 快照缓存',
+        targetDate: today,
+        range: `${today} 00:00-23:00`,
+        detail: `共 ${rows.length} 条 | 仅返回缓存，不触发重抓`,
+      })
+      return res.json(serializeRealtimeRows(rows, today))
+    }
+
+    const latestDateRow = db.prepare(
+      'SELECT data_date FROM realtime_data ORDER BY data_date DESC LIMIT 1'
+    ).get()
+
+    if (latestDateRow?.data_date) {
+      const fallbackRows = db.prepare(
+        'SELECT * FROM realtime_data WHERE data_date = ? ORDER BY hour'
+      ).all(latestDateRow.data_date)
+      if (fallbackRows.length >= 24) {
+        pushServerLog({
+          level: 'warn',
+          status: 'done',
+          scope: 'cache',
+          message: '今日快照尚未就绪，返回最近一次 24h 缓存',
+          targetDate: latestDateRow.data_date,
+          range: `${latestDateRow.data_date} 00:00-23:00`,
+          detail: '此请求不会触发自动抓取',
+        })
+        return res.json(serializeRealtimeRows(fallbackRows, latestDateRow.data_date))
+      }
+    }
+
+    pushServerLog({
+      level: 'warn',
+      status: 'done',
+      scope: 'cache',
+      message: '当前无可用 24h 快照缓存',
+      targetDate: today,
+      range: `${today} 00:00-23:00`,
+      detail: '等待定时任务或手动抓取',
+    })
+    return res.json(emptyRealtimePayload(today))
+  } catch (error) {
+    console.error('[realtime/latest]', error)
+    pushServerLog({
+      level: 'err',
+      status: 'error',
+      scope: 'api',
+      message: '读取最新实时快照失败',
+      targetDate: getBeijingDate(),
+      detail: error.message,
+    })
+    return res.status(500).json({ error: error.message })
+  }
+})
+
+router.get('/display', async (req, res, next) => {
+  try {
+    const db = getDb()
+    const requestedDate = req.query.date ? String(req.query.date) : ''
+
+    if (requestedDate && !/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) {
+      return res.status(400).json({ error: 'date must be YYYY-MM-DD' })
+    }
+
+    if (requestedDate) {
+      const cached = findRuntimeDatasetByViewDate(requestedDate)
+      if (cached) {
+        pushServerLog({
+          level: 'info',
+          status: 'done',
+          scope: 'cache',
+          message: '命中历史展示缓存',
+          targetDate: requestedDate,
+          range: `${requestedDate} 00:00-23:00`,
+          detail: `${cached.name} | datasetId ${cached.id}`,
+        })
+        return res.json(normalizeDatasetResponseWithForecast(db, cached, requestedDate, 'history'))
+      }
+
+      pushServerLog({
+        level: 'warn',
+        status: 'progress',
+        scope: 'history',
+        message: '历史展示缓存未命中，开始构建回溯结果',
+        targetDate: requestedDate,
+        range: `${requestedDate} 00:00-23:00`,
+        algorithm: 'Archive fetch + MILP 6-strategy dispatch',
+      })
+
+      const built = await buildDatasetForDate(db, requestedDate, {
+        save: true,
+        datasetType: 'history',
+      })
+      return res.json(built)
+    }
+
+    const today = getBeijingDate()
+    const latestDataset = getLatestRuntimeDataset('realtime')
+    if (latestDataset) {
+      pushServerLog({
+        level: 'info',
+        status: 'done',
+        scope: 'cache',
+        message: '加载数据库中最新展示结果',
+        targetDate: latestDataset.data?._meta?.viewDate || today,
+        detail: `${latestDataset.name} | datasetId ${latestDataset.id}`,
+      })
+      return res.json(normalizeDatasetResponseWithForecast(db, latestDataset, today))
+    }
+
+    const latestDateRow = db.prepare(
+      'SELECT data_date FROM realtime_data ORDER BY data_date DESC LIMIT 1'
+    ).get()
+    const latestDate = latestDateRow?.data_date || today
+
+    pushServerLog({
+      level: 'warn',
+      status: 'progress',
+      scope: 'display',
+      message: '展示结果缓存缺失，开始基于现有原始快照构建',
+      targetDate: latestDate,
+      range: `${latestDate} 00:00-23:00`,
+      algorithm: 'Realtime cache + MILP 6-strategy dispatch',
+      detail: '此流程不会因页面轮询触发重抓',
+    })
+
+    const built = await buildDatasetForDate(db, latestDate, {
+      save: true,
+      datasetType: latestDate === today ? 'realtime' : 'history',
+    })
+    return res.json(built)
+  } catch (error) {
+    console.error('[realtime/display]', error)
+    pushServerLog({
+      level: 'err',
+      status: 'error',
+      scope: 'api',
+      message: '加载展示数据失败',
+      targetDate: String(req.query.date || getBeijingDate()),
+      detail: error.message,
+    })
+    return res.status(500).json({ error: error.message })
+  }
+})
+
+router.post('/fetch', async (req, res, next) => {
+  try {
+    const targetDate = req.body.date || getBeijingDate()
+
+    pushServerLog({
+      level: 'info',
+      status: 'progress',
+      scope: 'api',
+      message: '收到手动快照刷新请求',
+      targetDate,
+      range: `${targetDate} 00:00-23:00`,
+      algorithm: 'Realtime refresh cycle',
+      detail: req.body.dramatic ? 'dramatic mode' : (req.body.seed != null ? `seed=${req.body.seed}` : 'normal mode'),
+    })
+
+    if (targetDate !== getBeijingDate()) {
+      const db = getDb()
+      const built = await buildDatasetForDate(db, targetDate, {
+        save: true,
+        datasetType: 'history',
+      })
+      return res.json({ fetchResult: null, dataset: built })
+    }
+
+    const result = await refreshRealtimeCycle({
+      targetDate,
+      seed: req.body.seed,
+      dramatic: req.body.dramatic,
+    })
+    return res.json(result)
+  } catch (error) {
+    console.error('[realtime/fetch]', error)
+    pushServerLog({
+      level: 'err',
+      status: 'error',
+      scope: 'api',
+      message: '手动快照刷新失败',
+      targetDate: req.body?.date || getBeijingDate(),
+      detail: error.message,
+    })
+    return res.status(500).json({ error: error.message })
+  }
+})
 
 router.get('/latest', async (req, res) => {
   try {
@@ -579,6 +781,44 @@ function getParkConfig(db) {
   return config
 }
 
+function getForecastSummary(rows = []) {
+  const forecastMask = rows.map((row) => Boolean(row.is_forecast))
+  const forecastFromHour = rows.find((row) => row.is_forecast)?.hour ?? null
+  return {
+    forecastMask,
+    containsForecast: forecastFromHour != null,
+    forecastFromHour,
+  }
+}
+
+function emptyRealtimePayload(dateStr) {
+  return {
+    date: dateStr,
+    prices: [],
+    solar: [],
+    carbon: [],
+    wind10: [],
+    wind80: [],
+    temperature: [],
+    forecast_mask: [],
+    contains_forecast: false,
+    forecast_from_hour: null,
+    sources: { price: 'fallback', solar: 'fallback', carbon: 'fallback' },
+    alerts: [],
+    optimizer_overrides: {
+      price_grid: [],
+      EF_grid: [],
+      G_profile: [],
+      G_scale: 0,
+    },
+    fetched_at: '',
+  }
+}
+
+function serializeRealtimeRows(rows, dateStr) {
+  return formatRows(rows, dateStr)
+}
+
 function formatRows(rows, dateStr) {
   const prices = []
   const solar = []
@@ -607,6 +847,7 @@ function formatRows(rows, dateStr) {
   const gMax = Math.max(...solar, 1)
   const gProfile = solar.map((value) => value / gMax)
   const gScale = gMax / 1000 * 1.5
+  const forecast = getForecastSummary(rows)
 
   return {
     date: dateStr,
@@ -616,6 +857,9 @@ function formatRows(rows, dateStr) {
     wind10,
     wind80,
     temperature,
+    forecast_mask: forecast.forecastMask,
+    contains_forecast: forecast.containsForecast,
+    forecast_from_hour: forecast.forecastFromHour,
     sources: { price: priceSrc, solar: solarSrc, carbon: carbonSrc },
     alerts: [],
     optimizer_overrides: {
@@ -628,13 +872,15 @@ function formatRows(rows, dateStr) {
   }
 }
 
-function buildDatasetMeta({ row, datasetType = 'realtime', viewDate, snapshotAt }) {
+function buildDatasetMeta({ row, datasetType = 'realtime', viewDate, snapshotAt, forecastSummary }) {
   const inferredType = row?.data?._meta?.datasetType
     ?? (row?.name?.startsWith('时光回溯 ') ? 'history' : datasetType)
   const resolvedType = datasetType === 'history' ? 'history' : inferredType
   const inferredDate = row?.data?._meta?.viewDate ?? viewDate ?? extractDateFromName(row?.name) ?? getBeijingDate()
   const inferredSnapshot = normalizeSnapshotAt(row?.data?._meta?.snapshotAt || snapshotAt)
     || (row?.created_at ? formatSqliteUtcToBeijing(row.created_at) : formatBeijingDateTime())
+  const containsForecast = row?.data?._meta?.containsForecast ?? forecastSummary?.containsForecast ?? false
+  const forecastFromHour = row?.data?._meta?.forecastFromHour ?? forecastSummary?.forecastFromHour ?? null
 
   return {
     datasetType: resolvedType,
@@ -643,6 +889,8 @@ function buildDatasetMeta({ row, datasetType = 'realtime', viewDate, snapshotAt 
     isHistorical: resolvedType === 'history',
     datasetId: row?.id ?? null,
     datasetName: row?.name ?? '',
+    containsForecast,
+    forecastFromHour,
   }
 }
 
@@ -657,6 +905,17 @@ function normalizeSnapshotAt(value) {
 
 function normalizeDatasetResponse(row, fallbackDate = '', datasetType = 'realtime') {
   const meta = buildDatasetMeta({ row, viewDate: fallbackDate, datasetType })
+  const data = { ...row.data, _meta: meta }
+  return { data, meta, id: row.id, name: row.name }
+}
+
+function normalizeDatasetResponseWithForecast(db, row, fallbackDate = '', datasetType = 'realtime') {
+  const viewDate = row?.data?._meta?.viewDate ?? fallbackDate
+  const forecastRows = viewDate
+    ? db.prepare('SELECT hour, is_forecast FROM realtime_data WHERE data_date = ? ORDER BY hour').all(viewDate)
+    : []
+  const forecastSummary = getForecastSummary(forecastRows)
+  const meta = buildDatasetMeta({ row, viewDate: fallbackDate, datasetType, forecastSummary })
   const data = { ...row.data, _meta: meta }
   return { data, meta, id: row.id, name: row.name }
 }
@@ -735,6 +994,10 @@ async function buildDatasetForDate(db, dateStr, options = {}) {
     datasetType,
     viewDate: dateStr,
     snapshotAt: realtimePayload.fetched_at || formatBeijingDateTime(),
+    forecastSummary: {
+      containsForecast: Boolean(realtimePayload.contains_forecast),
+      forecastFromHour: realtimePayload.forecast_from_hour ?? null,
+    },
   })
   const data = { ...optimized, _meta: meta }
 

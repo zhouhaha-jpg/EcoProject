@@ -10,6 +10,11 @@ interface Props {
   prices: number[]
   solar: number[]
   carbon: number[]
+  forecastMask: boolean[]
+  containsForecast: boolean
+  forecastFromHour: number | null
+  manualRefreshing: boolean
+  onManualRefresh: () => Promise<void>
 }
 
 function getSourceColor(source: string, healthStatus: string): string {
@@ -29,13 +34,26 @@ function getSourceLabel(type: string, source: string): string {
   return map[type]?.[source] ?? source
 }
 
-export default function DataSourceHealth({ sources, health, connected, lastUpdated, prices, solar, carbon }: Props) {
+export default function DataSourceHealth({
+  sources,
+  health,
+  connected,
+  lastUpdated,
+  prices,
+  solar,
+  carbon,
+  forecastMask,
+  containsForecast,
+  forecastFromHour,
+  manualRefreshing,
+  onManualRefresh,
+}: Props) {
   const [panelOpen, setPanelOpen] = useState(false)
 
   const items = [
     { key: 'solar', icon: '☀️', label: '光照', source: sources.solar, health: health.solar },
     { key: 'price', icon: '⚡', label: '电价', source: sources.price, health: health.price },
-    { key: 'carbon', icon: '🌶️', label: '碳因子', source: sources.carbon, health: health.carbon },
+    { key: 'carbon', icon: '🌿', label: '碳因子', source: sources.carbon, health: health.carbon },
   ]
 
   const time = lastUpdated
@@ -62,6 +80,23 @@ export default function DataSourceHealth({ sources, health, connected, lastUpdat
         )
       })}
 
+      <button
+        type="button"
+        onClick={() => setPanelOpen((value) => !value)}
+        className="flex items-center gap-1 rounded px-2 py-0.5 text-xs"
+        style={{
+          background: 'rgba(255,255,255,0.05)',
+          border: `1px solid ${containsForecast ? '#ffcc0030' : '#00ff8830'}`,
+        }}
+        title={containsForecast && forecastFromHour != null
+          ? `${String(forecastFromHour).padStart(2, '0')}:00 之后为预测小时`
+          : '当前 24h 均已落地'}
+      >
+        <span style={{ color: containsForecast ? '#ffcc00' : '#00ff88', fontSize: 10, fontWeight: 600 }}>
+          {containsForecast && forecastFromHour != null ? `预测 ${String(forecastFromHour).padStart(2, '0')}:00+` : '全为实况'}
+        </span>
+      </button>
+
       <div
         className="flex items-center gap-1 rounded px-2 py-0.5 text-xs"
         style={{
@@ -87,8 +122,13 @@ export default function DataSourceHealth({ sources, health, connected, lastUpdat
           prices={prices}
           solar={solar}
           carbon={carbon}
+          forecastMask={forecastMask}
+          containsForecast={containsForecast}
+          forecastFromHour={forecastFromHour}
           sources={sources}
           lastUpdated={lastUpdated}
+          manualRefreshing={manualRefreshing}
+          onManualRefresh={onManualRefresh}
           onClose={() => setPanelOpen(false)}
         />
       ) : null}
