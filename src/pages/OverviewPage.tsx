@@ -242,7 +242,7 @@ export default function OverviewPage() {
       >
         <div className="panel min-h-0 flex flex-col overflow-hidden">
           <div className="panel-title-bar flex items-center justify-between">
-            <span>智慧园区 3D 总览</span>
+            <span>园区数字孪生</span>
             <span style={{ color: '#3d6080', fontSize: 10 }}>
               {strategyMeta[activeStrategy].fullLabel} / {hourIndex + 1}h
               {datasetError ? ' / 本地数据' : ''}
@@ -286,7 +286,7 @@ export default function OverviewPage() {
         className="min-h-0"
         style={{
           display: 'grid',
-          gridTemplateRows: '0.22fr 0.53fr 0.25fr',
+          gridTemplateRows: 'minmax(0, 0.2fr) minmax(400px, 0.46fr) minmax(260px, 0.34fr)',
           gap: 12,
           minHeight: 0,
         }}
@@ -320,39 +320,48 @@ export default function OverviewPage() {
             </span>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, marginBottom: 12 }}>
-            {activeDetail.metrics.map((metric) => (
-              <div key={metric.label} style={{ border: '1px solid #1e3256', borderRadius: 10, padding: '10px 12px', background: 'rgba(17,27,46,0.6)' }}>
-                <div style={{ color: '#5a7a9a', fontSize: 10, marginBottom: 6 }}>{metric.label}</div>
-                <div style={{ color: metric.tone ?? '#e8f4ff', fontFamily: "'Rajdhani', sans-serif", fontSize: 18, fontWeight: 700, lineHeight: 1.1 }}>{metric.value}</div>
+          <div
+            className="flex-1 overflow-y-auto"
+            style={{
+              minHeight: 0,
+              paddingRight: 6,
+              scrollbarGutter: 'stable',
+            }}
+          >
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10, marginBottom: 12 }}>
+              {activeDetail.metrics.map((metric) => (
+                <div key={metric.label} style={{ border: '1px solid #1e3256', borderRadius: 10, padding: '10px 12px', background: 'rgba(17,27,46,0.6)' }}>
+                  <div style={{ color: '#5a7a9a', fontSize: 10, marginBottom: 6 }}>{metric.label}</div>
+                  <div style={{ color: metric.tone ?? '#e8f4ff', fontFamily: "'Rajdhani', sans-serif", fontSize: 18, fontWeight: 700, lineHeight: 1.1 }}>{metric.value}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ marginBottom: 10 }}>
+              <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
+                <span style={{ color: '#8ba9cc', fontSize: 11 }}>{activeDetail.primarySeriesLabel}</span>
+                <span style={{ color: '#3d6080', fontSize: 10 }}>当前时段 {hourIndex + 1}h</span>
               </div>
-            ))}
-          </div>
+              <div style={{ height: 96 }}>
+                <MetricSparkline values={activeDetail.series} stroke={activeSeriesColor} highlightIndex={hourIndex} emphasized />
+              </div>
+            </div>
 
-          <div style={{ marginBottom: 10 }}>
-            <div className="flex items-center justify-between" style={{ marginBottom: 8 }}>
-              <span style={{ color: '#8ba9cc', fontSize: 11 }}>{activeDetail.primarySeriesLabel}</span>
-              <span style={{ color: '#3d6080', fontSize: 10 }}>当前时段 {hourIndex + 1}h</span>
-            </div>
-            <div style={{ height: 96 }}>
-              <MetricSparkline values={activeDetail.series} stroke={activeSeriesColor} highlightIndex={hourIndex} emphasized />
-            </div>
-          </div>
-
-          <div style={{ marginTop: 'auto', borderTop: '1px solid #1e3256', paddingTop: 12 }}>
-            <div className="flex items-start gap-2" style={{ color: '#8ba9cc', fontSize: 12, lineHeight: 1.7 }}>
-              <Leaf size={14} style={{ color: STATUS_STYLE[activeDetail.status].color, marginTop: 2 }} />
-              <span>{activeDetail.statusDescription}</span>
-            </div>
-            <div className="flex items-center justify-between" style={{ marginTop: 12 }}>
-              <span style={{ color: '#3d6080', fontSize: 10 }}>点击设备不会自动跳转，使用按钮进入详情页</span>
-              <Link
-                to={activeDetail.route}
-                className="flex items-center gap-1 text-xs hover:text-[#00d4ff] transition-colors"
-                style={{ color: '#8ba9cc' }}
-              >
-                查看详情 <ArrowRight size={12} />
-              </Link>
+            <div style={{ borderTop: '1px solid #1e3256', paddingTop: 12 }}>
+              <div className="flex items-start gap-2" style={{ color: '#8ba9cc', fontSize: 12, lineHeight: 1.7 }}>
+                <Leaf size={14} style={{ color: STATUS_STYLE[activeDetail.status].color, marginTop: 2 }} />
+                <span>{activeDetail.statusDescription}</span>
+              </div>
+              <div className="flex items-center justify-between" style={{ marginTop: 12 }}>
+                <span style={{ color: '#3d6080', fontSize: 10 }}>点击设备不会自动跳转，使用按钮进入详情页</span>
+                <Link
+                  to={activeDetail.route}
+                  className="flex items-center gap-1 text-xs hover:text-[#00d4ff] transition-colors"
+                  style={{ color: '#8ba9cc' }}
+                >
+                  查看详情 <ArrowRight size={12} />
+                </Link>
+              </div>
             </div>
           </div>
         </div>

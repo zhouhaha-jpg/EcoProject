@@ -256,7 +256,7 @@ function SceneOverlay({
       <div style={{ position: 'absolute', top: 18, left: 20, display: 'flex', alignItems: 'center', gap: 10 }}>
         <div style={{ width: 10, height: 10, borderRadius: 999, background: TWIN_COLORS.primary, boxShadow: `0 0 14px ${TWIN_COLORS.primary}` }} />
         <div>
-          <div style={{ color: '#d9fdff', fontFamily: "'Rajdhani', sans-serif", fontSize: 15, fontWeight: 700, letterSpacing: 1.2 }}>DIGITAL TWIN CAMPUS</div>
+          <div style={{ color: '#d9fdff', fontFamily: "'Rajdhani', sans-serif", fontSize: 15, fontWeight: 700, letterSpacing: 1.2 }}>园区数字孪生</div>
           <div style={{ color: '#7ea6c7', fontSize: 10 }}>{snapshot.strategyLabel} / {snapshot.hourLabel}</div>
         </div>
       </div>
@@ -297,7 +297,7 @@ function SceneOverlay({
       <div
         style={{
           position: 'absolute',
-          left: '50%',
+          left: '58%',
           bottom: 22,
           transform: 'translateX(-50%)',
           display: 'flex',
