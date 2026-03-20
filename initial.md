@@ -55,6 +55,15 @@ EcoProject/
 ├── .github/
 │   └── prompts/
 │       └── ecoproject-domain.prompt.md   ← 项目专用 Prompt（当前已加入 .gitignore）
+├── docs/
+│   └── figures/
+│       ├── ecoclaw-architecture.png      ← EcoClaw 主视觉架构图（Word 插图）
+│       ├── ecoclaw-architecture.pptx     ← EcoClaw 主视觉架构图可编辑母版
+│       ├── ecoclaw-architecture.svg      ← EcoClaw 主视觉架构图矢量版
+│       ├── ecoclaw-sequence-style.pptx   ← EcoClaw 分层时序感架构图可编辑母版
+│       ├── visual-platform-architecture.pptx ← 可视化平台主视觉架构图可编辑母版
+│       ├── visual-platform-architecture-white.pptx ← 可视化平台白底无点阵主视觉图
+│       └── visual-platform-sequence-style.pptx ← 可视化平台分层时序感架构图可编辑母版
 ├── electron/
 │   ├── main.js                           ← Electron 主进程入口
 │   └── preload.cjs                       ← 预加载脚本
@@ -136,6 +145,10 @@ EcoProject/
 │       └── equipment/
 │           ├── README.md                 ← 真实模型资源命名规范与下载建议
 │           └── manifest.json             ← 计划接入的 glb 资源清单
+├── scripts/
+│   ├── generate_ecoclaw_architecture.py  ← 生成 EcoClaw 主视觉架构图的 PPTX/PNG/SVG 脚本
+│   ├── generate_visual_platform_architecture.py ← 生成可视化平台主视觉架构图的 PPTX 脚本
+│   └── generate_sequence_style_architectures.py ← 生成分层时序感风格的 EcoClaw/可视化平台架构图
 ├── initial.md                            ← 本文档
 ├── 可视化平台设计方案.md                  ← 可视化平台细化设计说明
 ├── Agent模块设计方案.md                   ← Agent 模块细化设计说明
@@ -451,6 +464,16 @@ npm run build
 | `e:\科研绘图\EcoProject\src\data\realData.ts` | 前端本地兜底数据 |
 | `e:\科研绘图\EcoProject\可视化平台设计方案.md` | 可视化平台模块细化设计说明 |
 | `e:\科研绘图\EcoProject\Agent模块设计方案.md` | Agent 模块细化设计说明 |
+| `e:\科研绘图\EcoProject\docs\figures\ecoclaw-architecture.png` | EcoClaw 主视觉架构图导出图 |
+| `e:\科研绘图\EcoProject\docs\figures\ecoclaw-architecture.pptx` | EcoClaw 主视觉架构图可编辑母版 |
+| `e:\科研绘图\EcoProject\docs\figures\ecoclaw-architecture.svg` | EcoClaw 主视觉架构图矢量版 |
+| `e:\科研绘图\EcoProject\docs\figures\ecoclaw-sequence-style.pptx` | EcoClaw 分层时序感架构图可编辑母版 |
+| `e:\科研绘图\EcoProject\docs\figures\visual-platform-architecture.pptx` | 可视化平台主视觉架构图可编辑母版 |
+| `e:\科研绘图\EcoProject\docs\figures\visual-platform-architecture-white.pptx` | 可视化平台白底无点阵主视觉图 |
+| `e:\科研绘图\EcoProject\docs\figures\visual-platform-sequence-style.pptx` | 可视化平台分层时序感架构图可编辑母版 |
+| `e:\科研绘图\EcoProject\scripts\generate_ecoclaw_architecture.py` | EcoClaw 架构图生成脚本 |
+| `e:\科研绘图\EcoProject\scripts\generate_visual_platform_architecture.py` | 可视化平台架构图生成脚本 |
+| `e:\科研绘图\EcoProject\scripts\generate_sequence_style_architectures.py` | 分层时序感架构图生成脚本 |
 | `e:\科研绘图\EcoProject\agent能力升级方案_168d7722.plan.md` | Agent 能力扩展方案文档，仅作规划参考 |
 
 > **核心原则**：代码事实优先于规划文档；视觉标准优先于个人发挥；架构变化后必须回写本文件。

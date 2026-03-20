@@ -12,3 +12,5 @@ server/python/build/
 server/db/eco.db
 server/db/eco.db-shm
 server/db/eco.db-wal
+docs
+scripts
