@@ -89,6 +89,7 @@ export default function AgentChat({
                   <li>• 如果光伏减少30%会怎样？</li>
                   <li>• 限制19-21时购电不超过3000kW</li>
                   <li>• 扫描光伏5000到30000的Pareto</li>
+                  <li>• 台风来了，电网故障，生成应急预案</li>
                   <li>• 切换到经济指标页面</li>
                 </>
               )}

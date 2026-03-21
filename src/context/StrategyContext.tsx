@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
-import type { StrategyContextValue, StrategyKey, EcoDataset, DatasetMeta } from '@/types'
+import type { StrategyContextValue, StrategyKey, EcoDataset, DatasetMeta, EmergencyRun } from '@/types'
 import { DATASET, STRATEGY_META } from '@/data/realData'
 import { fetchDisplayDataset } from '@/lib/api'
 
@@ -37,6 +37,11 @@ const StrategyContext = createContext<(StrategyContextValue & {
   loadDisplayDataset: (date: string) => Promise<void>
   loadLatestDataset: () => Promise<void>
   updateDataset: (data: Record<string, unknown>, meta?: DatasetMeta) => void
+  emergencyPreviewRun: EmergencyRun | null
+  emergencyActiveRun: EmergencyRun | null
+  setEmergencyPreviewRun: (run: EmergencyRun | null) => void
+  applyEmergencyRunState: (run: EmergencyRun, dataset?: Record<string, unknown>, meta?: DatasetMeta) => void
+  restoreNormalDatasetState: (data?: Record<string, unknown>, meta?: DatasetMeta) => void
 }) | null>(null)
 
 const ALL_STRATEGIES: StrategyKey[] = ['uci', 'cicos', 'cicar', 'cicom', 'pv', 'es']
@@ -55,6 +60,9 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
   const [scenarioLabel, setScenarioLabel] = useState<string | null>(null)
   const [paretoData, setParetoData] = useState<ParetoData | null>(null)
   const [paretoLabel, setParetoLabel] = useState<string | null>(null)
+  const [emergencyPreviewRun, setEmergencyPreviewRun] = useState<EmergencyRun | null>(null)
+  const [emergencyActiveRun, setEmergencyActiveRun] = useState<EmergencyRun | null>(null)
+  const [normalDatasetBackup, setNormalDatasetBackup] = useState<{ data: EcoDataset; meta: DatasetMeta } | null>(null)
 
   const toggleStrategy = (key: StrategyKey) => {
     setSelectedStrategies((prev) => {
@@ -110,7 +118,10 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
     setScenarioLabel(label)
     setParetoData(null)
     setParetoLabel(null)
-  }, [])
+    if (!emergencyActiveRun) {
+      setEmergencyPreviewRun(null)
+    }
+  }, [emergencyActiveRun])
 
   const loadParetoData = useCallback((data: ParetoData, label: string) => {
     const results = data.results
@@ -136,18 +147,59 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
     setParetoLabel(label)
     setScenarioDataset(null)
     setScenarioLabel(null)
-  }, [])
+    if (!emergencyActiveRun) {
+      setEmergencyPreviewRun(null)
+    }
+  }, [emergencyActiveRun])
 
   const updateDataset = useCallback((data: Record<string, unknown>, meta?: DatasetMeta) => {
     applyDisplayDataset(data, meta)
   }, [applyDisplayDataset])
+
+  const applyEmergencyRunState = useCallback((run: EmergencyRun, data?: Record<string, unknown>, meta?: DatasetMeta) => {
+    const nextDataset = (data ?? run.emergencyDataset?.data) as EcoDataset | undefined
+    const nextMeta = (meta
+      ?? run.emergencyDataset?.meta
+      ?? nextDataset?._meta
+      ?? {}) as DatasetMeta
+
+    if (!nextDataset) return
+
+    setNormalDatasetBackup((current) => current ?? { data: dataset, meta: datasetMeta })
+    applyDisplayDataset(nextDataset as unknown as Record<string, unknown>, {
+      ...nextMeta,
+      datasetType: 'emergency',
+      emergencyActive: true,
+      emergencyRunId: run.id,
+      baselineDatasetId: run.baselineDatasetId ?? nextMeta.baselineDatasetId ?? null,
+      emergencyTitle: run.title,
+      isHistorical: false,
+    })
+    setEmergencyActiveRun(run)
+    setEmergencyPreviewRun(run)
+  }, [applyDisplayDataset, dataset, datasetMeta])
+
+  const restoreNormalDatasetState = useCallback((data?: Record<string, unknown>, meta?: DatasetMeta) => {
+    const fallback = normalDatasetBackup
+    const nextDataset = (data as EcoDataset | undefined) ?? fallback?.data
+    const nextMeta = meta ?? fallback?.meta
+    if (!nextDataset || !nextMeta) return
+    applyDisplayDataset(nextDataset as unknown as Record<string, unknown>, {
+      ...nextMeta,
+      emergencyActive: false,
+      emergencyRunId: null,
+      emergencyTitle: '',
+    })
+    setEmergencyActiveRun(null)
+    setNormalDatasetBackup(null)
+  }, [applyDisplayDataset, normalDatasetBackup])
 
   useEffect(() => {
     loadLatestDataset()
   }, [loadLatestDataset])
 
   useEffect(() => {
-    if (datasetMeta.isHistorical) return
+    if (datasetMeta.isHistorical || datasetMeta.emergencyActive) return
 
     const refresh = () => {
       loadLatestDataset().catch(() => {
@@ -170,7 +222,7 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('focus', refresh)
       document.removeEventListener('visibilitychange', handleVisibility)
     }
-  }, [datasetMeta.isHistorical, loadLatestDataset])
+  }, [datasetMeta.emergencyActive, datasetMeta.isHistorical, loadLatestDataset])
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000)
@@ -198,6 +250,11 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
       loadDisplayDataset,
       loadLatestDataset,
       updateDataset,
+      emergencyPreviewRun,
+      emergencyActiveRun,
+      setEmergencyPreviewRun,
+      applyEmergencyRunState,
+      restoreNormalDatasetState,
     }}>
       {children}
     </StrategyContext.Provider>

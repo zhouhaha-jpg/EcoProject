@@ -35,7 +35,7 @@ export interface PCA_Data {
 }
 
 export interface DatasetMeta {
-  datasetType: 'realtime' | 'history' | 'seed' | string
+  datasetType: 'realtime' | 'history' | 'seed' | 'emergency' | string
   viewDate: string
   snapshotAt: string
   isHistorical: boolean
@@ -43,6 +43,10 @@ export interface DatasetMeta {
   datasetName?: string
   containsForecast?: boolean
   forecastFromHour?: number | null
+  baselineDatasetId?: number | null
+  emergencyRunId?: number | null
+  emergencyActive?: boolean
+  emergencyTitle?: string
 }
 
 export type ServerLogLevel = 'info' | 'warn' | 'ok' | 'err'
@@ -87,6 +91,95 @@ export interface EcoDataset {
   /** 储氢罐 H_HS (t) */
   H_HS: PCA_Data
   _meta?: DatasetMeta
+}
+
+export type EmergencyEventType =
+  | 'typhoon_weather'
+  | 'grid_fault_or_limit'
+  | 'pv_drop'
+  | 'price_surge'
+  | 'carbon_surge'
+  | string
+
+export interface EmergencyEventSpec {
+  type: EmergencyEventType
+  title: string
+  severity: 'warning' | 'critical' | string
+  startHour: number
+  durationHours: number
+  pvReduction?: number
+  gridReduction?: number
+  priceMultiplier?: number
+  carbonMultiplier?: number
+  weatherNote?: string
+  affectedModules?: string[]
+  rawPrompt?: string
+}
+
+export interface EmergencyPointDetail {
+  index: number
+  label: string
+  timestamp: string
+  P_CA: number
+  P_PV: number
+  P_GM: number
+  P_PEM: number
+  P_G: number
+  P_es_es: number
+  supplyTotal: number
+  gap: number
+  riskLevel: 'low' | 'medium' | 'high' | string
+}
+
+export interface EmergencyDetailSeries {
+  labels: string[]
+  series: {
+    P_CA: number[]
+    P_PV: number[]
+    P_GM: number[]
+    P_PEM: number[]
+    P_G: number[]
+    P_es_es: number[]
+    gap: number[]
+  }
+  points: EmergencyPointDetail[]
+  summary: {
+    peakGrid: number
+    peakPEM: number
+    peakGM: number
+    peakStorage: number
+    maxGap: number
+  }
+  priorityOrder: string[]
+  keyAnchors: string[]
+  explanation: string
+}
+
+export interface EmergencyDatasetRef {
+  id?: number | null
+  name?: string
+  data: EcoDataset
+  meta?: DatasetMeta
+}
+
+export interface EmergencyRun {
+  id: number
+  title: string
+  source: 'manual' | 'auto' | string
+  severity: 'warning' | 'critical' | string
+  status: 'planned' | 'applied' | 'restored' | string
+  degraded: boolean
+  baselineDatasetId?: number | null
+  emergencyDatasetId?: number | null
+  eventSpec: EmergencyEventSpec
+  detailPayload: EmergencyDetailSeries
+  explanation: string
+  createdAt: string
+  appliedAt?: string | null
+  restoredAt?: string | null
+  baselinePayload?: EmergencyDatasetRef | null
+  baselineDataset?: EmergencyDatasetRef | null
+  emergencyDataset?: EmergencyDatasetRef | null
 }
 
 /** 设备健康数据 */

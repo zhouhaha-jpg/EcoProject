@@ -22,6 +22,7 @@ import SystemLog from '@/components/ui/SystemLog'
 import TimeTravelPopover from '@/components/ui/TimeTravelPopover'
 import { useStrategy } from '@/context/StrategyContext'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
+import { restoreEmergencyStateApi } from '@/lib/api'
 
 const NAV = [
   { to: '/overview', label: '总览', icon: LayoutDashboard },
@@ -38,16 +39,23 @@ const NAV = [
 export default function MainLayout() {
   const location = useLocation()
   const realtime = useRealtimeData()
-  const { updateDataset, datasetMeta } = useStrategy()
+  const {
+    updateDataset,
+    datasetMeta,
+    emergencyActiveRun,
+    setEmergencyPreviewRun,
+    restoreNormalDatasetState,
+  } = useStrategy()
   const [logOpen, setLogOpen] = useState(false)
   const logButtonRef = useRef<HTMLButtonElement | null>(null)
   const logPanelRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
-    if (realtime.latestOptDataset && !datasetMeta.isHistorical) {
+    const latestType = realtime.latestOptDataset?.meta?.datasetType
+    if (realtime.latestOptDataset && latestType !== 'emergency' && !datasetMeta.isHistorical && !datasetMeta.emergencyActive) {
       updateDataset(realtime.latestOptDataset.data, realtime.latestOptDataset.meta)
     }
-  }, [datasetMeta.isHistorical, realtime.latestOptDataset, updateDataset])
+  }, [datasetMeta.emergencyActive, datasetMeta.isHistorical, realtime.latestOptDataset, updateDataset])
 
   useEffect(() => {
     if (!logOpen) return
@@ -158,11 +166,30 @@ export default function MainLayout() {
           />
 
           <span className="hud-chip" title={`展示日期 ${datasetMeta.viewDate || '本地默认'} | 快照 ${datasetMeta.snapshotAt || '--'}`}>
-            {datasetMeta.isHistorical ? 'HISTORY' : 'LIVE'} {datasetMeta.viewDate || 'LOCAL'}
+            {datasetMeta.emergencyActive ? 'EMERGENCY' : datasetMeta.isHistorical ? 'HISTORY' : 'LIVE'} {datasetMeta.viewDate || 'LOCAL'}
           </span>
           <span className="hud-chip" title="当前图表展示的数据快照时间">
             截止 {datasetMeta.snapshotAt ? datasetMeta.snapshotAt.slice(5, 16) : '--'}
           </span>
+
+          {datasetMeta.emergencyActive ? (
+            <>
+              <span className="hud-chip live" title={datasetMeta.emergencyTitle || '应急态'}>
+                EMERGENCY MODE
+              </span>
+              <button
+                type="button"
+                onClick={async () => {
+                  const restored = await restoreEmergencyStateApi(emergencyActiveRun?.id ?? datasetMeta.emergencyRunId ?? null)
+                  restoreNormalDatasetState(restored.baselineDataset.data, restored.baselineDataset.meta)
+                  setEmergencyPreviewRun(restored.run)
+                }}
+                className="rounded-sm border border-[#ff7043] bg-[#ff7043]/12 px-3 py-1.5 font-mono text-[11px] tracking-[0.16em] text-[#ffb199] transition-all hover:bg-[#ff7043]/18"
+              >
+                回退正常态
+              </button>
+            </>
+          ) : null}
 
           {!datasetMeta.isHistorical && datasetMeta.containsForecast ? (
             <span className="hud-chip" title="今日未来小时以 forecast 标识返回，不再伪装成已实时落地">

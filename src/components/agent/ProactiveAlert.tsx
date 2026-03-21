@@ -13,10 +13,14 @@
 import { useState } from 'react'
 import { AlertTriangle, X, Zap, CheckCircle } from 'lucide-react'
 import type { ShadowOptimization, AlertEvent } from '@/hooks/useRealtimeData'
+import type { EmergencyRun } from '@/types'
 
 interface Props {
+  emergencyPlan: EmergencyRun | null
   shadowOptimization: ShadowOptimization | null
   alerts: AlertEvent[]
+  onApplyEmergency: (run: EmergencyRun) => void
+  onDismissEmergency: () => void
   onApplyOptimization: (opt: ShadowOptimization) => void
   onDismissOptimization: () => void
   onDismissAlert: (index: number) => void
@@ -44,18 +48,102 @@ const SEVERITY_STYLES: Record<string, { bg: string; border: string; icon: string
 }
 
 export default function ProactiveAlert({
+  emergencyPlan,
   shadowOptimization,
   alerts,
+  onApplyEmergency,
+  onDismissEmergency,
   onApplyOptimization,
   onDismissOptimization,
   onDismissAlert,
 }: Props) {
   const [appliedId, setAppliedId] = useState<number | null>(null)
 
-  if (!shadowOptimization && alerts.length === 0) return null
+  if (!emergencyPlan && !shadowOptimization && alerts.length === 0) return null
 
   return (
     <div className="flex flex-col gap-2 mb-3">
+      {emergencyPlan && (
+        <div
+          className="relative rounded-lg p-3 animate-pulse-once"
+          style={{
+            background: 'rgba(0, 212, 255, 0.08)',
+            border: '1px solid rgba(0, 212, 255, 0.52)',
+            boxShadow: '0 0 18px rgba(0, 212, 255, 0.16)',
+          }}
+        >
+          <button
+            className="absolute top-2 right-2 opacity-50 hover:opacity-100"
+            onClick={onDismissEmergency}
+          >
+            <X size={14} color="#888" />
+          </button>
+
+          <div className="flex items-start gap-2 mb-2">
+            <Zap size={16} color="#00d4ff" className="mt-0.5 shrink-0" />
+            <div className="text-xs" style={{ color: '#e8f4ff' }}>
+              <span className="font-semibold" style={{ color: '#00d4ff' }}>
+                应急预案待确认
+              </span>
+              <span style={{ color: '#5a7a9a', marginLeft: 6 }}>
+                {emergencyPlan.source === 'auto' ? 'AUTO' : 'MANUAL'}
+              </span>
+            </div>
+          </div>
+
+          <p className="text-xs font-medium mb-1" style={{ color: '#e8f4ff' }}>
+            {emergencyPlan.title}
+          </p>
+          <p className="text-xs leading-relaxed mb-2" style={{ color: '#b0c4d8' }}>
+            {emergencyPlan.explanation}
+          </p>
+
+          <div className="flex items-center gap-2 text-[11px] mb-2" style={{ color: '#5a7a9a' }}>
+            <span>{emergencyPlan.severity}</span>
+            <span>·</span>
+            <span>{emergencyPlan.degraded ? '降级模式' : 'AI 编排'}</span>
+          </div>
+
+          <div className="flex gap-2">
+            {appliedId !== emergencyPlan.id ? (
+              <button
+                className="flex-1 text-xs py-1.5 px-3 rounded font-medium"
+                style={{
+                  background: 'rgba(0, 212, 255, 0.15)',
+                  border: '1px solid #00d4ff',
+                  color: '#00d4ff',
+                }}
+                onClick={() => {
+                  onApplyEmergency(emergencyPlan)
+                  setAppliedId(emergencyPlan.id)
+                }}
+              >
+                一键应用应急态
+              </button>
+            ) : (
+              <div
+                className="flex-1 flex items-center justify-center gap-1 text-xs py-1.5 px-3 rounded"
+                style={{ color: '#00ff88' }}
+              >
+                <CheckCircle size={12} />
+                已应用
+              </div>
+            )}
+            <button
+              className="text-xs py-1.5 px-3 rounded"
+              style={{
+                background: 'rgba(255,255,255,0.05)',
+                border: '1px solid #334',
+                color: '#8899aa',
+              }}
+              onClick={onDismissEmergency}
+            >
+              稍后再看
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* 影子优化卡片 */}
       {shadowOptimization && (
         <div

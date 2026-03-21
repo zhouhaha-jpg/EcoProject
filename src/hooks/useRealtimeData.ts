@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import type { DatasetMeta, ServerLogEntry } from '@/types'
+import type { DatasetMeta, EmergencyRun, ServerLogEntry } from '@/types'
 
 export interface DataSources {
   price: 'crawler' | 'simulator' | 'fallback'
@@ -48,6 +48,7 @@ export interface RealtimeState {
   connected: boolean
   alerts: AlertEvent[]
   shadowOptimization: ShadowOptimization | null
+  emergencyPlan: EmergencyRun | null
   loading: boolean
   manualRefreshing: boolean
   latestOptDataset: LatestOptDatasetPayload | null
@@ -73,6 +74,7 @@ export function useRealtimeData(): RealtimeState & {
   triggerManualRefresh: () => Promise<void>
   dismissAlert: (index: number) => void
   dismissShadowOpt: () => void
+  dismissEmergencyPlan: () => void
 } {
   const [prices, setPrices] = useState<number[]>([])
   const [solar, setSolar] = useState<number[]>([])
@@ -86,6 +88,7 @@ export function useRealtimeData(): RealtimeState & {
   const [connected, setConnected] = useState(false)
   const [alerts, setAlerts] = useState<AlertEvent[]>([])
   const [shadowOptimization, setShadowOptimization] = useState<ShadowOptimization | null>(null)
+  const [emergencyPlan, setEmergencyPlan] = useState<EmergencyRun | null>(null)
   const [loading, setLoading] = useState(true)
   const [manualRefreshing, setManualRefreshing] = useState(false)
   const [latestOptDataset, setLatestOptDataset] = useState<LatestOptDatasetPayload | null>(null)
@@ -227,6 +230,22 @@ export function useRealtimeData(): RealtimeState & {
             case 'optimization_complete':
               setShadowOptimization(msg.payload)
               break
+            case 'emergency_plan_created':
+              setEmergencyPlan(msg.payload)
+              break
+            case 'emergency_applied':
+              if (msg.payload?.run) {
+                setEmergencyPlan(msg.payload.run)
+              }
+              if (msg.payload?.dataset?.data) {
+                setLatestOptDataset(msg.payload.dataset)
+              }
+              break
+            case 'emergency_restored':
+              if (msg.payload?.run) {
+                setEmergencyPlan(msg.payload.run)
+              }
+              break
             case 'dataset_updated':
               if (msg.payload?.data) {
                 setLatestOptDataset(msg.payload)
@@ -276,6 +295,10 @@ export function useRealtimeData(): RealtimeState & {
     setShadowOptimization(null)
   }, [])
 
+  const dismissEmergencyPlan = useCallback(() => {
+    setEmergencyPlan(null)
+  }, [])
+
   useEffect(() => {
     void fetchLatest()
     void connectWs()
@@ -311,6 +334,7 @@ export function useRealtimeData(): RealtimeState & {
     connected,
     alerts,
     shadowOptimization,
+    emergencyPlan,
     loading,
     manualRefreshing,
     latestOptDataset,
@@ -319,5 +343,6 @@ export function useRealtimeData(): RealtimeState & {
     triggerManualRefresh,
     dismissAlert,
     dismissShadowOpt,
+    dismissEmergencyPlan,
   }
 }

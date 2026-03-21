@@ -87,6 +87,18 @@ export function broadcastOptimizationComplete(result) {
   broadcast('optimization_complete', result)
 }
 
+export function broadcastEmergencyPlanCreated(payload) {
+  broadcast('emergency_plan_created', payload)
+}
+
+export function broadcastEmergencyApplied(payload) {
+  broadcast('emergency_applied', payload)
+}
+
+export function broadcastEmergencyRestored(payload) {
+  broadcast('emergency_restored', payload)
+}
+
 export function broadcastHealthUpdate(health) {
   broadcast('health_update', health)
 }

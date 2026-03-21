@@ -5,7 +5,7 @@
 
 import { useLocation } from 'react-router-dom'
 import { useStrategy } from '@/context/StrategyContext'
-import type { StrategyKey, EcoDataset } from '@/types'
+import type { StrategyKey, EcoDataset, DatasetMeta } from '@/types'
 
 const ALL: StrategyKey[] = ['uci', 'cicos', 'cicar', 'cicom', 'pv', 'es']
 
@@ -18,6 +18,8 @@ export interface AgentContextData {
   strategyMeta: Record<StrategyKey, { label: string; fullLabel: string; description: string }>
   pcaStats: Record<StrategyKey, { min: number; max: number; avg: number; peakHour: number }>
   fullData: EcoDataset
+  datasetMeta: DatasetMeta
+  emergencyRunId: number | null
 }
 
 const PAGE_LABELS: Record<string, string> = {
@@ -37,7 +39,7 @@ function stats(arr: number[]) {
 
 export function useAgentContext(): AgentContextData {
   const location = useLocation()
-  const { activeStrategy, dataset, strategyMeta } = useStrategy()
+  const { activeStrategy, dataset, strategyMeta, datasetMeta, emergencyActiveRun } = useStrategy()
 
   const currentPage = location.pathname || '/'
   const meta = strategyMeta[activeStrategy]
@@ -53,6 +55,8 @@ export function useAgentContext(): AgentContextData {
     ) as Record<StrategyKey, { label: string; fullLabel: string; description: string }>,
     pcaStats: Object.fromEntries(ALL.map((k) => [k, stats(dataset.P_CA[k])])) as Record<StrategyKey, { min: number; max: number; avg: number; peakHour: number }>,
     fullData: dataset,
+    datasetMeta,
+    emergencyRunId: emergencyActiveRun?.id ?? datasetMeta.emergencyRunId ?? null,
   }
 }
 
@@ -90,6 +94,8 @@ export function formatContextForLLM(ctx: AgentContextData): string {
   if (ds.H_HS?.[sk]) lines.push(`H_HS(t): ${fmtArr(ds.H_HS[sk], 3)}`)
   if (ds.ef_g) lines.push(`ef_g(tCO2/kWh): ${fmtArr(ds.ef_g, 6)}`)
   if (ds.P_es_es) lines.push(`P_es_es(kW): ${fmtArr(ds.P_es_es, 1)}`)
+  lines.push(`数据集类型: ${ctx.datasetMeta.datasetType}`)
+  if (ctx.datasetMeta.emergencyActive) lines.push(`当前处于应急态，runId=${ctx.emergencyRunId ?? 'unknown'}`)
 
   return lines.join('\n')
 }

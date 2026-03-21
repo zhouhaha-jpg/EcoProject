@@ -5,11 +5,16 @@
 
 import type { StrategyKey } from '@/types'
 import type { EcoDataset } from '@/types'
+import type { DatasetMeta, EmergencyRun } from '@/types'
 
 export type AgentActionType =
   | 'navigate'
   | 'switchStrategy'
   | 'run_whatif'
+  | 'run_emergency_dispatch'
+  | 'list_emergency_runs'
+  | 'apply_emergency_run'
+  | 'restore_normal_state'
   | 'add_constraint'
   | 'trace_causality'
   | 'generate_chart'
@@ -25,6 +30,9 @@ export interface AgentActionHandlers {
   switchStrategy: (key: StrategyKey) => void
   loadScenarioDataset: (dataset: Record<string, unknown>, label: string) => void
   loadParetoData: (data: ParetoData, label: string) => void
+  setEmergencyPreviewRun: (run: EmergencyRun | null) => void
+  applyEmergencyRunState: (run: EmergencyRun, dataset?: Record<string, unknown>, meta?: DatasetMeta) => void
+  restoreNormalDatasetState: (dataset?: Record<string, unknown>, meta?: DatasetMeta) => void
 }
 
 const PATH_MAP: Record<string, string> = {
@@ -57,8 +65,11 @@ export function registerAgentHandlers(h: AgentActionHandlers) {
 }
 
 /** 用于 trace_causality 的上下文，提取该时段设备状态 */
-export interface TraceCausalityContext {
+export interface AgentExecutionContext {
   fullData: EcoDataset
+  datasetMeta?: DatasetMeta
+  activeStrategy?: StrategyKey
+  emergencyRunId?: number | null
 }
 
 /**
@@ -69,9 +80,9 @@ export interface TraceCausalityContext {
 export async function executeAction(
   type: string,
   params: Record<string, unknown>,
-  context?: TraceCausalityContext
+  context?: AgentExecutionContext
 ): Promise<{ success: boolean; message: string; data?: unknown }> {
-  if (!handlers && ['navigate', 'switchStrategy', 'run_whatif', 'add_constraint', 'pareto_scan'].includes(type)) {
+  if (!handlers && ['navigate', 'switchStrategy', 'run_whatif', 'run_emergency_dispatch', 'apply_emergency_run', 'restore_normal_state', 'add_constraint', 'pareto_scan'].includes(type)) {
     if (!handlers) return { success: false, message: 'Agent 动作处理器未初始化' }
   }
 
@@ -117,6 +128,97 @@ export async function executeAction(
           ? `${desc} 求解完成。ES方案: 成本=${summaryES.cost}元, 碳排=${summaryES.carbon}tCO2, 综合=${summaryES.combined}`
           : `${desc} 求解完成`
         return { success: true, message: msg, data }
+      }
+
+      case 'run_emergency_dispatch': {
+        const prompt = String(params.prompt ?? params.description ?? '')
+        if (!prompt.trim()) {
+          return { success: false, message: '缺少应急场景描述' }
+        }
+        const payload = {
+          prompt,
+          eventSpec: {
+            severity: String(params.severity ?? 'critical'),
+          },
+          baselineDataset: context?.fullData,
+          baselineMeta: context?.datasetMeta,
+          baselineDatasetId: context?.datasetMeta?.datasetId ?? null,
+          activeStrategy: context?.activeStrategy ?? 'es',
+          source: 'manual',
+        }
+        const res = await fetch(`${API_BASE}/api/emergency/dispatch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        })
+        if (!res.ok) throw new Error(await res.text())
+        const data = await res.json()
+        if (handlers && data.run) {
+          handlers.setEmergencyPreviewRun(data.run)
+          handlers.navigate('/scenario')
+        }
+        return {
+          success: true,
+          message: `${data.run?.title ?? '应急预案'} 已生成${data.run?.degraded ? '（降级模式）' : ''}，可在 Agent 工作区查看并决定是否应用。`,
+          data: data.run,
+        }
+      }
+
+      case 'list_emergency_runs': {
+        const limitNum = params.limit ? Number(params.limit) : 10
+        const res = await fetch(`${API_BASE}/api/emergency/runs?limit=${limitNum}`)
+        if (!res.ok) throw new Error(await res.text())
+        const data = await res.json()
+        return {
+          success: true,
+          message: `获取到 ${Array.isArray(data.data) ? data.data.length : 0} 条应急预案`,
+          data: data.data,
+        }
+      }
+
+      case 'apply_emergency_run': {
+        const runId = Number(params.run_id ?? params.id)
+        if (!Number.isFinite(runId)) {
+          return { success: false, message: '缺少应急预案 ID' }
+        }
+        const res = await fetch(`${API_BASE}/api/emergency/runs/${runId}/apply`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        })
+        if (!res.ok) throw new Error(await res.text())
+        const data = await res.json()
+        if (handlers && data.run && data.dataset?.data) {
+          handlers.applyEmergencyRunState(data.run, data.dataset.data, data.dataset.meta)
+          handlers.navigate('/scenario')
+        }
+        return {
+          success: true,
+          message: `${data.run?.title ?? `应急预案 ${runId}`} 已应用到全平台展示`,
+          data,
+        }
+      }
+
+      case 'restore_normal_state': {
+        const runId = Number(params.run_id ?? context?.emergencyRunId ?? NaN)
+        const body = Number.isFinite(runId) ? { runId } : {}
+        const res = await fetch(`${API_BASE}/api/emergency/restore`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        if (!res.ok) throw new Error(await res.text())
+        const data = await res.json()
+        if (handlers && data.baselineDataset?.data) {
+          handlers.restoreNormalDatasetState(data.baselineDataset.data, data.baselineDataset.meta)
+          handlers.setEmergencyPreviewRun(data.run ?? null)
+          handlers.navigate('/scenario')
+        }
+        return {
+          success: true,
+          message: `已恢复到正常展示状态`,
+          data,
+        }
       }
 
       case 'add_constraint': {

@@ -675,16 +675,6 @@ router.post('/fetch', async (req, res) => {
     const db = getDb()
     const config = getParkConfig(db)
     const targetDate = req.body.date || getBeijingDate()
-    const args = ['--once', '--lat', String(config.latitude), '--lon', String(config.longitude)]
-
-    if (req.body.date) {
-      args.push('--date', req.body.date)
-    }
-    if (req.body.dramatic) {
-      args.push('--dramatic')
-    } else if (req.body.seed != null) {
-      args.push('--seed', String(req.body.seed))
-    }
 
     pushServerLog({
       level: 'info',
@@ -697,7 +687,12 @@ router.post('/fetch', async (req, res) => {
       detail: req.body.dramatic ? 'dramatic mode' : (req.body.seed != null ? `seed=${req.body.seed}` : 'normal mode'),
     })
 
-    const result = await runFetcher(args, { targetDate })
+    const result = await refreshRealtimeCycle({
+      targetDate,
+      config,
+      dramatic: Boolean(req.body.dramatic),
+      seed: req.body.dramatic ? undefined : req.body.seed,
+    })
     res.json(result)
   } catch (error) {
     console.error('[realtime/fetch]', error)

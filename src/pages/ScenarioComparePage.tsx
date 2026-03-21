@@ -1,12 +1,20 @@
 /**
  * Agent 工作区：展示 Agent 工作成果
- * - 有 scenarioDataset：What-If 推演 基准 vs 推演 表格+图表
- * - 有 paretoData：Pareto 前沿散点图 + 最优区间建议
+ * - emergencyPreviewRun：应急调度指挥页
+ * - scenarioDataset：What-If 推演 基准 vs 推演 表格+图表
+ * - paretoData：Pareto 前沿散点图 + 最优区间建议
  */
+import { useEffect, useMemo, useState } from 'react'
 import { useStrategy } from '@/context/StrategyContext'
 import ScenarioCompareChart from '@/components/charts/ScenarioCompareChart'
 import ParetoFrontierChart from '@/components/charts/ParetoFrontierChart'
-import type { StrategyKey } from '@/types'
+import EmergencyDispatchChart from '@/components/charts/EmergencyDispatchChart'
+import {
+  applyEmergencyRunApi,
+  fetchEmergencyRuns,
+  restoreEmergencyStateApi,
+} from '@/lib/api'
+import type { EmergencyPointDetail, EmergencyRun, StrategyKey } from '@/types'
 
 const STRATEGIES: StrategyKey[] = ['uci', 'cicos', 'cicar', 'cicom', 'pv', 'es']
 const LABELS: Record<StrategyKey, string> = {
@@ -21,25 +29,230 @@ function pct(a: number, b: number): string {
 }
 
 export default function ScenarioComparePage() {
-  const { dataset, scenarioDataset, scenarioLabel, paretoData, paretoLabel, datasetLoading } = useStrategy()
+  const {
+    dataset,
+    scenarioDataset,
+    scenarioLabel,
+    paretoData,
+    paretoLabel,
+    datasetLoading,
+    emergencyPreviewRun,
+    emergencyActiveRun,
+    setEmergencyPreviewRun,
+    applyEmergencyRunState,
+    restoreNormalDatasetState,
+    datasetMeta,
+  } = useStrategy()
+  const [history, setHistory] = useState<EmergencyRun[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [activePoint, setActivePoint] = useState<EmergencyPointDetail | null>(null)
+
+  useEffect(() => {
+    let disposed = false
+    const load = async () => {
+      setHistoryLoading(true)
+      try {
+        const rows = await fetchEmergencyRuns(8)
+        if (!disposed) setHistory(rows)
+      } catch (error) {
+        console.warn('[emergency history]', error)
+      } finally {
+        if (!disposed) setHistoryLoading(false)
+      }
+    }
+    void load()
+    return () => {
+      disposed = true
+    }
+  }, [emergencyPreviewRun, emergencyActiveRun])
+
+  const currentEmergency = emergencyPreviewRun ?? emergencyActiveRun
+
+  const emergencyHistory = useMemo(() => {
+    if (!currentEmergency) return history
+    const ids = new Set([currentEmergency.id])
+    return [currentEmergency, ...history.filter((item) => !ids.has(item.id))]
+  }, [currentEmergency, history])
 
   if (datasetLoading) {
     return <div className="h-full flex items-center justify-center text-text-muted">加载数据中…</div>
   }
 
+  if (currentEmergency) {
+    const detail = currentEmergency.detailPayload
+    const point = activePoint ?? detail.points[0] ?? null
+
+    return (
+      <div className="h-full min-h-0 overflow-auto" style={{ display: 'grid', gridTemplateRows: 'auto auto 1fr auto', gap: 12 }}>
+        <div className="panel shrink-0">
+          <div className="panel-title-bar flex items-center justify-between">
+            <span>应急调度指挥页 — {currentEmergency.title}</span>
+            <div className="flex items-center gap-2 text-[10px]" style={{ color: '#5a7a9a' }}>
+              <span>{currentEmergency.source === 'auto' ? 'AUTO' : 'MANUAL'}</span>
+              <span>·</span>
+              <span>{currentEmergency.degraded ? '降级模式' : 'AI 编排'}</span>
+              <span>·</span>
+              <span>{currentEmergency.status}</span>
+            </div>
+          </div>
+          <div style={{ padding: 16, display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: 16 }}>
+            <div>
+              <div style={{ color: '#e8f4ff', fontSize: 14, fontWeight: 600 }}>{currentEmergency.eventSpec.title}</div>
+              <p style={{ color: '#8ba9cc', fontSize: 12, lineHeight: 1.8, marginTop: 8 }}>
+                {currentEmergency.explanation}
+              </p>
+              <div className="flex flex-wrap gap-2" style={{ marginTop: 10 }}>
+                {(currentEmergency.eventSpec.affectedModules || []).map((tag) => (
+                  <span key={tag} className="hud-chip" style={{ fontSize: 10 }}>{tag}</span>
+                ))}
+              </div>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+              <SummaryCell label="峰值电网" value={`${detail.summary.peakGrid.toFixed(0)} kW`} accent="#ce93d8" />
+              <SummaryCell label="峰值燃机" value={`${detail.summary.peakGM.toFixed(0)} kW`} accent="#ffb347" />
+              <SummaryCell label="峰值 PEM" value={`${detail.summary.peakPEM.toFixed(0)} kW`} accent="#29d4ff" />
+              <SummaryCell label="最大缺口" value={`${detail.summary.maxGap.toFixed(1)} kW`} accent={detail.summary.maxGap > 25 ? '#ff7043' : '#69f0ae'} />
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.8fr) minmax(320px, 0.9fr)', gap: 12 }}>
+          <div className="panel" style={{ minHeight: 360 }}>
+            <div className="panel-title-bar">4小时应急联动曲线 · 5分钟粒度</div>
+            <div style={{ height: 340, padding: 12 }}>
+              <EmergencyDispatchChart detail={detail} onPointHover={setActivePoint} />
+            </div>
+          </div>
+
+          <div className="panel">
+            <div className="panel-title-bar">当前点位数据</div>
+            <div style={{ padding: 16 }}>
+              {point ? (
+                <>
+                  <div style={{ color: '#00d4ff', fontFamily: "'Rajdhani', sans-serif", fontSize: 20, fontWeight: 700 }}>
+                    {point.label}
+                  </div>
+                  <div style={{ color: '#5a7a9a', fontSize: 11, marginTop: 4 }}>{point.timestamp}</div>
+                  <div style={{ marginTop: 14, display: 'grid', gap: 8 }}>
+                    <PointRow label="电解槽负荷" value={point.P_CA} color="#4e9eff" />
+                    <PointRow label="光伏出力" value={point.P_PV} color="#c6f135" />
+                    <PointRow label="燃机出力" value={point.P_GM} color="#ffb347" />
+                    <PointRow label="PEM 出力" value={point.P_PEM} color="#29d4ff" />
+                    <PointRow label="电网供能" value={point.P_G} color="#ce93d8" />
+                    <PointRow label="储能支撑" value={point.P_es_es} color="#ffd740" />
+                    <PointRow label="供能总量" value={point.supplyTotal} color="#69f0ae" />
+                    <PointRow label="剩余缺口" value={point.gap} color={point.gap > 25 ? '#ff7043' : '#69f0ae'} />
+                  </div>
+                  <div style={{ marginTop: 12, color: point.riskLevel === 'high' ? '#ff7043' : point.riskLevel === 'medium' ? '#ffd740' : '#69f0ae', fontSize: 12, fontWeight: 600 }}>
+                    风险等级：{point.riskLevel.toUpperCase()}
+                  </div>
+                </>
+              ) : (
+                <div style={{ color: '#5a7a9a', fontSize: 12 }}>移动鼠标到曲线上查看点位详情。</div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.2fr) minmax(320px, 0.8fr)', gap: 12 }}>
+          <div className="panel">
+            <div className="panel-title-bar">调度说明</div>
+            <div style={{ padding: 16, color: '#8ba9cc', fontSize: 12, lineHeight: 1.8 }}>
+              <p><b style={{ color: '#4e9eff' }}>优先顺序</b>：{detail.priorityOrder.join(' → ')}</p>
+              <div style={{ marginTop: 8 }}>
+                {detail.keyAnchors.map((item) => (
+                  <div key={item} style={{ marginBottom: 6 }}>• {item}</div>
+                ))}
+              </div>
+              <p style={{ marginTop: 8, color: '#5a7a9a' }}>
+                说明：应急预案默认只覆盖前 4 小时响应窗口；全站其他图表展示的是该 5 分钟曲线聚合后的小时级结果。
+              </p>
+            </div>
+          </div>
+
+          <div className="panel">
+            <div className="panel-title-bar">操作与历史复用</div>
+            <div style={{ padding: 16, display: 'grid', gap: 10 }}>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="flex-1 rounded border border-[#00d4ff] bg-[#00d4ff]/12 px-3 py-2 text-xs text-[#00d4ff]"
+                  onClick={async () => {
+                    const applied = await applyEmergencyRunApi(currentEmergency.id)
+                    applyEmergencyRunState(applied.run, applied.dataset.data, applied.dataset.meta)
+                    setEmergencyPreviewRun(applied.run)
+                  }}
+                  disabled={datasetMeta.emergencyActive && datasetMeta.emergencyRunId === currentEmergency.id}
+                >
+                  {datasetMeta.emergencyActive && datasetMeta.emergencyRunId === currentEmergency.id ? '当前已应用' : '一键应用应急态'}
+                </button>
+                <button
+                  type="button"
+                  className="rounded border border-[#ff7043] bg-[#ff7043]/10 px-3 py-2 text-xs text-[#ffb199]"
+                  onClick={async () => {
+                    const restored = await restoreEmergencyStateApi(currentEmergency.id)
+                    restoreNormalDatasetState(restored.baselineDataset.data, restored.baselineDataset.meta)
+                    setEmergencyPreviewRun(restored.run)
+                  }}
+                >
+                  回退正常状态
+                </button>
+              </div>
+
+              <div style={{ color: '#5a7a9a', fontSize: 11, marginTop: 6 }}>历史应急方案</div>
+              <div style={{ display: 'grid', gap: 8, maxHeight: 220, overflowY: 'auto' }}>
+                {historyLoading ? (
+                  <div style={{ color: '#5a7a9a', fontSize: 12 }}>加载历史应急方案中…</div>
+                ) : emergencyHistory.length === 0 ? (
+                  <div style={{ color: '#5a7a9a', fontSize: 12 }}>暂无历史应急方案。</div>
+                ) : (
+                  emergencyHistory.map((run) => (
+                    <button
+                      key={run.id}
+                      type="button"
+                      className="rounded border px-3 py-2 text-left transition-colors hover:border-[#00d4ff]/60 hover:bg-[#00d4ff]/6"
+                      style={{
+                        borderColor: run.id === currentEmergency.id ? '#00d4ff55' : '#1e3256',
+                        background: run.id === currentEmergency.id ? 'rgba(0,212,255,0.08)' : 'transparent',
+                      }}
+                      onClick={() => setEmergencyPreviewRun(run)}
+                    >
+                      <div style={{ color: '#e8f4ff', fontSize: 12, fontWeight: 600 }}>{run.title}</div>
+                      <div style={{ color: '#5a7a9a', fontSize: 10, marginTop: 4 }}>
+                        #{run.id} · {run.source} · {run.status} · {run.createdAt}
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="panel shrink-0">
+          <div className="panel-title-bar">展示提示</div>
+          <div style={{ padding: 16, color: '#8ba9cc', fontSize: 12, lineHeight: 1.8 }}>
+            当前应急方案已入库，可反复切回该状态进行展示。若要回到普通推演或 Pareto 分析，可先执行回退，再在右侧 Agent 中继续发起新任务。
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   if (!scenarioDataset && !paretoData) {
     return (
       <div className="h-full flex items-center justify-center">
-        <div className="panel" style={{ padding: 32, maxWidth: 520, textAlign: 'center' }}>
+        <div className="panel" style={{ padding: 32, maxWidth: 640, textAlign: 'center' }}>
           <div className="panel-title-bar" style={{ textAlign: 'center', marginBottom: 16 }}>Agent 工作区</div>
           <p style={{ color: '#8ba9cc', fontSize: 13, lineHeight: 1.8 }}>
-            暂无工作成果。请在右侧 Agent 面板中使用自然语言发起 What-If 推演或 Pareto 参数扫描。
+            暂无工作成果。请在右侧 Agent 面板中发起 What-If、Pareto 或应急调度任务。
           </p>
           <div style={{ marginTop: 16, color: '#3d6080', fontSize: 12 }}>
             <p>示例指令：</p>
             <p style={{ color: '#00d4ff' }}>"如果光伏组件数量增加到 20000，碳交易价格提高到 150 元/tCO2"</p>
             <p style={{ color: '#00d4ff' }}>"限制 19-21 时段电网购电不超过 3000kW"</p>
             <p style={{ color: '#00d4ff' }}>"分析光伏组件数量从 5000 到 30000 时成本和碳排放的变化趋势"</p>
+            <p style={{ color: '#00d4ff' }}>"台风来了，电网故障，购电下降，光伏出力也下降，请生成应急预案"</p>
           </div>
         </div>
       </div>
@@ -137,7 +350,6 @@ export default function ScenarioComparePage() {
         </div>
       </div>
 
-      {/* 基准 vs 推演 动态图表 */}
       <div className="panel shrink-0" style={{ minHeight: 180 }}>
         <div className="panel-title-bar">基准 vs 推演 对比图</div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, padding: 16, height: 160 }}>
@@ -158,6 +370,26 @@ export default function ScenarioComparePage() {
           </p>
         </div>
       </div>
+    </div>
+  )
+}
+
+function SummaryCell({ label, value, accent }: { label: string; value: string; accent: string }) {
+  return (
+    <div className="panel" style={{ padding: 12 }}>
+      <div style={{ color: '#5a7a9a', fontSize: 10 }}>{label}</div>
+      <div style={{ color: accent, fontFamily: "'Rajdhani', sans-serif", fontSize: 22, fontWeight: 700, marginTop: 6 }}>{value}</div>
+    </div>
+  )
+}
+
+function PointRow({ label, value, color }: { label: string; value: number; color: string }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span style={{ color: '#8ba9cc', fontSize: 11 }}>{label}</span>
+      <span style={{ color, fontFamily: "'Rajdhani', sans-serif", fontSize: 16, fontWeight: 700 }}>
+        {value.toFixed(1)}
+      </span>
     </div>
   )
 }

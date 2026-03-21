@@ -2,7 +2,7 @@
  * 后端 API 客户端
  */
 
-import type { DatasetMeta } from '@/types'
+import type { DatasetMeta, EmergencyRun } from '@/types'
 
 const API_BASE = import.meta.env.VITE_API_BASE ? `${import.meta.env.VITE_API_BASE}/api` : '/api'
 
@@ -11,6 +11,10 @@ export interface DisplayDatasetResponse {
   meta: DatasetMeta
   id?: number
   name?: string
+}
+
+export interface EmergencyDispatchResponse {
+  run: EmergencyRun
 }
 
 export async function fetchDefaultDataset() {
@@ -143,6 +147,64 @@ export async function runOptimizeSingle(
       params: params ?? {},
       extra_constraints: extraConstraints ?? [],
     }),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function dispatchEmergencyPlan(payload: {
+  prompt: string
+  eventSpec?: Record<string, unknown>
+  baselineDataset?: Record<string, unknown>
+  baselineMeta?: DatasetMeta
+  baselineDatasetId?: number | null
+  activeStrategy?: string
+  source?: string
+}) {
+  const res = await fetch(`${API_BASE}/emergency/dispatch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json() as Promise<EmergencyDispatchResponse>
+}
+
+export async function fetchEmergencyRuns(limit = 20): Promise<EmergencyRun[]> {
+  const res = await fetch(`${API_BASE}/emergency/runs?limit=${limit}`)
+  if (!res.ok) throw new Error(await res.text())
+  const json = await res.json()
+  return json.data
+}
+
+export async function fetchEmergencyRun(id: number): Promise<EmergencyRun> {
+  const res = await fetch(`${API_BASE}/emergency/runs/${id}`)
+  if (!res.ok) throw new Error(await res.text())
+  const json = await res.json()
+  return json.run
+}
+
+export async function applyEmergencyRunApi(id: number): Promise<{
+  run: EmergencyRun
+  dataset: DisplayDatasetResponse
+}> {
+  const res = await fetch(`${API_BASE}/emergency/runs/${id}/apply`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function restoreEmergencyStateApi(runId?: number | null): Promise<{
+  run: EmergencyRun
+  baselineDataset: DisplayDatasetResponse
+}> {
+  const res = await fetch(`${API_BASE}/emergency/restore`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(runId != null ? { runId } : {}),
   })
   if (!res.ok) throw new Error(await res.text())
   return res.json()

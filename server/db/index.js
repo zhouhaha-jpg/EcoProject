@@ -23,6 +23,26 @@ function parseDatasetRow(row) {
   return { ...row, data: JSON.parse(row.data) }
 }
 
+function safeParseJson(text, fallback = null) {
+  if (text == null || text === '') return fallback
+  try {
+    return JSON.parse(text)
+  } catch {
+    return fallback
+  }
+}
+
+function parseEmergencyRunRow(row) {
+  if (!row) return null
+  return {
+    ...row,
+    degraded: Boolean(row.degraded),
+    baseline_payload: safeParseJson(row.baseline_payload, null),
+    event_spec: safeParseJson(row.event_spec, {}),
+    detail_payload: safeParseJson(row.detail_payload, {}),
+  }
+}
+
 function isRuntimeDataset(row, datasetType = '') {
   const metaType = row.data?._meta?.datasetType
   const inferredType = metaType
@@ -90,6 +110,105 @@ export function findRuntimeDatasetByViewDate(viewDate, limit = 240) {
     .filter(Boolean)
 
   return rows.find((row) => isRuntimeDataset(row) && row.data?._meta?.viewDate === viewDate) ?? null
+}
+
+export function listEmergencyRuns(limit = 20) {
+  return getDb()
+    .prepare('SELECT * FROM emergency_runs ORDER BY id DESC LIMIT ?')
+    .all(limit)
+    .map(parseEmergencyRunRow)
+}
+
+export function getEmergencyRunById(id) {
+  const row = getDb().prepare('SELECT * FROM emergency_runs WHERE id = ?').get(id)
+  return parseEmergencyRunRow(row)
+}
+
+export function createEmergencyRun(record) {
+  const db = getDb()
+  const info = db.prepare(`
+    INSERT INTO emergency_runs (
+      title, source, severity, status, degraded,
+      baseline_dataset_id, emergency_dataset_id, baseline_payload,
+      event_spec, detail_payload, explanation
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    record.title,
+    record.source ?? 'manual',
+    record.severity ?? 'warning',
+    record.status ?? 'planned',
+    record.degraded ? 1 : 0,
+    record.baseline_dataset_id ?? null,
+    record.emergency_dataset_id ?? null,
+    record.baseline_payload ? JSON.stringify(record.baseline_payload) : null,
+    JSON.stringify(record.event_spec ?? {}),
+    JSON.stringify(record.detail_payload ?? {}),
+    record.explanation ?? '',
+  )
+  return Number(info.lastInsertRowid)
+}
+
+export function updateEmergencyRun(id, patch = {}) {
+  const db = getDb()
+  const current = getEmergencyRunById(id)
+  if (!current) return null
+  const next = {
+    title: patch.title ?? current.title,
+    source: patch.source ?? current.source,
+    severity: patch.severity ?? current.severity,
+    status: patch.status ?? current.status,
+    degraded: patch.degraded ?? current.degraded,
+    baseline_dataset_id: patch.baseline_dataset_id ?? current.baseline_dataset_id ?? null,
+    emergency_dataset_id: patch.emergency_dataset_id ?? current.emergency_dataset_id ?? null,
+    baseline_payload: patch.baseline_payload ?? current.baseline_payload ?? null,
+    event_spec: patch.event_spec ?? current.event_spec ?? {},
+    detail_payload: patch.detail_payload ?? current.detail_payload ?? {},
+    explanation: patch.explanation ?? current.explanation ?? '',
+    applied_at: patch.applied_at ?? current.applied_at ?? null,
+    restored_at: patch.restored_at ?? current.restored_at ?? null,
+  }
+
+  db.prepare(`
+    UPDATE emergency_runs
+    SET title = ?,
+        source = ?,
+        severity = ?,
+        status = ?,
+        degraded = ?,
+        baseline_dataset_id = ?,
+        emergency_dataset_id = ?,
+        baseline_payload = ?,
+        event_spec = ?,
+        detail_payload = ?,
+        explanation = ?,
+        applied_at = ?,
+        restored_at = ?
+    WHERE id = ?
+  `).run(
+    next.title,
+    next.source,
+    next.severity,
+    next.status,
+    next.degraded ? 1 : 0,
+    next.baseline_dataset_id,
+    next.emergency_dataset_id,
+    next.baseline_payload ? JSON.stringify(next.baseline_payload) : null,
+    JSON.stringify(next.event_spec),
+    JSON.stringify(next.detail_payload),
+    next.explanation,
+    next.applied_at,
+    next.restored_at,
+    id,
+  )
+
+  return getEmergencyRunById(id)
+}
+
+export function getLatestAppliedEmergencyRun() {
+  const row = getDb()
+    .prepare("SELECT * FROM emergency_runs WHERE status = 'applied' ORDER BY id DESC LIMIT 1")
+    .get()
+  return parseEmergencyRunRow(row)
 }
 
 // ─── 对话历史 ─────────────────────────────────────────────────────────────

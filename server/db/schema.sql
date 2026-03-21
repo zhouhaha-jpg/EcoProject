@@ -80,6 +80,28 @@ CREATE TABLE IF NOT EXISTS alert_events (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 应急调度预案
+CREATE TABLE IF NOT EXISTS emergency_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'manual',
+  severity TEXT NOT NULL DEFAULT 'warning',
+  status TEXT NOT NULL DEFAULT 'planned',
+  degraded INTEGER NOT NULL DEFAULT 0,
+  baseline_dataset_id INTEGER,
+  emergency_dataset_id INTEGER,
+  baseline_payload TEXT,
+  event_spec TEXT NOT NULL,
+  detail_payload TEXT NOT NULL,
+  explanation TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  applied_at DATETIME,
+  restored_at DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_emergency_runs_created ON emergency_runs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_emergency_runs_status ON emergency_runs(status, created_at DESC);
+
 -- 园区配置（坐标等）
 CREATE TABLE IF NOT EXISTS park_config (
   key TEXT PRIMARY KEY,

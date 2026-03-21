@@ -17,9 +17,11 @@ import {
   fetchConversation,
   deleteConversation,
 } from '@/lib/api'
+import { applyEmergencyRunApi } from '@/lib/api'
 import type { ConversationItem } from '@/lib/api'
 import type { ChatMessage } from '@/hooks/useAgentChat'
 import type { RealtimeState, ShadowOptimization } from '@/hooks/useRealtimeData'
+import type { EmergencyRun } from '@/types'
 
 const MIN_WIDTH = 280
 const MAX_WIDTH = 520
@@ -29,12 +31,20 @@ interface AgentSidebarProps {
   realtimeData?: RealtimeState & {
     dismissAlert: (index: number) => void
     dismissShadowOpt: () => void
+    dismissEmergencyPlan: () => void
   }
 }
 
 export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
   const navigate = useNavigate()
-  const { setActiveStrategy, loadScenarioDataset, loadParetoData } = useStrategy()
+  const {
+    setActiveStrategy,
+    loadScenarioDataset,
+    loadParetoData,
+    setEmergencyPreviewRun,
+    applyEmergencyRunState,
+    restoreNormalDatasetState,
+  } = useStrategy()
   const ctx = useAgentContext()
 
   const [conversationList, setConversationList] = useState<ConversationItem[]>([])
@@ -117,6 +127,7 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
   const handlers_ref = useRef<{
     navigate: (path: string) => void
     loadScenarioDataset: (ds: Record<string, unknown>, label: string) => void
+    setEmergencyPreviewRun?: (run: EmergencyRun | null) => void
   } | null>(null)
 
   useEffect(() => {
@@ -125,10 +136,13 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
       switchStrategy: setActiveStrategy,
       loadScenarioDataset,
       loadParetoData,
+      setEmergencyPreviewRun,
+      applyEmergencyRunState,
+      restoreNormalDatasetState,
     }
     handlers_ref.current = h
     registerAgentHandlers(h)
-  }, [navigate, setActiveStrategy, loadScenarioDataset, loadParetoData])
+  }, [navigate, setActiveStrategy, loadScenarioDataset, loadParetoData, setEmergencyPreviewRun, applyEmergencyRunState, restoreNormalDatasetState])
 
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -228,11 +242,20 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
             </div>
             <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
               {/* 主动预警卡片 */}
-              {realtimeData && (realtimeData.shadowOptimization || realtimeData.alerts.length > 0) && !showHistory && (
+              {realtimeData && (realtimeData.emergencyPlan || realtimeData.shadowOptimization || realtimeData.alerts.length > 0) && !showHistory && (
                 <div className="shrink-0 px-3 pt-2">
                   <ProactiveAlert
+                    emergencyPlan={realtimeData.emergencyPlan}
                     shadowOptimization={realtimeData.shadowOptimization}
                     alerts={realtimeData.alerts}
+                    onApplyEmergency={async (run: EmergencyRun) => {
+                      const applied = await applyEmergencyRunApi(run.id)
+                      applyEmergencyRunState(applied.run, applied.dataset.data, applied.dataset.meta)
+                      setEmergencyPreviewRun(applied.run)
+                      navigate('/scenario')
+                      realtimeData.dismissEmergencyPlan()
+                    }}
+                    onDismissEmergency={() => realtimeData.dismissEmergencyPlan()}
                     onApplyOptimization={(opt: ShadowOptimization) => {
                       // 加载影子优化结果到方案对比页
                       if (handlers_ref.current) {

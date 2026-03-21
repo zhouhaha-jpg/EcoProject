@@ -2,7 +2,7 @@
 
 > **新 Agent 必须在开始开发前完整阅读此文档。**
 > 本文档以当前仓库代码为准，记录真实架构、已落地能力、遗留限制与注意事项。
-> 生成日期：2026-03-07（最后更新：自动优化链路闭环 + 实时数据面板 + 全页面图表自动刷新）
+> 生成日期：2026-03-07（最后更新：应急调度工作区 + 应急预案入库/应用/回退 + Agent 应急工具链）
 
 ---
 
@@ -20,7 +20,7 @@
 
 平台用于展示和分析氯碱工业多能互补系统在 24 小时时序下的优化调度结果，重点比较 6 种方案（UCI / CICOS / CICAR / CICOM / PV / ES）在功率、储氢、运行成本、碳排放等指标上的差异。
 
-当前系统已从“静态数据看板”升级为“带 Agent 的调度分析平台”，能够通过自然语言触发 What-If 推演、附加约束求解、因果追溯和 Pareto 参数扫描。
+当前系统已从“静态数据看板”升级为“带 Agent 的调度分析平台”，能够通过自然语言触发 What-If 推演、附加约束求解、因果追溯、Pareto 参数扫描，以及新的“应急事件驱动调度”能力。
 
 ---
 
@@ -68,18 +68,22 @@ EcoProject/
 │   ├── main.js                           ← Electron 主进程入口
 │   └── preload.cjs                       ← 预加载脚本
 ├── server/
-│   ├── index.js                          ← Express 后端入口 + /api/chat + WebSocket + 定时采集
+│   ├── index.js                          ← Express 后端入口 + /api/chat + /api/emergency + WebSocket + 定时采集
 │   ├── config.js                         ← API Key / Base URL / 模型配置
-│   ├── ws.js                             ← WebSocket 服务 (实时推送数据更新/预警/优化结果)
+│   ├── ws.js                             ← WebSocket 服务 (实时推送数据更新/预警/优化结果/应急预案事件)
 │   ├── routes/
 │   │   ├── conversations.js              ← 对话历史 API
 │   │   ├── datasets.js                   ← 数据集 API
+│   │   ├── emergency.js                  ← 应急调度 API（生成/列表/应用/回退）
 │   │   ├── optimize.js                   ← 优化求解 API (已集成实时数据自动注入)
 │   │   └── realtime.js                   ← 实时数据 API (气象/电价/碳因子/健康度/预警/配置)
 │   ├── db/
-│   │   ├── index.js                      ← SQLite 初始化与访问
-│   │   ├── schema.sql                    ← 数据集、对话、实时数据、健康度、预警、园区配置表
+│   │   ├── index.js                      ← SQLite 初始化与访问（含应急预案表访问）
+│   │   ├── schema.sql                    ← 数据集、对话、实时数据、健康度、预警、应急预案、园区配置表
 │   │   └── seed.js                       ← 默认数据集种子
+│   ├── services/
+│   │   ├── emergencyDispatch.js          ← 应急预案生成/校验/入库/应用/回退
+│   │   └── realtimeRefresh.js            ← 实时采集 + 自动优化 + WS 广播
 │   ├── python/
 │   │   ├── optimizer.py                  ← 当前主优化器（Python + SciPy）
 │   │   ├── data_fetcher.py               ← 实时数据采集调度器 (Open-Meteo + 电价模拟 + 碳因子)
@@ -95,27 +99,28 @@ EcoProject/
 │   ├── layout/
 │   │   └── MainLayout.tsx                ← 顶栏 + 导航 + Agent 侧边栏
 │   ├── context/
-│   │   └── StrategyContext.tsx           ← 全局数据、场景数据、Pareto 数据状态
+│   │   └── StrategyContext.tsx           ← 全局数据、场景数据、Pareto、应急预案/应用态状态
 │   ├── hooks/
 │   │   ├── useAgentChat.ts               ← Ask/Agent 对话与 tool_calls 编排
 │   │   ├── useAgentContext.ts            ← 注入 LLM 的完整上下文
-│   │   └── useRealtimeData.ts            ← WebSocket 客户端 + 实时数据状态管理
+│   │   └── useRealtimeData.ts            ← WebSocket 客户端 + 实时数据/应急预案推送状态管理
 │   ├── lib/
-│   │   ├── agentActions.ts               ← Agent 工具映射与执行 (含实时数据工具)
+│   │   ├── agentActions.ts               ← Agent 工具映射与执行 (含实时数据工具 + 应急工具)
 │   │   └── api.ts                        ← 前端 API 客户端
 │   ├── components/
 │   │   ├── agent/
-│   │   │   ├── AgentSidebar.tsx          ← 侧边栏容器、历史对话、拖拽宽度、主动预警
+│   │   │   ├── AgentSidebar.tsx          ← 侧边栏容器、历史对话、拖拽宽度、主动预警/应急预案入口
 │   │   │   ├── AgentChat.tsx             ← 聊天窗口、工具链显示
 │   │   │   ├── AgentModeSwitch.tsx       ← Ask / Agent 模式切换
 │   │   │   ├── ConversationList.tsx      ← 历史对话列表
-│   │   │   └── ProactiveAlert.tsx        ← Agent 主动预警弹窗 (影子优化/市场异动)
+│   │   │   └── ProactiveAlert.tsx        ← Agent 主动预警弹窗 (影子优化/市场异动/应急预案)
 │   │   ├── charts/
 │   │   │   ├── PrefixPowerChart.tsx      ← 按设备前缀的 6 方案功率图
 │   │   │   ├── EconomicIndicatorChart.tsx← 成本/碳排/综合指标图
 │   │   │   ├── HydrogenStorageChart.tsx  ← 储氢罐图
 │   │   │   ├── EnergyStorageChart.tsx    ← 储能图
 │   │   │   ├── ScenarioCompareChart.tsx  ← 基准 vs 推演对比图
+│   │   │   ├── EmergencyDispatchChart.tsx← 应急调度 4h/5min 联动曲线图
 │   │   │   ├── ParetoFrontierChart.tsx   ← Pareto 前沿散点图
 │   │   │   └── useEChart.ts              ← ECharts Hook 与基础主题
 │   │   ├── 3d/
@@ -134,7 +139,7 @@ EcoProject/
 │   │   ├── OverviewPage.tsx              ← 总览页
 │   │   ├── EconomicIndicatorsPage.tsx    ← 经济指标页
 │   │   ├── StorageModulePage.tsx         ← 存储模块页
-│   │   ├── ScenarioComparePage.tsx       ← Agent 工作区
+│   │   ├── ScenarioComparePage.tsx       ← Agent 工作区（What-If / Pareto / 应急调度指挥页）
 │   │   └── PrefixPage.tsx                ← 电解槽/光伏/燃机/PEM/电网统一模板页
 │   ├── types/
 │   │   └── index.ts                      ← 核心 TS 类型
@@ -166,7 +171,7 @@ EcoProject/
 | 路由 | 页面 | 职责 |
 |---|---|---|
 | `/overview` | `OverviewPage.tsx` | 5 类设备功率总览 + 经济指标入口 |
-| `/scenario` | `ScenarioComparePage.tsx` | Agent 工作区，展示推演结果或 Pareto 前沿 |
+| `/scenario` | `ScenarioComparePage.tsx` | Agent 工作区，优先展示应急调度指挥页，否则展示推演结果或 Pareto 前沿 |
 | `/economic` | `EconomicIndicatorsPage.tsx` | 成本 / 碳排 / 综合指标表格与图表 |
 | `/storage` | `StorageModulePage.tsx` | 储氢罐与储能数据分析 |
 | `/ca` | `PrefixPage.tsx` | 电解槽功率详情 |
@@ -214,8 +219,12 @@ interface EcoDataset {
 - `datasetLoading` / `datasetError`：默认数据集加载状态与错误
 - `scenarioDataset` / `scenarioLabel`：What-If 或约束求解结果
 - `paretoData` / `paretoLabel`：Pareto 扫描结果
+- `emergencyPreviewRun`：当前正在工作区预览的应急预案
+- `emergencyActiveRun`：当前已应用到全平台的应急态
 - `loadScenarioDataset()`：将新的优化结果载入 Agent 工作区
 - `loadParetoData()`：保存 Pareto 扫描结果，并自动计算建议区间
+- `applyEmergencyRunState()`：将应急预案切换为全平台展示态，并保留正常态回退基线
+- `restoreNormalDatasetState()`：恢复到应急应用前的数据集
 
 ### 5.3 默认数据来源
 
@@ -237,6 +246,10 @@ interface EcoDataset {
 | `GET /api/datasets/:id` | 指定数据集详情 |
 | `POST /api/optimize` | 全 6 策略求解，支持参数覆写与附加约束，自动注入实时数据 |
 | `POST /api/optimize/single` | 单策略求解，用于 Pareto 扫描 |
+| `POST /api/emergency/dispatch` | 手动生成应急预案（4h/5min 曲线 + 小时级聚合数据集） |
+| `GET /api/emergency/runs` | 最近应急预案列表 |
+| `POST /api/emergency/runs/:id/apply` | 将某条应急预案应用到全平台展示 |
+| `POST /api/emergency/restore` | 从应急态恢复到应用前状态 |
 | `GET /api/realtime/latest` | 最新 24h 实时数据（电价/光照/碳因子） |
 | `GET /api/realtime/history?date=` | 指定日期历史数据 |
 | `GET /api/realtime/health` | 三路数据源健康状态 |
@@ -246,7 +259,7 @@ interface EcoDataset {
 | `PUT /api/realtime/config` | 更新园区配置（支持前端修改坐标） |
 | `GET /api/realtime/dates` | 可用数据日期列表 |
 | `GET/POST/PUT/DELETE /api/conversations...` | 对话历史增删改查 |
-| `WebSocket /ws` | 实时推送：data_updated / alert / optimization_complete / health_update / dataset_updated |
+| `WebSocket /ws` | 实时推送：data_updated / alert / optimization_complete / health_update / dataset_updated / emergency_plan_created / emergency_applied / emergency_restored |
 
 ### 6.2 Ask / Agent 两种模式
 

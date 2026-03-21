@@ -236,7 +236,7 @@ async function handleJsonResponse(
   const actions: { type: string; params: Record<string, unknown>; result: string }[] = []
   const toolResults: { id: string; content: string }[] = []
 
-  const ASYNC_TOOLS = ['run_whatif', 'add_constraint', 'pareto_scan']
+  const ASYNC_TOOLS = ['run_whatif', 'run_emergency_dispatch', 'apply_emergency_run', 'restore_normal_state', 'add_constraint', 'pareto_scan']
   const NEED_FOLLOWUP_TOOLS = ['trace_causality']
 
   if (toolCalls.length > 0) {
@@ -259,10 +259,15 @@ async function handleJsonResponse(
       params = {}
     }
 
-    const traceCtx = name === 'trace_causality' && extra?.ctx
-      ? { fullData: extra.ctx.fullData }
+    const agentCtx = extra?.ctx
+      ? {
+          fullData: extra.ctx.fullData,
+          datasetMeta: extra.ctx.datasetMeta,
+          activeStrategy: extra.ctx.activeStrategy,
+          emergencyRunId: extra.ctx.emergencyRunId,
+        }
       : undefined
-    const result = await executeAction(name, params, traceCtx)
+    const result = await executeAction(name, params, agentCtx)
     actions.push({ type: name, params, result: result.message })
 
     setToolChain((prev) =>
