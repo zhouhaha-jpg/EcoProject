@@ -10,6 +10,8 @@ import ScenarioCompareChart from '@/components/charts/ScenarioCompareChart'
 import ParetoFrontierChart from '@/components/charts/ParetoFrontierChart'
 import EmergencyDispatchChart from '@/components/charts/EmergencyDispatchChart'
 import EmergencyDeltaChart from '@/components/charts/EmergencyDeltaChart'
+import InvestmentWorkspaceView from '@/components/workspace/InvestmentWorkspaceView'
+import AnomalyWorkspaceView from '@/components/workspace/AnomalyWorkspaceView'
 import {
   applyEmergencyRunApi,
   fetchEmergencyRuns,
@@ -46,6 +48,11 @@ export default function ScenarioComparePage() {
     emergencyActiveRun,
     setEmergencyPreviewRun,
     applyEmergencyRunState,
+    investmentPlan,
+    anomalyPreviewRun,
+    anomalyActiveRun,
+    setAnomalyPreviewRun,
+    applyAnomalyRunState,
     restoreNormalDatasetState,
     datasetMeta,
   } = useStrategy()
@@ -73,6 +80,7 @@ export default function ScenarioComparePage() {
   }, [emergencyPreviewRun, emergencyActiveRun])
 
   const currentEmergency = emergencyPreviewRun ?? emergencyActiveRun
+  const currentAnomaly = anomalyPreviewRun ?? anomalyActiveRun
 
   useEffect(() => {
     setActivePoint(null)
@@ -308,6 +316,25 @@ export default function ScenarioComparePage() {
     )
   }
 
+  if (currentAnomaly) {
+    return (
+      <AnomalyWorkspaceView
+        run={currentAnomaly}
+        currentAppliedRunId={datasetMeta.anomalyRunId ?? null}
+        onSelectRun={setAnomalyPreviewRun}
+        onApplyRun={(run, data, meta) => applyAnomalyRunState(run, data, meta)}
+        onRestore={(data, meta, run) => {
+          restoreNormalDatasetState(data, meta)
+          setAnomalyPreviewRun(run ?? null)
+        }}
+      />
+    )
+  }
+
+  if (investmentPlan) {
+    return <InvestmentWorkspaceView run={investmentPlan} />
+  }
+
   if (!scenarioDataset && !paretoData) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -322,6 +349,8 @@ export default function ScenarioComparePage() {
             <p style={{ color: '#00d4ff' }}>"限制 19-21 时段电网购电不超过 3000kW"</p>
             <p style={{ color: '#00d4ff' }}>"分析光伏组件数量从 5000 到 30000 时成本和碳排放的变化趋势"</p>
             <p style={{ color: '#00d4ff' }}>"台风来了，电网故障，购电下降，光伏出力也下降，请生成应急预案"</p>
+            <p style={{ color: '#00d4ff' }}>"如果把厂区的光伏组件从 2000 增加到 5000，这笔投资几年后回本？"</p>
+            <p style={{ color: '#00d4ff' }}>"燃气轮机温度异常升高，请生成设备异常指挥方案"</p>
           </div>
         </div>
       </div>

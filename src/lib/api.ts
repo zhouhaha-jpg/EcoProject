@@ -2,7 +2,7 @@
  * 后端 API 客户端
  */
 
-import type { DatasetMeta, EmergencyRun } from '@/types'
+import type { AnomalyRun, DatasetMeta, EmergencyRun, InvestmentRun } from '@/types'
 
 const API_BASE = import.meta.env.VITE_API_BASE ? `${import.meta.env.VITE_API_BASE}/api` : '/api'
 
@@ -77,10 +77,13 @@ export interface ConversationMessage {
 }
 
 export interface ConversationWorkspaceState {
-  pageType: 'empty' | 'emergency' | 'scenario' | 'pareto'
+  pageType: 'empty' | 'emergency' | 'scenario' | 'pareto' | 'investment' | 'anomaly'
   route: string
   emergencyRunId?: number | null
   emergencyApplied?: boolean
+  investmentRunId?: number | null
+  anomalyRunId?: number | null
+  anomalyApplied?: boolean
   scenarioPayload?: {
     dataset: Record<string, unknown>
     label: string
@@ -88,6 +91,9 @@ export interface ConversationWorkspaceState {
   paretoPayload?: {
     data: Record<string, unknown>
     label: string
+  } | null
+  investmentPayload?: {
+    run: InvestmentRun
   } | null
   selectedPointIndex?: number | null
   savedAt: string
@@ -229,6 +235,96 @@ export async function restoreEmergencyStateApi(runId?: number | null): Promise<{
   baselineDataset: DisplayDatasetResponse
 }> {
   const res = await fetch(`${API_BASE}/emergency/restore`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(runId != null ? { runId } : {}),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function dispatchInvestmentPlan(payload: {
+  prompt: string
+  assumptions?: Record<string, unknown>
+  baselineDataset?: Record<string, unknown>
+  baselineMeta?: DatasetMeta
+  baselineDatasetId?: number | null
+  activeStrategy?: string
+  source?: string
+}) {
+  const res = await fetch(`${API_BASE}/investment/plan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json() as Promise<{ run: InvestmentRun }>
+}
+
+export async function fetchInvestmentRuns(limit = 20): Promise<InvestmentRun[]> {
+  const res = await fetch(`${API_BASE}/investment/runs?limit=${limit}`)
+  if (!res.ok) throw new Error(await res.text())
+  const json = await res.json()
+  return json.data
+}
+
+export async function fetchInvestmentRun(id: number): Promise<InvestmentRun> {
+  const res = await fetch(`${API_BASE}/investment/runs/${id}`)
+  if (!res.ok) throw new Error(await res.text())
+  const json = await res.json()
+  return json.run
+}
+
+export async function dispatchAnomalyPlan(payload: {
+  prompt: string
+  eventSpec?: Record<string, unknown>
+  baselineDataset?: Record<string, unknown>
+  baselineMeta?: DatasetMeta
+  baselineDatasetId?: number | null
+  activeStrategy?: string
+  source?: string
+}) {
+  const res = await fetch(`${API_BASE}/anomaly/dispatch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json() as Promise<{ run: AnomalyRun }>
+}
+
+export async function fetchAnomalyRuns(limit = 20): Promise<AnomalyRun[]> {
+  const res = await fetch(`${API_BASE}/anomaly/runs?limit=${limit}`)
+  if (!res.ok) throw new Error(await res.text())
+  const json = await res.json()
+  return json.data
+}
+
+export async function fetchAnomalyRun(id: number): Promise<AnomalyRun> {
+  const res = await fetch(`${API_BASE}/anomaly/runs/${id}`)
+  if (!res.ok) throw new Error(await res.text())
+  const json = await res.json()
+  return json.run
+}
+
+export async function applyAnomalyRunApi(id: number): Promise<{
+  run: AnomalyRun
+  dataset: DisplayDatasetResponse
+}> {
+  const res = await fetch(`${API_BASE}/anomaly/runs/${id}/apply`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function restoreAnomalyStateApi(runId?: number | null): Promise<{
+  run: AnomalyRun
+  baselineDataset: DisplayDatasetResponse
+}> {
+  const res = await fetch(`${API_BASE}/anomaly/restore`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(runId != null ? { runId } : {}),

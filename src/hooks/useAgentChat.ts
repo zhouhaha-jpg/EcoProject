@@ -265,6 +265,7 @@ async function handleJsonResponse(
           datasetMeta: extra.ctx.datasetMeta,
           activeStrategy: extra.ctx.activeStrategy,
           emergencyRunId: extra.ctx.emergencyRunId,
+          anomalyRunId: extra.ctx.anomalyRunId,
         }
       : undefined
     const result = await executeAction(name, params, agentCtx)

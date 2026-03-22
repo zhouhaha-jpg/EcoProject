@@ -1,17 +1,13 @@
-/**
- * Agent 模式可执行动作注册表
- * 将 LLM 返回的 tool_calls 映射到实际界面操作
- */
-
-import type { StrategyKey } from '@/types'
-import type { EcoDataset } from '@/types'
-import type { DatasetMeta, EmergencyRun } from '@/types'
+import type { ParetoData } from '@/context/StrategyContext'
+import type { AnomalyRun, DatasetMeta, EcoDataset, EmergencyRun, InvestmentRun, StrategyKey } from '@/types'
 
 export type AgentActionType =
   | 'navigate'
   | 'switchStrategy'
   | 'run_whatif'
   | 'run_emergency_dispatch'
+  | 'run_investment_planning'
+  | 'run_device_anomaly_dispatch'
   | 'list_emergency_runs'
   | 'apply_emergency_run'
   | 'restore_normal_state'
@@ -23,8 +19,6 @@ export type AgentActionType =
   | 'get_alerts'
   | 'carbon_electricity_analysis'
 
-import type { ParetoData } from '@/context/StrategyContext'
-
 export interface AgentActionHandlers {
   navigate: (path: string) => void
   switchStrategy: (key: StrategyKey) => void
@@ -32,81 +26,100 @@ export interface AgentActionHandlers {
   loadParetoData: (data: ParetoData, label: string) => void
   setEmergencyPreviewRun: (run: EmergencyRun | null) => void
   applyEmergencyRunState: (run: EmergencyRun, dataset?: Record<string, unknown>, meta?: DatasetMeta) => void
+  setInvestmentPlan: (run: InvestmentRun | null) => void
+  setAnomalyPreviewRun: (run: AnomalyRun | null) => void
+  applyAnomalyRunState: (run: AnomalyRun, dataset?: Record<string, unknown>, meta?: DatasetMeta) => void
   restoreNormalDatasetState: (dataset?: Record<string, unknown>, meta?: DatasetMeta) => void
 }
 
 const PATH_MAP: Record<string, string> = {
-  '/': '/overview', '总览': '/overview', 'overview': '/overview',
-  '/ca': '/ca', '电解槽': '/ca', 'ca': '/ca',
-  '/pv': '/pv', '光伏': '/pv', 'pv': '/pv',
-  '/gm': '/gm', '燃气轮机': '/gm', 'gm': '/gm',
-  '/pem': '/pem', '质子膜燃料电池': '/pem', 'pem': '/pem',
-  '/g': '/g', '电网': '/g', 'g': '/g',
-  '/economic': '/economic', '经济指标': '/economic',
-  '/storage': '/storage', '存储模块': '/storage',
-  '/scenario': '/scenario', 'EcoClaw': '/scenario', 'Agent工作区': '/scenario', '方案对比': '/scenario',
+  '/': '/overview',
+  overview: '/overview',
+  '总览': '/overview',
+  '/ca': '/ca',
+  ca: '/ca',
+  '电解槽': '/ca',
+  '/pv': '/pv',
+  pv: '/pv',
+  '光伏': '/pv',
+  '/gm': '/gm',
+  gm: '/gm',
+  '燃气轮机': '/gm',
+  '/pem': '/pem',
+  pem: '/pem',
+  '/g': '/g',
+  g: '/g',
+  '电网': '/g',
+  '/economic': '/economic',
+  '经济指标': '/economic',
+  '/storage': '/storage',
+  '储能模块': '/storage',
+  '/scenario': '/scenario',
+  EcoClaw: '/scenario',
+  '方案对比': '/scenario',
 }
 
 const STRATEGY_MAP: Record<string, StrategyKey> = {
-  uci: 'uci', '统一控制综合': 'uci', '基准方案': 'uci',
-  cicos: 'cicos', '成本优化': 'cicos', '成本优化集成': 'cicos',
-  cicar: 'cicar', '碳排优化': 'cicar', '碳排优化集成': 'cicar',
-  cicom: 'cicom', '综合优化': 'cicom', '综合优化集成': 'cicom',
-  pv: 'pv', '光伏优先': 'pv', '光伏优先优化': 'pv',
-  es: 'es', '储能': 'es', '储能优化': 'es', '储能综合优化': 'es',
+  uci: 'uci',
+  cicos: 'cicos',
+  cicar: 'cicar',
+  cicom: 'cicom',
+  pv: 'pv',
+  es: 'es',
+  '统一控制综合': 'uci',
+  '成本优化': 'cicos',
+  '碳排优化': 'cicar',
+  '综合优化': 'cicom',
+  '光伏优先': 'pv',
+  '储能优化': 'es',
 }
 
 const API_BASE = ''
 
 let handlers: AgentActionHandlers | null = null
 
-export function registerAgentHandlers(h: AgentActionHandlers) {
-  handlers = h
+export function registerAgentHandlers(nextHandlers: AgentActionHandlers) {
+  handlers = nextHandlers
 }
 
-/** 用于 trace_causality 的上下文，提取该时段设备状态 */
 export interface AgentExecutionContext {
   fullData: EcoDataset
   datasetMeta?: DatasetMeta
   activeStrategy?: StrategyKey
   emergencyRunId?: number | null
+  anomalyRunId?: number | null
 }
 
-/**
- * Execute an agent action. Async tools (run_whatif, pareto_scan, etc.) call the
- * backend optimizer and may take 10-60 seconds.
- * @param context 可选，trace_causality 时传入以提取该时段设备数据
- */
+function requireHandlers(type: string) {
+  if (!handlers) {
+    throw new Error(`Agent handlers not registered for action: ${type}`)
+  }
+  return handlers
+}
+
 export async function executeAction(
   type: string,
   params: Record<string, unknown>,
-  context?: AgentExecutionContext
+  context?: AgentExecutionContext,
 ): Promise<{ success: boolean; message: string; data?: unknown }> {
-  if (!handlers && ['navigate', 'switchStrategy', 'run_whatif', 'run_emergency_dispatch', 'apply_emergency_run', 'restore_normal_state', 'add_constraint', 'pareto_scan'].includes(type)) {
-    if (!handlers) return { success: false, message: 'Agent 动作处理器未初始化' }
-  }
-
   try {
-    switch (type) {
+    switch (type as AgentActionType) {
       case 'navigate': {
         const path = String(params.path ?? '')
         const resolved = PATH_MAP[path] ?? path
-        if (resolved.startsWith('/')) {
-          handlers!.navigate(resolved)
-          return { success: true, message: `已切换到页面: ${resolved}` }
-        }
-        return { success: false, message: `无效路径: ${path}` }
+        if (!resolved.startsWith('/')) return { success: false, message: `无效路径: ${path}` }
+        requireHandlers(type).navigate(resolved)
+        return { success: true, message: `已切换到页面: ${resolved}` }
       }
 
       case 'switchStrategy': {
         const key = String(params.key ?? '').toLowerCase()
         const resolved = STRATEGY_MAP[key] ?? (key as StrategyKey)
-        const valid: StrategyKey[] = ['uci', 'cicos', 'cicar', 'cicom', 'pv', 'es']
-        if (valid.includes(resolved)) {
-          handlers!.switchStrategy(resolved)
-          return { success: true, message: `已切换到策略: ${resolved}` }
+        if (!['uci', 'cicos', 'cicar', 'cicom', 'pv', 'es'].includes(resolved)) {
+          return { success: false, message: `无效策略: ${key}` }
         }
-        return { success: false, message: `无效策略: ${key}` }
+        requireHandlers(type).switchStrategy(resolved)
+        return { success: true, message: `已切换到策略: ${resolved}` }
       }
 
       case 'run_whatif': {
@@ -119,47 +132,96 @@ export async function executeAction(
         })
         if (!res.ok) throw new Error(await res.text())
         const data = await res.json()
-        if (handlers && data.summary) {
-          handlers.loadScenarioDataset(data, desc)
-          handlers.navigate('/scenario')
+        const h = requireHandlers(type)
+        if (data.summary) {
+          h.loadScenarioDataset(data, desc)
+          h.navigate('/scenario')
         }
-        const summaryES = data.summary?.es
-        const msg = summaryES
-          ? `${desc} 求解完成。ES方案: 成本=${summaryES.cost}元, 碳排=${summaryES.carbon}tCO2, 综合=${summaryES.combined}`
-          : `${desc} 求解完成`
-        return { success: true, message: msg, data }
+        return { success: true, message: `${desc} 求解完成`, data }
       }
 
       case 'run_emergency_dispatch': {
         const prompt = String(params.prompt ?? params.description ?? '')
-        if (!prompt.trim()) {
-          return { success: false, message: '缺少应急场景描述' }
-        }
-        const payload = {
-          prompt,
-          eventSpec: {
-            severity: String(params.severity ?? 'critical'),
-          },
-          baselineDataset: context?.fullData,
-          baselineMeta: context?.datasetMeta,
-          baselineDatasetId: context?.datasetMeta?.datasetId ?? null,
-          activeStrategy: context?.activeStrategy ?? 'es',
-          source: 'manual',
-        }
+        if (!prompt.trim()) return { success: false, message: '缺少应急场景描述' }
         const res = await fetch(`${API_BASE}/api/emergency/dispatch`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({
+            prompt,
+            eventSpec: { severity: String(params.severity ?? 'critical') },
+            baselineDataset: context?.fullData,
+            baselineMeta: context?.datasetMeta,
+            baselineDatasetId: context?.datasetMeta?.datasetId ?? null,
+            activeStrategy: context?.activeStrategy ?? 'es',
+            source: 'manual',
+          }),
         })
         if (!res.ok) throw new Error(await res.text())
         const data = await res.json()
-        if (handlers && data.run) {
-          handlers.setEmergencyPreviewRun(data.run)
-          handlers.navigate('/scenario')
-        }
+        const h = requireHandlers(type)
+        h.setEmergencyPreviewRun(data.run)
+        h.navigate('/scenario')
         return {
           success: true,
-          message: `${data.run?.title ?? '应急预案'} 已生成${data.run?.detailPayload?.audit?.generationMode === 'template_fallback' ? '（模板兜底）' : ''}，可在 EcoClaw 查看并决定是否应用。`,
+          message: `${data.run?.title ?? '应急预案'} 已生成，可在 EcoClaw 查看并决定是否应用。`,
+          data: data.run,
+        }
+      }
+
+      case 'run_investment_planning': {
+        const prompt = String(params.prompt ?? params.description ?? '')
+        if (!prompt.trim()) return { success: false, message: '缺少投资规划问题描述' }
+        const res = await fetch(`${API_BASE}/api/investment/plan`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt,
+            baselineDataset: context?.fullData,
+            baselineMeta: context?.datasetMeta,
+            baselineDatasetId: context?.datasetMeta?.datasetId ?? null,
+            activeStrategy: context?.activeStrategy ?? 'es',
+            source: 'manual',
+          }),
+        })
+        if (!res.ok) throw new Error(await res.text())
+        const data = await res.json()
+        const h = requireHandlers(type)
+        h.setInvestmentPlan(data.run)
+        h.navigate('/scenario')
+        return {
+          success: true,
+          message: `${data.run?.title ?? '投资规划'} 已生成，可在 EcoClaw 查看。`,
+          data: data.run,
+        }
+      }
+
+      case 'run_device_anomaly_dispatch': {
+        const prompt = String(params.prompt ?? params.description ?? '')
+        if (!prompt.trim()) return { success: false, message: '缺少设备异常场景描述' }
+        const res = await fetch(`${API_BASE}/api/anomaly/dispatch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt,
+            eventSpec: {
+              severity: String(params.severity ?? 'critical'),
+              deviceType: params.device_type ?? undefined,
+            },
+            baselineDataset: context?.fullData,
+            baselineMeta: context?.datasetMeta,
+            baselineDatasetId: context?.datasetMeta?.datasetId ?? null,
+            activeStrategy: context?.activeStrategy ?? 'es',
+            source: 'manual',
+          }),
+        })
+        if (!res.ok) throw new Error(await res.text())
+        const data = await res.json()
+        const h = requireHandlers(type)
+        h.setAnomalyPreviewRun(data.run)
+        h.navigate('/scenario')
+        return {
+          success: true,
+          message: `${data.run?.title ?? '设备异常方案'} 已生成，可在 EcoClaw 查看并决定是否应用。`,
           data: data.run,
         }
       }
@@ -169,18 +231,12 @@ export async function executeAction(
         const res = await fetch(`${API_BASE}/api/emergency/runs?limit=${limitNum}`)
         if (!res.ok) throw new Error(await res.text())
         const data = await res.json()
-        return {
-          success: true,
-          message: `获取到 ${Array.isArray(data.data) ? data.data.length : 0} 条应急预案`,
-          data: data.data,
-        }
+        return { success: true, message: `获取到 ${Array.isArray(data.data) ? data.data.length : 0} 条应急预案`, data: data.data }
       }
 
       case 'apply_emergency_run': {
         const runId = Number(params.run_id ?? params.id)
-        if (!Number.isFinite(runId)) {
-          return { success: false, message: '缺少应急预案 ID' }
-        }
+        if (!Number.isFinite(runId)) return { success: false, message: '缺少应急预案 ID' }
         const res = await fetch(`${API_BASE}/api/emergency/runs/${runId}/apply`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -188,37 +244,32 @@ export async function executeAction(
         })
         if (!res.ok) throw new Error(await res.text())
         const data = await res.json()
-        if (handlers && data.run && data.dataset?.data) {
-          handlers.applyEmergencyRunState(data.run, data.dataset.data, data.dataset.meta)
-          handlers.navigate('/scenario')
-        }
-        return {
-          success: true,
-          message: `${data.run?.title ?? `应急预案 ${runId}`} 已应用到全平台展示`,
-          data,
-        }
+        const h = requireHandlers(type)
+        h.applyEmergencyRunState(data.run, data.dataset?.data, data.dataset?.meta)
+        h.navigate('/scenario')
+        return { success: true, message: `${data.run?.title ?? `应急预案 ${runId}`} 已应用到全平台展示`, data }
       }
 
       case 'restore_normal_state': {
-        const runId = Number(params.run_id ?? context?.emergencyRunId ?? NaN)
-        const body = Number.isFinite(runId) ? { runId } : {}
-        const res = await fetch(`${API_BASE}/api/emergency/restore`, {
+        const useAnomaly = Boolean(context?.datasetMeta?.anomalyActive || context?.anomalyRunId)
+        const runId = Number(params.run_id ?? (useAnomaly ? context?.anomalyRunId : context?.emergencyRunId) ?? Number.NaN)
+        const endpoint = useAnomaly ? '/api/anomaly/restore' : '/api/emergency/restore'
+        const res = await fetch(`${API_BASE}${endpoint}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
+          body: JSON.stringify(Number.isFinite(runId) ? { runId } : {}),
         })
         if (!res.ok) throw new Error(await res.text())
         const data = await res.json()
-        if (handlers && data.baselineDataset?.data) {
-          handlers.restoreNormalDatasetState(data.baselineDataset.data, data.baselineDataset.meta)
-          handlers.setEmergencyPreviewRun(data.run ?? null)
-          handlers.navigate('/scenario')
+        const h = requireHandlers(type)
+        h.restoreNormalDatasetState(data.baselineDataset?.data, data.baselineDataset?.meta)
+        if (useAnomaly) {
+          h.setAnomalyPreviewRun(data.run ?? null)
+        } else {
+          h.setEmergencyPreviewRun(data.run ?? null)
         }
-        return {
-          success: true,
-          message: `已恢复到正常展示状态`,
-          data,
-        }
+        h.navigate('/scenario')
+        return { success: true, message: '已恢复到正常展示状态', data }
       }
 
       case 'add_constraint': {
@@ -231,10 +282,9 @@ export async function executeAction(
         })
         if (!res.ok) throw new Error(await res.text())
         const data = await res.json()
-        if (handlers && data.summary) {
-          handlers.loadScenarioDataset(data, desc)
-          handlers.navigate('/scenario')
-        }
+        const h = requireHandlers(type)
+        h.loadScenarioDataset(data, desc)
+        h.navigate('/scenario')
         return { success: true, message: `${desc} 求解完成`, data }
       }
 
@@ -242,48 +292,29 @@ export async function executeAction(
         const strategy = String(params.strategy ?? 'es') as StrategyKey
         const hour = Math.max(1, Math.min(24, Number(params.hour ?? 1)))
         const idx = hour - 1
-
         if (!context?.fullData) {
-          return {
-            success: true,
-            message: `已获取 ${strategy} 方案第 ${hour} 时段的请求，请基于上下文中的完整数据进行因果分析。`,
-            data: { strategy, hour },
-          }
+          return { success: true, message: `已获取 ${strategy} 第 ${hour} 小时的分析请求，请基于上下文完成因果分析。`, data: { strategy, hour } }
         }
 
         const ds = context.fullData
-        const lines: string[] = [
-          `## ${strategy.toUpperCase()} 方案 第 ${hour} 时段的设备状态`,
+        const lines = [
+          `## ${strategy.toUpperCase()} 第 ${hour} 小时设备状态`,
           '',
-          '电力平衡 (kW):',
-          `- P_CA 电解槽: ${ds.P_CA?.[strategy]?.[idx]?.toFixed(0) ?? '-'}`,
-          `- P_PV 光伏: ${ds.P_PV?.[strategy]?.[idx]?.toFixed(0) ?? '-'}`,
-          `- P_GM 燃气轮机: ${ds.P_GM?.[strategy]?.[idx]?.toFixed(0) ?? '-'}`,
-          `- P_PEM 质子膜燃料电池: ${ds.P_PEM?.[strategy]?.[idx]?.toFixed(0) ?? '-'}`,
-          `- P_G 电网购电: ${ds.P_G?.[strategy]?.[idx]?.toFixed(0) ?? '-'}`,
-          `- P_es_es 储能(仅ES): ${ds.P_es_es?.[idx]?.toFixed(0) ?? '-'}`,
-          '',
-          '氢气平衡 (kg/s):',
-          `- H_CA 氯碱制氢: ${ds.H_CA?.[strategy]?.[idx]?.toFixed(4) ?? '-'}`,
-          `- H_PEM PEM制氢: ${ds.H_PEM?.[strategy]?.[idx]?.toFixed(4) ?? '-'}`,
-          `- H_HS 储氢罐: ${ds.H_HS?.[strategy]?.[idx]?.toFixed(3) ?? '-'}`,
-          '',
-          `电网碳排放因子 ef_g: ${ds.ef_g?.[idx]?.toFixed(6) ?? '-'} tCO2/kWh`,
+          `- P_CA: ${ds.P_CA?.[strategy]?.[idx]?.toFixed(0) ?? '-'}`,
+          `- P_PV: ${ds.P_PV?.[strategy]?.[idx]?.toFixed(0) ?? '-'}`,
+          `- P_GM: ${ds.P_GM?.[strategy]?.[idx]?.toFixed(0) ?? '-'}`,
+          `- P_PEM: ${ds.P_PEM?.[strategy]?.[idx]?.toFixed(0) ?? '-'}`,
+          `- P_G: ${ds.P_G?.[strategy]?.[idx]?.toFixed(0) ?? '-'}`,
+          `- P_es_es: ${ds.P_es_es?.[idx]?.toFixed(0) ?? '-'}`,
+          `- H_CA: ${ds.H_CA?.[strategy]?.[idx]?.toFixed(4) ?? '-'}`,
+          `- H_PEM: ${ds.H_PEM?.[strategy]?.[idx]?.toFixed(4) ?? '-'}`,
+          `- H_HS: ${ds.H_HS?.[strategy]?.[idx]?.toFixed(4) ?? '-'}`,
+          `- ef_g: ${ds.ef_g?.[idx]?.toFixed(6) ?? '-'}`,
         ]
-
-        const pg = ds.P_G?.[strategy]
-        if (pg) {
-          const prev = idx > 0 ? pg[idx - 1]?.toFixed(0) : '-'
-          const curr = pg[idx]?.toFixed(0) ?? '-'
-          const next = idx < 23 ? pg[idx + 1]?.toFixed(0) : '-'
-          lines.push('', `相邻时段 P_G 对比 (${hour - 1}h,${hour}h,${hour + 1}h): ${prev}, ${curr}, ${next} kW`)
-        }
-
-        const payload = lines.join('\n')
         return {
           success: true,
-          message: `已获取 ${strategy} 方案第 ${hour} 时段的设备状态数据。`,
-          data: { strategy, hour, deviceState: payload },
+          message: `已获取 ${strategy} 第 ${hour} 小时设备状态数据。`,
+          data: { strategy, hour, deviceState: lines.join('\n') },
         }
       }
 
@@ -299,30 +330,23 @@ export async function executeAction(
         const paramName = String(params.param_name ?? 'n_PV')
         const values = (params.values ?? []) as number[]
         const strategy = String(params.strategy ?? 'cicom')
-
         const results: Array<{ paramValue: number; cost: number; carbon: number; combined: number }> = []
-        for (const val of values) {
+        for (const value of values) {
           const res = await fetch(`${API_BASE}/api/optimize/single`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ strategy, params: { [paramName]: val } }),
+            body: JSON.stringify({ strategy, params: { [paramName]: value } }),
           })
-          if (res.ok) {
-            const r = await res.json()
-            results.push({ paramValue: val, ...r.summary })
-          }
+          if (!res.ok) continue
+          const result = await res.json()
+          results.push({ paramValue: value, ...result.summary })
         }
         const paretoPayload: ParetoData = { param_name: paramName, strategy, results }
-        const label = `Pareto 扫描: ${paramName} (${Math.min(...values)}-${Math.max(...values)})，策略=${strategy}`
-        if (handlers && results.length > 0) {
-          handlers.loadParetoData(paretoPayload, label)
-          handlers.navigate('/scenario')
-        }
-        return {
-          success: true,
-          message: `Pareto 扫描完成: ${paramName} 取 ${values.length} 个值，策略=${strategy}`,
-          data: paretoPayload,
-        }
+        const label = `Pareto 扫描: ${paramName} (${Math.min(...values)}-${Math.max(...values)})`
+        const h = requireHandlers(type)
+        h.loadParetoData(paretoPayload, label)
+        h.navigate('/scenario')
+        return { success: true, message: `Pareto 扫描完成: ${paramName}`, data: paretoPayload }
       }
 
       case 'get_realtime_data': {
@@ -333,11 +357,7 @@ export async function executeAction(
         const res = await fetch(url)
         if (!res.ok) throw new Error(await res.text())
         const data = await res.json()
-        return {
-          success: true,
-          message: `已获取${date ? ` ${date} 的` : '最新'}实时数据`,
-          data,
-        }
+        return { success: true, message: `已获取${date ? ` ${date}` : ''}实时数据`, data }
       }
 
       case 'get_alerts': {
@@ -348,11 +368,7 @@ export async function executeAction(
         const res = await fetch(url)
         if (!res.ok) throw new Error(await res.text())
         const data = await res.json()
-        return {
-          success: true,
-          message: `获取到 ${Array.isArray(data) ? data.length : 0} 条预警`,
-          data,
-        }
+        return { success: true, message: `获取到 ${Array.isArray(data) ? data.length : 0} 条预警`, data }
       }
 
       case 'carbon_electricity_analysis': {
@@ -360,26 +376,25 @@ export async function executeAction(
         if (!res.ok) throw new Error(await res.text())
         const data = await res.json()
         const prices: number[] = data.prices || []
-        const carbons: number[] = data.carbon || []
-        // 计算有效电力成本 P_eff = price + carbon * carbon_price（碳价按 70 元/tCO2 估算）
-        const CARBON_PRICE = 70
-        const pEff = prices.map((p: number, i: number) => p + (carbons[i] || 0) * CARBON_PRICE)
-        const minHour = pEff.indexOf(Math.min(...pEff))
-        const maxHour = pEff.indexOf(Math.max(...pEff))
+        const carbon: number[] = data.carbon || []
+        const carbonPrice = Number(params.carbon_price ?? 70)
+        const pEff = prices.map((price, index) => price + (carbon[index] || 0) * carbonPrice)
+        const bestIndex = pEff.indexOf(Math.min(...pEff))
+        const worstIndex = pEff.indexOf(Math.max(...pEff))
         return {
           success: true,
-          message: `碳电联合分析完成: 最优时段=${minHour + 1}h (P_eff=${pEff[minHour]?.toFixed(3)}), 最贵时段=${maxHour + 1}h (P_eff=${pEff[maxHour]?.toFixed(3)})`,
-          data: { prices, carbon: carbons, p_eff: pEff, best_hour: minHour + 1, worst_hour: maxHour + 1 },
+          message: `碳电协同分析完成: 最优时段 ${bestIndex + 1}h，最差时段 ${worstIndex + 1}h`,
+          data: { prices, carbon, p_eff: pEff, best_hour: bestIndex + 1, worst_hour: worstIndex + 1 },
         }
       }
 
       default:
         return { success: false, message: `未知动作类型: ${type}` }
     }
-  } catch (e) {
+  } catch (error) {
     return {
       success: false,
-      message: `执行失败: ${e instanceof Error ? e.message : String(e)}`,
+      message: `执行失败: ${error instanceof Error ? error.message : String(error)}`,
     }
   }
 }

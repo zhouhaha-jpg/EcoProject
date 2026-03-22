@@ -1,7 +1,3 @@
--- EcoProject 数据集存储
--- 前缀: ca=电解槽, pv=光伏, gm=燃气轮机, pem=质子膜燃料电池, g=电网
--- 后缀: uci, cicos, cicar, cicom, pv, es
-
 CREATE TABLE IF NOT EXISTS datasets (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL DEFAULT '默认数据集',
@@ -11,7 +7,6 @@ CREATE TABLE IF NOT EXISTS datasets (
 
 CREATE INDEX IF NOT EXISTS idx_datasets_created ON datasets(created_at DESC);
 
--- AI Agent 对话历史
 CREATE TABLE IF NOT EXISTS conversations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL DEFAULT '新对话',
@@ -34,9 +29,6 @@ CREATE TABLE IF NOT EXISTS conversation_messages (
 CREATE INDEX IF NOT EXISTS idx_conv_msgs_cid ON conversation_messages(conversation_id);
 CREATE INDEX IF NOT EXISTS idx_conversations_updated ON conversations(updated_at DESC);
 
--- ══════════════════════════════════════════════════════════
---  实时/历史外部数据存储
--- ══════════════════════════════════════════════════════════
 CREATE TABLE IF NOT EXISTS realtime_data (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   data_date TEXT NOT NULL,
@@ -58,7 +50,6 @@ CREATE TABLE IF NOT EXISTS realtime_data (
 CREATE INDEX IF NOT EXISTS idx_rt_date ON realtime_data(data_date);
 CREATE INDEX IF NOT EXISTS idx_rt_date_hour ON realtime_data(data_date, hour);
 
--- 数据源健康状态
 CREATE TABLE IF NOT EXISTS data_source_health (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   source_name TEXT NOT NULL UNIQUE,
@@ -69,7 +60,6 @@ CREATE TABLE IF NOT EXISTS data_source_health (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- Agent 预警事件日志
 CREATE TABLE IF NOT EXISTS alert_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   event_type TEXT NOT NULL,
@@ -81,7 +71,6 @@ CREATE TABLE IF NOT EXISTS alert_events (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- 应急调度预案
 CREATE TABLE IF NOT EXISTS emergency_runs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   title TEXT NOT NULL,
@@ -103,19 +92,48 @@ CREATE TABLE IF NOT EXISTS emergency_runs (
 CREATE INDEX IF NOT EXISTS idx_emergency_runs_created ON emergency_runs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_emergency_runs_status ON emergency_runs(status, created_at DESC);
 
--- 园区配置（坐标等）
+CREATE TABLE IF NOT EXISTS investment_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'manual',
+  baseline_dataset_id INTEGER,
+  plan_payload TEXT NOT NULL,
+  explanation TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_investment_runs_created ON investment_runs(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS anomaly_runs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'manual',
+  severity TEXT NOT NULL DEFAULT 'warning',
+  status TEXT NOT NULL DEFAULT 'planned',
+  baseline_dataset_id INTEGER,
+  anomaly_dataset_id INTEGER,
+  baseline_payload TEXT,
+  event_spec TEXT NOT NULL,
+  detail_payload TEXT NOT NULL,
+  explanation TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  applied_at DATETIME,
+  restored_at DATETIME
+);
+
+CREATE INDEX IF NOT EXISTS idx_anomaly_runs_created ON anomaly_runs(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_anomaly_runs_status ON anomaly_runs(status, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS park_config (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
--- 插入默认园区坐标（杭州）
 INSERT OR IGNORE INTO park_config (key, value) VALUES ('latitude', '30.26');
 INSERT OR IGNORE INTO park_config (key, value) VALUES ('longitude', '120.19');
 INSERT OR IGNORE INTO park_config (key, value) VALUES ('park_name', '杭州示范园区');
 
--- 插入默认数据源健康状态
 INSERT OR IGNORE INTO data_source_health (source_name, status) VALUES ('solar', 'ok');
 INSERT OR IGNORE INTO data_source_health (source_name, status) VALUES ('price', 'ok');
 INSERT OR IGNORE INTO data_source_health (source_name, status) VALUES ('carbon', 'ok');

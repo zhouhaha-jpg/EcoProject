@@ -1,5 +1,13 @@
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
-import type { StrategyContextValue, StrategyKey, EcoDataset, DatasetMeta, EmergencyRun } from '@/types'
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
+import type {
+  AnomalyRun,
+  DatasetMeta,
+  EcoDataset,
+  EmergencyRun,
+  InvestmentRun,
+  StrategyContextValue,
+  StrategyKey,
+} from '@/types'
 import { DATASET, STRATEGY_META } from '@/data/realData'
 import { fetchDisplayDataset } from '@/lib/api'
 
@@ -26,7 +34,7 @@ const FALLBACK_META: DatasetMeta = {
   datasetName: '本地种子数据',
 }
 
-const StrategyContext = createContext<(StrategyContextValue & {
+type ExtendedStrategyContext = StrategyContextValue & {
   loadScenarioDataset: (ds: Record<string, unknown>, label: string) => void
   scenarioLabel: string | null
   scenarioDataset: EcoDataset | null
@@ -41,17 +49,23 @@ const StrategyContext = createContext<(StrategyContextValue & {
   emergencyActiveRun: EmergencyRun | null
   setEmergencyPreviewRun: (run: EmergencyRun | null) => void
   applyEmergencyRunState: (run: EmergencyRun, dataset?: Record<string, unknown>, meta?: DatasetMeta) => void
+  investmentPlan: InvestmentRun | null
+  setInvestmentPlan: (run: InvestmentRun | null) => void
+  anomalyPreviewRun: AnomalyRun | null
+  anomalyActiveRun: AnomalyRun | null
+  setAnomalyPreviewRun: (run: AnomalyRun | null) => void
+  applyAnomalyRunState: (run: AnomalyRun, dataset?: Record<string, unknown>, meta?: DatasetMeta) => void
   restoreNormalDatasetState: (data?: Record<string, unknown>, meta?: DatasetMeta) => void
   resetWorkspaceState: (options?: { restoreDisplay?: boolean }) => void
-}) | null>(null)
+}
+
+const StrategyContext = createContext<ExtendedStrategyContext | null>(null)
 
 const ALL_STRATEGIES: StrategyKey[] = ['uci', 'cicos', 'cicar', 'cicom', 'pv', 'es']
 
 export function StrategyProvider({ children }: { children: ReactNode }) {
   const [activeStrategy, setActiveStrategy] = useState<StrategyKey>('uci')
-  const [selectedStrategies, setSelectedStrategies] = useState<Set<StrategyKey>>(
-    () => new Set(ALL_STRATEGIES)
-  )
+  const [selectedStrategies, setSelectedStrategies] = useState<Set<StrategyKey>>(() => new Set(ALL_STRATEGIES))
   const [currentTime, setCurrentTime] = useState(new Date())
   const [dataset, setDataset] = useState(DATASET)
   const [datasetMeta, setDatasetMeta] = useState<DatasetMeta>(FALLBACK_META)
@@ -63,6 +77,9 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
   const [paretoLabel, setParetoLabel] = useState<string | null>(null)
   const [emergencyPreviewRun, setEmergencyPreviewRun] = useState<EmergencyRun | null>(null)
   const [emergencyActiveRun, setEmergencyActiveRun] = useState<EmergencyRun | null>(null)
+  const [investmentPlan, setInvestmentPlan] = useState<InvestmentRun | null>(null)
+  const [anomalyPreviewRun, setAnomalyPreviewRun] = useState<AnomalyRun | null>(null)
+  const [anomalyActiveRun, setAnomalyActiveRun] = useState<AnomalyRun | null>(null)
   const [normalDatasetBackup, setNormalDatasetBackup] = useState<{ data: EcoDataset; meta: DatasetMeta } | null>(null)
 
   const toggleStrategy = (key: StrategyKey) => {
@@ -91,7 +108,7 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
       applyDisplayDataset(data, meta)
       setDatasetError(null)
     } catch (err) {
-      console.warn('[StrategyContext] 实时展示数据不可用，使用本地数据:', err instanceof Error ? err.message : err)
+      console.warn('[StrategyContext] display dataset unavailable, using seed:', err instanceof Error ? err.message : err)
       setDataset(DATASET)
       setDatasetMeta(FALLBACK_META)
       setDatasetError(err instanceof Error ? err.message : String(err))
@@ -119,39 +136,46 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
     setScenarioLabel(label)
     setParetoData(null)
     setParetoLabel(null)
-    if (!emergencyActiveRun) {
-      setEmergencyPreviewRun(null)
-    }
-  }, [emergencyActiveRun])
+    setInvestmentPlan(null)
+    if (!emergencyActiveRun) setEmergencyPreviewRun(null)
+    if (!anomalyActiveRun) setAnomalyPreviewRun(null)
+  }, [anomalyActiveRun, emergencyActiveRun])
 
   const loadParetoData = useCallback((data: ParetoData, label: string) => {
     const results = data.results
     if (results.length < 2) {
       setParetoData({ ...data, optimalRange: undefined, suggestion: undefined })
       setParetoLabel(label)
+      setScenarioDataset(null)
+      setScenarioLabel(null)
+      setInvestmentPlan(null)
       return
     }
     const sorted = [...results].sort((a, b) => a.paramValue - b.paramValue)
-    const paretoOptimal = sorted.filter((p, i) => {
-      return !sorted.some((q, j) => j !== i && q.cost <= p.cost && q.carbon <= p.carbon && (q.cost < p.cost || q.carbon < p.carbon))
-    })
+    const paretoOptimal = sorted.filter((point, index) => (
+      !sorted.some((other, otherIndex) => otherIndex !== index
+        && other.cost <= point.cost
+        && other.carbon <= point.carbon
+        && (other.cost < point.cost || other.carbon < point.carbon))
+    ))
     const byCombined = [...results].sort((a, b) => a.combined - b.combined)
     const topCombined = (paretoOptimal.length > 0 ? paretoOptimal : byCombined).slice(0, Math.max(1, Math.ceil(results.length * 0.4)))
-    const minPv = Math.min(...topCombined.map((r) => r.paramValue))
-    const maxPv = Math.max(...topCombined.map((r) => r.paramValue))
-    const optimalRange = { min: minPv, max: maxPv }
-    const suggestion =
-      minPv === maxPv
-        ? `建议 ${data.param_name}=${minPv}，综合指标最优`
-        : `建议 ${data.param_name}=${minPv}-${maxPv}，是成本-碳排的较优平衡区间`
-    setParetoData({ ...data, optimalRange, suggestion })
+    const minPv = Math.min(...topCombined.map((result) => result.paramValue))
+    const maxPv = Math.max(...topCombined.map((result) => result.paramValue))
+    setParetoData({
+      ...data,
+      optimalRange: { min: minPv, max: maxPv },
+      suggestion: minPv === maxPv
+        ? `建议 ${data.param_name}=${minPv}，综合指标最优。`
+        : `建议 ${data.param_name}=${minPv}-${maxPv}，是成本与碳排的较优平衡区间。`,
+    })
     setParetoLabel(label)
     setScenarioDataset(null)
     setScenarioLabel(null)
-    if (!emergencyActiveRun) {
-      setEmergencyPreviewRun(null)
-    }
-  }, [emergencyActiveRun])
+    setInvestmentPlan(null)
+    if (!emergencyActiveRun) setEmergencyPreviewRun(null)
+    if (!anomalyActiveRun) setAnomalyPreviewRun(null)
+  }, [anomalyActiveRun, emergencyActiveRun])
 
   const updateDataset = useCallback((data: Record<string, unknown>, meta?: DatasetMeta) => {
     applyDisplayDataset(data, meta)
@@ -159,11 +183,7 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
 
   const applyEmergencyRunState = useCallback((run: EmergencyRun, data?: Record<string, unknown>, meta?: DatasetMeta) => {
     const nextDataset = (data ?? run.emergencyDataset?.data) as EcoDataset | undefined
-    const nextMeta = (meta
-      ?? run.emergencyDataset?.meta
-      ?? nextDataset?._meta
-      ?? {}) as DatasetMeta
-
+    const nextMeta = (meta ?? run.emergencyDataset?.meta ?? nextDataset?._meta ?? {}) as DatasetMeta
     if (!nextDataset) return
 
     setNormalDatasetBackup((current) => current ?? { data: dataset, meta: datasetMeta })
@@ -171,6 +191,9 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
     setScenarioLabel(null)
     setParetoData(null)
     setParetoLabel(null)
+    setInvestmentPlan(null)
+    setAnomalyPreviewRun(null)
+    setAnomalyActiveRun(null)
     applyDisplayDataset(nextDataset as unknown as Record<string, unknown>, {
       ...nextMeta,
       datasetType: 'emergency',
@@ -178,11 +201,40 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
       emergencyRunId: run.id,
       baselineDatasetId: run.baselineDatasetId ?? nextMeta.baselineDatasetId ?? null,
       emergencyTitle: run.title,
-      isHistorical: false,
       emergencyMode: 'single',
+      anomalyActive: false,
+      anomalyRunId: null,
+      anomalyTitle: '',
     })
     setEmergencyActiveRun(run)
     setEmergencyPreviewRun(run)
+  }, [applyDisplayDataset, dataset, datasetMeta])
+
+  const applyAnomalyRunState = useCallback((run: AnomalyRun, data?: Record<string, unknown>, meta?: DatasetMeta) => {
+    const nextDataset = (data ?? run.anomalyDataset?.data) as EcoDataset | undefined
+    const nextMeta = (meta ?? run.anomalyDataset?.meta ?? nextDataset?._meta ?? {}) as DatasetMeta
+    if (!nextDataset) return
+
+    setNormalDatasetBackup((current) => current ?? { data: dataset, meta: datasetMeta })
+    setScenarioDataset(null)
+    setScenarioLabel(null)
+    setParetoData(null)
+    setParetoLabel(null)
+    setInvestmentPlan(null)
+    setEmergencyPreviewRun(null)
+    setEmergencyActiveRun(null)
+    applyDisplayDataset(nextDataset as unknown as Record<string, unknown>, {
+      ...nextMeta,
+      datasetType: 'anomaly',
+      anomalyActive: true,
+      anomalyRunId: run.id,
+      anomalyTitle: run.title,
+      emergencyActive: false,
+      emergencyRunId: null,
+      emergencyTitle: '',
+    })
+    setAnomalyActiveRun(run)
+    setAnomalyPreviewRun(run)
   }, [applyDisplayDataset, dataset, datasetMeta])
 
   const restoreNormalDatasetState = useCallback((data?: Record<string, unknown>, meta?: DatasetMeta) => {
@@ -190,13 +242,18 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
     const nextDataset = (data as EcoDataset | undefined) ?? fallback?.data
     const nextMeta = meta ?? fallback?.meta
     if (!nextDataset || !nextMeta) return
+
     applyDisplayDataset(nextDataset as unknown as Record<string, unknown>, {
       ...nextMeta,
       emergencyActive: false,
       emergencyRunId: null,
       emergencyTitle: '',
+      anomalyActive: false,
+      anomalyRunId: null,
+      anomalyTitle: '',
     })
     setEmergencyActiveRun(null)
+    setAnomalyActiveRun(null)
     setNormalDatasetBackup(null)
   }, [applyDisplayDataset, normalDatasetBackup])
 
@@ -205,30 +262,30 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
     setScenarioLabel(null)
     setParetoData(null)
     setParetoLabel(null)
+    setInvestmentPlan(null)
     setEmergencyPreviewRun(null)
-    if (options?.restoreDisplay && (datasetMeta.emergencyActive || emergencyActiveRun)) {
+    setAnomalyPreviewRun(null)
+    if (options?.restoreDisplay && (datasetMeta.emergencyActive || emergencyActiveRun || datasetMeta.anomalyActive || anomalyActiveRun)) {
       restoreNormalDatasetState()
     }
-  }, [datasetMeta.emergencyActive, emergencyActiveRun, restoreNormalDatasetState])
+  }, [anomalyActiveRun, datasetMeta.anomalyActive, datasetMeta.emergencyActive, emergencyActiveRun, restoreNormalDatasetState])
 
   useEffect(() => {
-    loadLatestDataset()
+    void loadLatestDataset()
   }, [loadLatestDataset])
 
   useEffect(() => {
-    if (datasetMeta.isHistorical || datasetMeta.emergencyActive) return
+    if (datasetMeta.isHistorical || datasetMeta.emergencyActive || datasetMeta.anomalyActive) return
 
     const refresh = () => {
-      loadLatestDataset().catch(() => {
-        // keep the last visible dataset on transient failures
+      void loadLatestDataset().catch(() => {
+        // keep last visible dataset on transient failures
       })
     }
 
     const interval = setInterval(refresh, 2 * 60 * 1000)
     const handleVisibility = () => {
-      if (document.visibilityState === 'visible') {
-        refresh()
-      }
+      if (document.visibilityState === 'visible') refresh()
     }
 
     window.addEventListener('focus', refresh)
@@ -239,7 +296,7 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('focus', refresh)
       document.removeEventListener('visibilitychange', handleVisibility)
     }
-  }, [datasetMeta.emergencyActive, datasetMeta.isHistorical, loadLatestDataset])
+  }, [datasetMeta.anomalyActive, datasetMeta.emergencyActive, datasetMeta.isHistorical, loadLatestDataset])
 
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000)
@@ -271,6 +328,12 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
       emergencyActiveRun,
       setEmergencyPreviewRun,
       applyEmergencyRunState,
+      investmentPlan,
+      setInvestmentPlan,
+      anomalyPreviewRun,
+      anomalyActiveRun,
+      setAnomalyPreviewRun,
+      applyAnomalyRunState,
       restoreNormalDatasetState,
       resetWorkspaceState,
     }}>

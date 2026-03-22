@@ -48,6 +48,9 @@ export interface DatasetMeta {
   emergencyActive?: boolean
   emergencyTitle?: string
   emergencyMode?: 'single' | string
+  anomalyRunId?: number | null
+  anomalyActive?: boolean
+  anomalyTitle?: string
 }
 
 export type ServerLogLevel = 'info' | 'warn' | 'ok' | 'err'
@@ -324,6 +327,155 @@ export interface EmergencyRun {
   baselinePayload?: EmergencyDatasetRef | null
   baselineDataset?: EmergencyDatasetRef | null
   emergencyDataset?: EmergencyDatasetRef | null
+}
+
+export interface InvestmentAssumptions {
+  capexPerModule: number
+  opexRate: number
+  annualDegradation: number
+  lifespanYears: number
+  carbonPrice: number
+  discountRate: number
+  inverterReserveFactor: number
+}
+
+export interface InvestmentYearCashflow {
+  year: number
+  annualEnergy: number
+  savings: number
+  carbonRevenue: number
+  opex: number
+  netCashflow: number
+  cumulativeCashflow: number
+}
+
+export interface InvestmentPlanResult {
+  type: 'pv_roi' | string
+  prompt: string
+  assumptions: InvestmentAssumptions
+  summary: {
+    currentModules: number
+    targetModules: number
+    deltaModules: number
+    currentDailyGeneration: number
+    targetDailyGeneration: number
+    deltaDailyGeneration: number
+    additionalCapex: number
+    annualSavings: number
+    annualCarbonRevenue: number
+    annualOpex: number
+    paybackYears: number | null
+    viewDate: string
+    activeStrategy: StrategyKey | string
+  }
+  beforeAfter: {
+    annualCost: { before: number; after: number }
+    annualCarbon: { before: number; after: number }
+    dailyGeneration: { before: number; after: number }
+  }
+  yearlyCashflow: InvestmentYearCashflow[]
+  report: string
+}
+
+export interface InvestmentRun {
+  id: number
+  title: string
+  source: string
+  baselineDatasetId?: number | null
+  payload: InvestmentPlanResult
+  explanation: string
+  createdAt: string
+}
+
+export interface AnomalyEventSpec {
+  title: string
+  deviceType: 'gm' | 'pem' | 'ca' | string
+  anomalyType: string
+  severity: 'warning' | 'critical' | string
+  startHour: number
+  durationHours: number
+  triggerSource: 'demo_injection' | 'rule_detection' | string
+  observedIndicators: Array<{
+    name: string
+    unit: string
+    threshold: number
+    current: number
+  }>
+  dispatchGoal: string
+  rawPrompt?: string
+}
+
+export interface AnomalyIndicatorPoint {
+  label: string
+  timestamp: string
+  name: string
+  unit: string
+  value: number
+  threshold: number
+}
+
+export interface AnomalyDispatchDetail {
+  labels: string[]
+  series: {
+    P_CA: number[]
+    P_PV: number[]
+    P_GM: number[]
+    P_PEM: number[]
+    P_G: number[]
+    P_es_es: number[]
+    gap: number[]
+  }
+  points: EmergencyPointDetail[]
+  baselineSeries?: {
+    P_CA: number[]
+    P_PV: number[]
+    P_GM: number[]
+    P_PEM: number[]
+    P_G: number[]
+    P_es_es: number[]
+  }
+  indicatorSeries: AnomalyIndicatorPoint[]
+  summary: {
+    deviceType: string
+    anomalyType: string
+    severity: string
+    peakGap: number
+    affectedDrop: number
+    gmLift: number
+    pemLift: number
+    storageLift: number
+  }
+  timeline: EmergencyTimelineItem[]
+  riskMatrix: EmergencyRiskCell[]
+  moduleStatus: EmergencyModuleStatus[]
+  actions: string[]
+  explanation: string
+}
+
+export interface AnomalyDatasetRef {
+  id?: number | null
+  name?: string
+  data: EcoDataset
+  meta?: DatasetMeta
+}
+
+export interface AnomalyRun {
+  id: number
+  title: string
+  source: string
+  severity: string
+  status: 'planned' | 'applied' | 'restored' | string
+  baselineDatasetId?: number | null
+  anomalyDatasetId?: number | null
+  eventSpec: AnomalyEventSpec
+  detailPayload: AnomalyDispatchDetail
+  explanation: string
+  createdAt: string
+  appliedAt?: string | null
+  restoredAt?: string | null
+  baselinePayload?: AnomalyDatasetRef | null
+  baselineDataset?: AnomalyDatasetRef | null
+  anomalyDataset?: AnomalyDatasetRef | null
 }
 
 /** 设备健康数据 */

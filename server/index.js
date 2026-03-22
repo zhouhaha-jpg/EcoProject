@@ -18,6 +18,8 @@ import optimizeRouter from './routes/optimize.js'
 import conversationsRouter from './routes/conversations.js'
 import realtimeRouter from './routes/realtime.js'
 import createEmergencyRouter from './routes/emergency.js'
+import investmentRouter from './routes/investment.js'
+import anomalyRouter from './routes/anomaly.js'
 import { mountWebSocket, pushServerLog } from './ws.js'
 import { refreshRealtimeCycle } from './services/realtimeRefresh.js'
 import { createEmergencyDispatch } from './services/emergencyDispatch.js'
@@ -32,6 +34,8 @@ app.use('/api/datasets', datasetsRouter)
 app.use('/api/optimize', optimizeRouter)
 app.use('/api/conversations', conversationsRouter)
 app.use('/api/realtime', realtimeRouter)
+app.use('/api/investment', investmentRouter)
+app.use('/api/anomaly', anomalyRouter)
 
 const apiKey = config.apiKey
 const baseURL = process.env.API_BASE_URL || config.apiBaseUrl
@@ -114,6 +118,13 @@ const AGENT_SYSTEM_PROMPT = SYSTEM_PROMPT + `
 
 当检测到市场异动时，你应主动分析其对当前调度方案的影响，并建议用户是否需要查看或应用新生成的应急预案。`
 
+const TOOL_ROUTING_APPENDIX = `
+When the user asks about PV expansion ROI, payback years, investment return, or how long it takes to recover the investment, prefer run_investment_planning.
+When the user asks about gas turbine / PEM / electrolyzer temperature, pressure, current anomalies, or equipment fault handling, prefer run_device_anomaly_dispatch instead of run_emergency_dispatch.
+`
+
+const AGENT_SYSTEM_PROMPT_ENHANCED = AGENT_SYSTEM_PROMPT + TOOL_ROUTING_APPENDIX
+
 const TOOLS = [
   {
     type: 'function',
@@ -175,6 +186,38 @@ const TOOLS = [
         properties: {
           prompt: { type: 'string', description: '用户描述的应急场景原文' },
           severity: { type: 'string', enum: ['warning', 'critical'], description: '预案严重度，默认 critical' },
+        },
+        required: ['prompt'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_investment_planning',
+      description: '生成光伏扩容投资建设规划，用于回答扩容后几年回本、年度收益、累计现金流等问题。优先用于“光伏组件从 2000 增加到 5000 多久回本”这类问题。',
+      parameters: {
+        type: 'object',
+        properties: {
+          prompt: { type: 'string', description: '用户原始投资问题' },
+          target_modules: { type: 'number', description: '可选，目标光伏组件数量' },
+          current_modules: { type: 'number', description: '可选，当前光伏组件数量' },
+        },
+        required: ['prompt'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'run_device_anomaly_dispatch',
+      description: '生成设备异常指挥方案。适用于燃机温度异常、PEM 压力异常、电解槽槽压/槽电流异常等场景，输出 4 小时联动调度曲线和异常处置方案。',
+      parameters: {
+        type: 'object',
+        properties: {
+          prompt: { type: 'string', description: '用户描述的设备异常场景' },
+          severity: { type: 'string', enum: ['warning', 'critical'], description: '异常严重度' },
+          device_type: { type: 'string', enum: ['gm', 'pem', 'ca'], description: '可选，异常设备类型' },
         },
         required: ['prompt'],
       },
@@ -445,7 +488,7 @@ app.post('/api/chat', async (req, res) => {
     ? `\n\n## 当前上下文\n${context}\n`
     : ''
 
-  const systemContent = (mode === 'agent' ? AGENT_SYSTEM_PROMPT : SYSTEM_PROMPT) + contextBlock
+  const systemContent = (mode === 'agent' ? AGENT_SYSTEM_PROMPT_ENHANCED : SYSTEM_PROMPT) + contextBlock
 
   const mapMessage = (m) => {
     const base = { role: m.role, content: m.content ?? '' }

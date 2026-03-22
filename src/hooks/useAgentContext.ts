@@ -20,6 +20,7 @@ export interface AgentContextData {
   fullData: EcoDataset
   datasetMeta: DatasetMeta
   emergencyRunId: number | null
+  anomalyRunId: number | null
 }
 
 const PAGE_LABELS: Record<string, string> = {
@@ -69,6 +70,7 @@ export function useAgentContext(): AgentContextData {
     fullData: dataset,
     datasetMeta,
     emergencyRunId: emergencyActiveRun?.id ?? datasetMeta.emergencyRunId ?? null,
+    anomalyRunId: datasetMeta.anomalyRunId ?? null,
   }
 }
 
@@ -97,6 +99,7 @@ export function formatContextForLLM(ctx: AgentContextData): string {
     `- snapshotAt=${ctx.datasetMeta.snapshotAt}`,
     `- isHistorical=${ctx.datasetMeta.isHistorical}`,
     `- emergencyRunId=${ctx.emergencyRunId ?? 'null'}`,
+    `- anomalyRunId=${ctx.anomalyRunId ?? 'null'}`,
     '',
     `## 电解槽负荷统计 P_CA`,
     ...ALL.map((k) => {

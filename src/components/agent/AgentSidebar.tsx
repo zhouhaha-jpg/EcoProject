@@ -19,12 +19,14 @@ import {
   deleteConversation,
   updateConversationWorkspace,
   fetchEmergencyRun,
+  fetchInvestmentRun,
+  fetchAnomalyRun,
 } from '@/lib/api'
 import { applyEmergencyRunApi } from '@/lib/api'
 import type { ConversationItem, ConversationWorkspaceState } from '@/lib/api'
 import type { ChatMessage } from '@/hooks/useAgentChat'
 import type { RealtimeState, ShadowOptimization } from '@/hooks/useRealtimeData'
-import type { EmergencyRun } from '@/types'
+import type { AnomalyRun, EmergencyRun, InvestmentRun } from '@/types'
 
 const CONVERSATION_STORAGE_KEY = 'eco-agent-current-conversation-id'
 
@@ -47,7 +49,11 @@ function buildWorkspaceState(args: {
   paretoLabel: string | null
   emergencyPreviewRun: EmergencyRun | null
   emergencyActiveRun: EmergencyRun | null
+  investmentPlan: InvestmentRun | null
+  anomalyPreviewRun: AnomalyRun | null
+  anomalyActiveRun: AnomalyRun | null
   datasetMetaEmergency: boolean | undefined
+  datasetMetaAnomaly: boolean | undefined
 }): ConversationWorkspaceState {
   const currentEmergency = args.emergencyPreviewRun ?? args.emergencyActiveRun
   if (currentEmergency) {
@@ -57,6 +63,27 @@ function buildWorkspaceState(args: {
       emergencyRunId: currentEmergency.id,
       emergencyApplied: Boolean(args.datasetMetaEmergency && args.emergencyActiveRun && args.emergencyActiveRun.id === currentEmergency.id),
       selectedPointIndex: null,
+      savedAt: new Date().toISOString(),
+    }
+  }
+
+  const currentAnomaly = args.anomalyPreviewRun ?? args.anomalyActiveRun
+  if (currentAnomaly) {
+    return {
+      pageType: 'anomaly',
+      route: '/scenario',
+      anomalyRunId: currentAnomaly.id,
+      anomalyApplied: Boolean(args.datasetMetaAnomaly && args.anomalyActiveRun && args.anomalyActiveRun.id === currentAnomaly.id),
+      savedAt: new Date().toISOString(),
+    }
+  }
+
+  if (args.investmentPlan) {
+    return {
+      pageType: 'investment',
+      route: '/scenario',
+      investmentRunId: args.investmentPlan.id,
+      investmentPayload: { run: args.investmentPlan },
       savedAt: new Date().toISOString(),
     }
   }
@@ -104,9 +131,15 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
     paretoLabel,
     emergencyPreviewRun,
     emergencyActiveRun,
+    investmentPlan,
+    setInvestmentPlan,
+    anomalyPreviewRun,
+    anomalyActiveRun,
     datasetMeta,
     setEmergencyPreviewRun,
     applyEmergencyRunState,
+    setAnomalyPreviewRun,
+    applyAnomalyRunState,
     restoreNormalDatasetState,
     resetWorkspaceState,
   } = useStrategy()
@@ -174,6 +207,36 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
       return
     }
 
+    if (workspaceState.pageType === 'anomaly' && workspaceState.anomalyRunId) {
+      try {
+        const run = await fetchAnomalyRun(workspaceState.anomalyRunId)
+        if (workspaceState.anomalyApplied) {
+          applyAnomalyRunState(run, run.anomalyDataset?.data as unknown as Record<string, unknown> | undefined, run.anomalyDataset?.meta)
+        } else {
+          setAnomalyPreviewRun(run)
+        }
+        navigate(workspaceState.route || '/scenario')
+      } catch (error) {
+        console.warn('[restore anomaly workspace]', error)
+      }
+      return
+    }
+
+    if (workspaceState.pageType === 'investment') {
+      try {
+        const run = workspaceState.investmentRunId
+          ? await fetchInvestmentRun(workspaceState.investmentRunId)
+          : workspaceState.investmentPayload?.run ?? null
+        if (run) {
+          setInvestmentPlan(run)
+          navigate(workspaceState.route || '/scenario')
+        }
+      } catch (error) {
+        console.warn('[restore investment workspace]', error)
+      }
+      return
+    }
+
     if (workspaceState.pageType === 'scenario' && workspaceState.scenarioPayload) {
       loadScenarioDataset(workspaceState.scenarioPayload.dataset, workspaceState.scenarioPayload.label)
       navigate(workspaceState.route || '/scenario')
@@ -184,7 +247,7 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
       loadParetoData(workspaceState.paretoPayload.data as unknown as ParetoData, workspaceState.paretoPayload.label)
       navigate(workspaceState.route || '/scenario')
     }
-  }, [applyEmergencyRunState, loadParetoData, loadScenarioDataset, navigate, resetWorkspaceState, setEmergencyPreviewRun])
+  }, [applyAnomalyRunState, applyEmergencyRunState, loadParetoData, loadScenarioDataset, navigate, resetWorkspaceState, setAnomalyPreviewRun, setEmergencyPreviewRun, setInvestmentPlan])
 
   const handleSelectConversation = useCallback(
     async (id: number) => {
@@ -266,11 +329,14 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
       loadParetoData,
       setEmergencyPreviewRun,
       applyEmergencyRunState,
+      setInvestmentPlan,
+      setAnomalyPreviewRun,
+      applyAnomalyRunState,
       restoreNormalDatasetState,
     }
     handlers_ref.current = h
     registerAgentHandlers(h)
-  }, [navigate, setActiveStrategy, loadScenarioDataset, loadParetoData, setEmergencyPreviewRun, applyEmergencyRunState, restoreNormalDatasetState])
+  }, [navigate, setActiveStrategy, loadScenarioDataset, loadParetoData, setEmergencyPreviewRun, applyEmergencyRunState, setInvestmentPlan, setAnomalyPreviewRun, applyAnomalyRunState, restoreNormalDatasetState])
 
   useEffect(() => {
     if (currentConversationId == null) return
@@ -283,7 +349,11 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
         paretoLabel,
         emergencyPreviewRun,
         emergencyActiveRun,
+        investmentPlan,
+        anomalyPreviewRun,
+        anomalyActiveRun,
         datasetMetaEmergency: datasetMeta.emergencyActive,
+        datasetMetaAnomaly: datasetMeta.anomalyActive,
       })
       updateConversationWorkspace(currentConversationId, workspaceState).catch((error) => {
         console.warn('[save workspace]', error)
@@ -295,10 +365,14 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
     datasetMeta.emergencyActive,
     emergencyActiveRun,
     emergencyPreviewRun,
+    investmentPlan,
+    anomalyActiveRun,
+    anomalyPreviewRun,
     paretoData,
     paretoLabel,
     scenarioDataset,
     scenarioLabel,
+    datasetMeta.anomalyActive,
   ])
 
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
