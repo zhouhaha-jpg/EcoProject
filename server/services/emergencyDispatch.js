@@ -35,12 +35,12 @@ const MODULE_LABELS = {
   P_es_es: '储能',
 }
 const RAMP_LIMITS = {
-  P_CA: 220,
-  P_PV: 160,
-  P_GM: 90,
-  P_PEM: 80,
-  P_G: 120,
-  P_es_es: 120,
+  P_CA: 420,
+  P_PV: 260,
+  P_GM: 180,
+  P_PEM: 160,
+  P_G: 420,
+  P_es_es: 260,
 }
 
 const CN_DIGITS = {
@@ -88,6 +88,10 @@ function average(values = []) {
 
 function maxValue(values = [], fallback = 0) {
   return values.length ? Math.max(...values) : fallback
+}
+
+function safeAt(values, index, fallback = 0) {
+  return Array.isArray(values) && Number.isFinite(values[index]) ? values[index] : fallback
 }
 
 function interpolateHourlyWindow(hourly, startHour, points = STEPS) {
@@ -336,6 +340,7 @@ function normalizeEventSpec(input, prompt = '') {
   spec.severity = spec.severity || 'critical'
   spec.startHour = clamp(toNumber(spec.startHour, base.startHour), 0, 23)
   spec.durationHours = WINDOW_HOURS
+  spec.presentationMode = String(spec.presentationMode || base.presentationMode || 'dramatic')
   spec.priceMultiplier = Math.max(1, toNumber(spec.priceMultiplier, base.priceMultiplier))
   spec.carbonMultiplier = Math.max(1, toNumber(spec.carbonMultiplier, base.carbonMultiplier))
   spec.weatherNote = String(spec.weatherNote || base.weatherNote || '')
@@ -384,7 +389,7 @@ function buildFallbackOutline(spec, reason = '') {
   return { priorityOrder, keyAnchors, explanation, degraded: true }
 }
 
-async function planEmergencyDispatch(spec, context, planner, feedbackIssues = [], attempt = 0) {
+async function planEmergencyDispatch(spec, context, planner, contextPackage, feedbackIssues = [], attempt = 0) {
   if (!planner) throw new Error('planner_unavailable')
   return planner({
     spec,
@@ -392,6 +397,7 @@ async function planEmergencyDispatch(spec, context, planner, feedbackIssues = []
     baselineSummary: context.baselineDataset?.summary ?? {},
     activeStrategy: context.activeStrategy,
     baselineWindow: buildBaselineWindow(context.baselineDataset, context.activeStrategy, spec.startHour, context.viewDate),
+    contextPackage,
     feedbackIssues,
     attempt,
   })
@@ -400,15 +406,21 @@ async function planEmergencyDispatch(spec, context, planner, feedbackIssues = []
 function readRealtimeSnapshot(viewDate) {
   const db = getDb()
   const rows = db.prepare(
-    'SELECT hour, price_grid, ef_grid FROM realtime_data WHERE data_date = ? ORDER BY hour'
+    'SELECT hour, price_grid, ef_grid, shortwave_radiation, temperature, wind_speed_10m, wind_speed_80m FROM realtime_data WHERE data_date = ? ORDER BY hour'
   ).all(viewDate)
   const prices = Array.from({ length: 24 }, () => 0.62)
   const carbon = Array.from({ length: 24 }, () => 0.00058)
+  const radiation = Array.from({ length: 24 }, () => 0)
+  const temperature = Array.from({ length: 24 }, () => 25)
+  const windSpeed = Array.from({ length: 24 }, () => 0)
   for (const row of rows) {
     prices[row.hour] = toNumber(row.price_grid, prices[row.hour])
     carbon[row.hour] = toNumber(row.ef_grid, carbon[row.hour])
+    radiation[row.hour] = toNumber(row.shortwave_radiation, radiation[row.hour])
+    temperature[row.hour] = toNumber(row.temperature, temperature[row.hour])
+    windSpeed[row.hour] = toNumber(row.wind_speed_80m, toNumber(row.wind_speed_10m, windSpeed[row.hour]))
   }
-  return { prices, carbon }
+  return { prices, carbon, radiation, temperature, windSpeed }
 }
 
 function applyRamp(target, previous, rampPerStep, maxCap) {
@@ -459,6 +471,231 @@ function buildBaselineWindow(baselineDataset, activeStrategy, startHour, viewDat
     })
   }
   return { labels, series, points }
+}
+
+function metricFromSupportToken(token) {
+  const value = String(token || '').trim().toLowerCase()
+  if (!value) return null
+  if (['p_gm', 'gm', '燃机', '燃氣輪機', 'gas_turbine'].includes(value)) return 'P_GM'
+  if (['p_pem', 'pem', 'fuel_cell', '燃料电池'].includes(value)) return 'P_PEM'
+  if (['p_es_es', 'storage', 'es', '储能', 'battery'].includes(value)) return 'P_es_es'
+  return null
+}
+
+function buildDefaultStagePlan(spec) {
+  return [
+    {
+      phase: 'trigger',
+      title: '冲击触发',
+      objective: '快速压降外部供能，建立事故态边界',
+      startIndex: 0,
+      endIndex: 2,
+      gridReductionFactor: 1.1,
+      pvReductionFactor: 1.05,
+      caReductionFactor: 0.88,
+      supportLiftFactor: 0.45,
+    },
+    {
+      phase: 'response',
+      title: '内部支撑抬升',
+      objective: '燃机、PEM、储能快速抬升并接管缺口',
+      startIndex: 3,
+      endIndex: 8,
+      gridReductionFactor: 1.05,
+      pvReductionFactor: 1.02,
+      caReductionFactor: 1,
+      supportLiftFactor: 1,
+    },
+    {
+      phase: 'stabilize',
+      title: '负荷重分配',
+      objective: '维持高冲击联动并稳定保供',
+      startIndex: 9,
+      endIndex: 35,
+      gridReductionFactor: 0.98,
+      pvReductionFactor: 1,
+      caReductionFactor: 1.08,
+      supportLiftFactor: 1.15,
+    },
+    {
+      phase: 'reserve',
+      title: '保供收束',
+      objective: '维持应急冗余并准备继续执行或回退',
+      startIndex: 36,
+      endIndex: 47,
+      gridReductionFactor: 0.96,
+      pvReductionFactor: 0.97,
+      caReductionFactor: 1.02,
+      supportLiftFactor: 0.95,
+    },
+  ]
+}
+
+function normalizeStagePlan(stagePlan, labels, spec) {
+  const defaults = buildDefaultStagePlan(spec)
+  const source = Array.isArray(stagePlan) && stagePlan.length === 4 ? stagePlan : defaults
+  return source.map((raw, index) => {
+    const fallback = defaults[index]
+    const startIndex = clamp(toNumber(raw?.startIndex, fallback.startIndex), 0, STEPS - 1)
+    const endIndex = clamp(toNumber(raw?.endIndex, fallback.endIndex), startIndex, STEPS - 1)
+    return {
+      phase: String(raw?.phase || fallback.phase),
+      title: String(raw?.title || fallback.title),
+      objective: String(raw?.objective || fallback.objective),
+      startIndex,
+      endIndex,
+      startLabel: labels[startIndex] || labels[0],
+      endLabel: labels[endIndex] || labels[labels.length - 1],
+      gridReductionFactor: clamp(toNumber(raw?.gridReductionFactor, fallback.gridReductionFactor), 0.6, 1.2),
+      pvReductionFactor: clamp(toNumber(raw?.pvReductionFactor, fallback.pvReductionFactor), 0.6, 1.2),
+      caReductionFactor: clamp(toNumber(raw?.caReductionFactor, fallback.caReductionFactor), 0.65, 1.25),
+      supportLiftFactor: clamp(toNumber(raw?.supportLiftFactor, fallback.supportLiftFactor), 0.25, 1.35),
+    }
+  })
+}
+
+function stageForIndex(stagePlan, index) {
+  return stagePlan.find((stage) => index >= stage.startIndex && index <= stage.endIndex) || stagePlan[stagePlan.length - 1]
+}
+
+function buildEmergencyContextPackage(context, spec) {
+  const { baselineDataset, activeStrategy, viewDate } = context
+  const baselineWindow = buildBaselineWindow(baselineDataset, activeStrategy, spec.startHour, viewDate)
+  const realtime = readRealtimeSnapshot(viewDate)
+  const snapshotHour = clamp(spec.startHour, 0, 23)
+  const snapshotTime = makeTimeLabel(viewDate, spec.startHour, 0).timestamp
+  const baseGM = baselineWindow.series.P_GM
+  const basePEM = baselineWindow.series.P_PEM
+  const baseES = baselineWindow.series.P_es_es.map((value) => Math.max(0, value))
+  const bounds = {
+    P_CA: { min: 0, max: round(Math.max(maxValue(baselineWindow.series.P_CA), 3200) * 1.02, 2), ramp: RAMP_LIMITS.P_CA },
+    P_PV: { min: 0, max: round(Math.max(maxValue(baselineWindow.series.P_PV), 320), 2), ramp: RAMP_LIMITS.P_PV },
+    P_GM: { min: 0, max: round(Math.max(maxValue(baseGM), average(baseGM), 420) * 1.9, 2), ramp: RAMP_LIMITS.P_GM },
+    P_PEM: { min: 0, max: round(Math.max(maxValue(basePEM), average(basePEM), 280) * 1.85, 2), ramp: RAMP_LIMITS.P_PEM },
+    P_G: { min: 0, max: round(Math.max(maxValue(baselineWindow.series.P_G), 1200) * 1.02, 2), ramp: RAMP_LIMITS.P_G },
+    P_es_es: { min: 0, max: round(Math.max(maxValue(baseES), 260) * 1.9, 2), ramp: RAMP_LIMITS.P_es_es },
+  }
+  const labels = baselineWindow.labels
+  return {
+    activeStrategy,
+    viewDate,
+    snapshotAt: baselineDataset?._meta?.snapshotAt || formatBeijingDateTime(),
+    baselineWindow,
+    currentSnapshot: {
+      activeStrategy,
+      snapshotHour,
+      timestamp: snapshotTime,
+      snapshotAt: baselineDataset?._meta?.snapshotAt || formatBeijingDateTime(),
+      devices: {
+        P_CA: round(safeAt(baselineDataset.P_CA?.[activeStrategy], snapshotHour, baselineWindow.series.P_CA[0]), 4),
+        P_PV: round(safeAt(baselineDataset.P_PV?.[activeStrategy], snapshotHour, baselineWindow.series.P_PV[0]), 4),
+        P_GM: round(safeAt(baselineDataset.P_GM?.[activeStrategy], snapshotHour, baselineWindow.series.P_GM[0]), 4),
+        P_PEM: round(safeAt(baselineDataset.P_PEM?.[activeStrategy], snapshotHour, baselineWindow.series.P_PEM[0]), 4),
+        P_G: round(safeAt(baselineDataset.P_G?.[activeStrategy], snapshotHour, baselineWindow.series.P_G[0]), 4),
+        P_es_es: round(safeAt(baselineDataset.P_es_es, snapshotHour, baselineWindow.series.P_es_es[0]), 4),
+        H_HS: round(safeAt(baselineDataset.H_HS?.[activeStrategy], snapshotHour, 0), 4),
+      },
+      external: {
+        price_grid: round(safeAt(realtime.prices, snapshotHour, 0.62), 4),
+        ef_grid: round(safeAt(realtime.carbon, snapshotHour, 0.00058), 6),
+        shortwave_radiation: round(safeAt(realtime.radiation, snapshotHour, 0), 2),
+        temperature: round(safeAt(realtime.temperature, snapshotHour, 25), 2),
+        wind_speed: round(safeAt(realtime.windSpeed, snapshotHour, 0), 2),
+      },
+      bounds,
+    },
+    externalWindow: {
+      price_grid: interpolateHourlyWindow(realtime.prices, spec.startHour),
+      ef_grid: interpolateHourlyWindow(realtime.carbon, spec.startHour),
+      shortwave_radiation: interpolateHourlyWindow(realtime.radiation, spec.startHour),
+      temperature: interpolateHourlyWindow(realtime.temperature, spec.startHour),
+      wind_speed: interpolateHourlyWindow(realtime.windSpeed, spec.startHour),
+    },
+    bounds,
+    rampLimits: RAMP_LIMITS,
+  }
+}
+
+function buildDefaultDispatchIntent(contextPackage, spec) {
+  const base = contextPackage.baselineWindow
+  const gridReductionTarget = clamp(spec.gridReduction || 0.55, 0, 0.98)
+  const pvReductionTarget = clamp(spec.pvReduction || (spec.type === 'typhoon_weather' ? 0.45 : 0.32), 0, 0.95)
+  const caReductionTarget = clamp(0.18 + gridReductionTarget * 0.45 + pvReductionTarget * 0.28 + (spec.severity === 'critical' ? 0.05 : 0), 0.22, 0.68)
+  const gmLiftTarget = clamp(0.28 + gridReductionTarget * 0.7 + pvReductionTarget * 0.2, 0.35, 1.3)
+  const pemLiftTarget = clamp(0.24 + gridReductionTarget * 0.38 + pvReductionTarget * 0.4, 0.28, 1.2)
+  const storageLiftTarget = clamp(0.35 + gridReductionTarget * 0.48 + pvReductionTarget * 0.28, 0.4, 1.4)
+  return {
+    eventAssessment: 'Severe external supply disturbance with coordinated internal support required.',
+    targetAdjustments: {
+      gridReductionTarget,
+      pvReductionTarget,
+      caReductionTarget,
+      gmLiftTarget,
+      pemLiftTarget,
+      storageLiftTarget,
+    },
+    supportPriority: ['P_GM', 'P_es_es', 'P_PEM'],
+    stagePlan: normalizeStagePlan([], base.labels, spec),
+    dispatchPrinciples: [
+      'Enforce requested external reduction exactly.',
+      'Drop electrolyzer load visibly when external supply is constrained.',
+      'Lift gas turbine, PEM and storage together to form a clear coordinated response.',
+      'Keep the emergency curve dramatic while preserving supply-demand closure.',
+    ],
+    explanation: 'Emergency intent synthesized from current park snapshot, baseline window and live external signals.',
+  }
+}
+
+function buildFallbackIntent(spec, contextPackage, reason = '') {
+  const defaults = buildDefaultDispatchIntent(contextPackage, spec)
+  return {
+    eventAssessment: 'LLM generation failed, deterministic dramatic fallback intent applied.',
+    targetAdjustments: defaults.targetAdjustments,
+    supportPriority: defaults.supportPriority,
+    stagePlan: defaults.stagePlan,
+    dispatchPrinciples: [
+      'Strictly honor the user-provided reduction target.',
+      'Reduce electrolyzer load visibly when external supply is damaged.',
+      'Lift GM, PEM and storage together to keep the emergency response obvious.',
+      'Use fallback intent only as a deterministic backup for the command cockpit.',
+    ],
+    timeline: [],
+    moduleStatus: [],
+    riskHints: ['fallback_intent', 'dramatic_backup'],
+    explanation: reason
+      ? `LLM generation failed and the system switched to deterministic dramatic fallback. Reason: ${reason}.`
+      : 'LLM generation failed and the system switched to deterministic dramatic fallback.',
+  }
+}
+
+function normalizeDispatchIntent(plan, contextPackage, spec) {
+  const defaults = buildDefaultDispatchIntent(contextPackage, spec)
+  const source = plan && typeof plan === 'object' ? plan : {}
+  const targetSource = source.targetAdjustments && typeof source.targetAdjustments === 'object' ? source.targetAdjustments : {}
+  const supportPriority = Array.isArray(source.supportPriority)
+    ? source.supportPriority.map(metricFromSupportToken).filter(Boolean)
+    : defaults.supportPriority
+  const targetAdjustments = {
+    gridReductionTarget: clamp(toNumber(targetSource.gridReductionTarget, defaults.targetAdjustments.gridReductionTarget), Math.max(spec.gridReduction || 0, 0), 0.98),
+    pvReductionTarget: clamp(toNumber(targetSource.pvReductionTarget, defaults.targetAdjustments.pvReductionTarget), Math.max(spec.pvReduction || 0, 0), 0.95),
+    caReductionTarget: clamp(toNumber(targetSource.caReductionTarget, defaults.targetAdjustments.caReductionTarget), defaults.targetAdjustments.caReductionTarget * 0.9, 0.72),
+    gmLiftTarget: clamp(toNumber(targetSource.gmLiftTarget, defaults.targetAdjustments.gmLiftTarget), 0.2, 1.4),
+    pemLiftTarget: clamp(toNumber(targetSource.pemLiftTarget, defaults.targetAdjustments.pemLiftTarget), 0.18, 1.3),
+    storageLiftTarget: clamp(toNumber(targetSource.storageLiftTarget, defaults.targetAdjustments.storageLiftTarget), 0.22, 1.5),
+  }
+  return {
+    eventAssessment: String(source.eventAssessment || defaults.eventAssessment),
+    targetAdjustments,
+    supportPriority: supportPriority.length ? supportPriority : defaults.supportPriority,
+    stagePlan: normalizeStagePlan(source.stagePlan, contextPackage.baselineWindow.labels, spec),
+    dispatchPrinciples: Array.isArray(source.dispatchPrinciples) && source.dispatchPrinciples.length
+      ? source.dispatchPrinciples.map((item) => String(item))
+      : defaults.dispatchPrinciples,
+    timeline: Array.isArray(source.timeline) ? source.timeline : [],
+    moduleStatus: Array.isArray(source.moduleStatus) ? source.moduleStatus : [],
+    riskHints: Array.isArray(source.riskHints) ? source.riskHints.map((item) => String(item)) : [],
+    explanation: String(source.explanation || defaults.explanation),
+  }
 }
 
 function buildSeriesFromPoints(points) {
@@ -750,10 +987,146 @@ function buildModuleStatus(detail) {
   })
 }
 
+function computeLiftRatio(planValues = [], baseValues = [], floor = 1) {
+  const baseAvg = average(baseValues)
+  const planAvg = average(planValues)
+  if (baseAvg > 0) return clamp(planAvg / baseAvg - 1, 0, 2)
+  return clamp(planAvg / Math.max(floor, 1), 0, 2)
+}
+
+function computeImpactScore(actualEnvelope = {}) {
+  const grid = (actualEnvelope.gridReduction || 0) * 100
+  const pv = (actualEnvelope.pvReduction || 0) * 100
+  const ca = (actualEnvelope.caReduction || 0) * 100
+  const gm = (actualEnvelope.gmLift || 0) * 65
+  const pem = (actualEnvelope.pemLift || 0) * 65
+  const storage = (actualEnvelope.storageLift || 0) * 65
+  return round(clamp(grid * 0.24 + pv * 0.12 + ca * 0.22 + gm * 0.16 + pem * 0.13 + storage * 0.13, 0, 100), 1)
+}
+
+function buildTimelineV2(detail, spec) {
+  if (Array.isArray(detail.timeline) && detail.timeline.length) {
+    return detail.timeline.slice(0, 8).map((item, index) => ({
+      time: String(item.time || detail.points[Math.min(index * 12, detail.points.length - 1)]?.label || '--:--'),
+      title: String(item.title || `Action ${index + 1}`),
+      detail: String(item.detail || item.action || 'Execute emergency device coordination.'),
+      severity: String(item.severity || 'warning'),
+      action: item.action ? String(item.action) : undefined,
+    }))
+  }
+  if (Array.isArray(detail.stagePlan) && detail.stagePlan.length) {
+    return detail.stagePlan.slice(0, 4).map((stage, index) => ({
+      time: String(stage.startLabel || detail.points[stage.startIndex || 0]?.label || '--:--'),
+      title: String(stage.title || `Phase ${index + 1}`),
+      detail: String(stage.objective || 'Execute emergency dispatch stage.'),
+      severity: index < 2 ? 'critical' : index === 2 ? 'warning' : 'info',
+      action: `${stage.startLabel || '--:--'} -> ${stage.endLabel || '--:--'}`,
+    }))
+  }
+  return buildTimeline(detail.points, spec, [])
+}
+
+function buildRiskMatrixV2(detail, spec) {
+  const windows = Array.from({ length: WINDOW_HOURS }, (_, index) => ({
+    label: `${String(index).padStart(2, '0')}:00-${String(index + 1).padStart(2, '0')}:00`,
+    start: index * 12,
+    end: index * 12 + 12,
+  }))
+  const severeDisturbance = (spec.gridReduction || 0) >= 0.4 || (spec.pvReduction || 0) >= 0.25 || spec.type === 'typhoon_weather'
+  const moduleSeries = {
+    电网: ['P_G', 900],
+    光伏: ['P_PV', 320],
+    电解槽: ['P_CA', 900],
+    燃机: ['P_GM', 280],
+    PEM: ['P_PEM', 180],
+    储能: ['P_es_es', 180],
+  }
+  return Object.entries(moduleSeries).flatMap(([module, [metric, floor]]) => windows.map((window) => {
+    const values = detail.series?.[metric] || []
+    const baseValues = detail.baselineSeries?.[metric] || []
+    const slice = values.slice(window.start, window.end)
+    const baseSlice = baseValues.slice(window.start, window.end)
+    const avgPlan = average(slice)
+    const avgBase = average(baseSlice)
+    const peakPlan = maxValue(slice)
+    const reductionRatio = avgBase > 0 ? clamp(1 - avgPlan / avgBase, 0, 1) : 0
+    const liftRatio = avgBase > 0 ? clamp(avgPlan / avgBase - 1, 0, 2) : clamp(avgPlan / Math.max(floor, 1), 0, 2)
+    let score
+    let reason
+    if (metric === 'P_G' || metric === 'P_PV') {
+      score = 32 + reductionRatio * 58 + (severeDisturbance ? 10 : 0)
+      reason = `${module}在${window.label}承担受损边界。`
+    } else if (metric === 'P_CA') {
+      const gapSlice = (detail.series?.gap || []).slice(window.start, window.end)
+      score = 24 + reductionRatio * 44 + clamp(maxValue(gapSlice) / 120, 0, 1) * 22 + (severeDisturbance ? 8 : 0)
+      reason = `${module}在${window.label}执行明显降载。`
+    } else {
+      score = 18 + liftRatio * 48 + clamp(peakPlan / Math.max(floor, 1), 0, 1.2) * 18 + (severeDisturbance ? 6 : 0)
+      reason = `${module}在${window.label}承担内部支撑任务。`
+    }
+    if (severeDisturbance) score = Math.max(score, metric === 'P_CA' ? 48 : 45)
+    const normalizedScore = round(clamp(score, 5, 100), 0)
+    return {
+      module,
+      windowLabel: window.label,
+      level: scoreToRiskLevel(normalizedScore),
+      score: normalizedScore,
+      reason,
+    }
+  }))
+}
+
+function buildModuleStatusV2(detail) {
+  const latestPoint = detail.points[detail.points.length - 1] || detail.points[0]
+  return Object.entries(MODULE_LABELS).map(([key, module]) => {
+    const riskCells = detail.riskMatrix?.filter((cell) => cell.module === module) || []
+    const maxScore = maxValue(riskCells.map((cell) => cell.score), 0)
+    const level = maxScore >= 72 ? 'red' : maxScore >= 42 ? 'amber' : 'green'
+    return {
+      module,
+      level,
+      title: key === 'P_CA'
+        ? '柔性负荷下调'
+        : key === 'P_G' || key === 'P_PV'
+          ? '受损边界执行'
+          : '内部支撑抬升',
+      detail: level === 'red'
+        ? `${module} 当前处于高风险或关键支撑状态。`
+        : level === 'amber'
+          ? `${module} 当前处于承压运行状态。`
+          : `${module} 当前处于正常/待命状态。`,
+      suggestion: key === 'P_CA'
+        ? '保持明显降载，避免逆势抬升。'
+        : key === 'P_G' || key === 'P_PV'
+          ? '按事件边界维持降幅，不允许反弹。'
+          : '维持高冲击支撑曲线，但避免越限。',
+      currentValue: round(latestPoint?.[key] ?? 0, 2),
+      unit: 'kW',
+    }
+  })
+}
+
 function enrichDetail(detail, context, spec, generationMode, validationIssues = [], retries = 0) {
   const baselineWindow = buildBaselineWindow(context.baselineDataset, context.activeStrategy, spec.startHour, context.viewDate)
   const actualGridReduction = average(baselineWindow.series.P_G) > 0 ? clamp(1 - average(detail.series.P_G) / average(baselineWindow.series.P_G), 0, 1) : 0
   const actualPvReduction = average(baselineWindow.series.P_PV) > 0 ? clamp(1 - average(detail.series.P_PV) / average(baselineWindow.series.P_PV), 0, 1) : 0
+  const actualCaReduction = average(baselineWindow.series.P_CA) > 0 ? clamp(1 - average(detail.series.P_CA) / average(baselineWindow.series.P_CA), 0, 1) : 0
+  const actualGmLift = computeLiftRatio(detail.series.P_GM, baselineWindow.series.P_GM, 280)
+  const actualPemLift = computeLiftRatio(detail.series.P_PEM, baselineWindow.series.P_PEM, 180)
+  const actualStorageLift = computeLiftRatio(detail.series.P_es_es, baselineWindow.series.P_es_es.map((value) => Math.max(0, value)), 180)
+  const targetEnvelope = detail.targetEnvelope || {
+    gridReduction: round(spec.gridReduction ?? 0, 4),
+    pvReduction: round(spec.pvReduction ?? 0, 4),
+  }
+  const actualEnvelope = {
+    gridReduction: round(actualGridReduction, 4),
+    pvReduction: round(actualPvReduction, 4),
+    caReduction: round(actualCaReduction, 4),
+    gmLift: round(actualGmLift, 4),
+    pemLift: round(actualPemLift, 4),
+    storageLift: round(actualStorageLift, 4),
+  }
+  const impactScore = computeImpactScore(actualEnvelope)
 
   detail.baselineSeries = baselineWindow.series
   detail.summary = {
@@ -769,27 +1142,54 @@ function enrichDetail(detail, context, spec, generationMode, validationIssues = 
     actualGridReduction: round(actualGridReduction, 4),
     actualPvReduction: round(actualPvReduction, 4),
   }
+  detail.contextSnapshot = detail.contextSnapshot || detail.meta?.contextSnapshot || null
+  detail.targetEnvelope = {
+    gridReduction: round(targetEnvelope.gridReduction ?? spec.gridReduction ?? 0, 4),
+    pvReduction: round(targetEnvelope.pvReduction ?? spec.pvReduction ?? 0, 4),
+    caReduction: round(targetEnvelope.caReduction ?? 0, 4),
+    gmLift: round(targetEnvelope.gmLift ?? 0, 4),
+    pemLift: round(targetEnvelope.pemLift ?? 0, 4),
+    storageLift: round(targetEnvelope.storageLift ?? 0, 4),
+  }
+  detail.actualEnvelope = actualEnvelope
+  detail.impactScore = impactScore
+  detail.supportLiftSummary = {
+    gm: round(actualGmLift, 4),
+    pem: round(actualPemLift, 4),
+    storage: round(actualStorageLift, 4),
+  }
   detail.dispatchPrinciples = Array.isArray(detail.dispatchPrinciples) && detail.dispatchPrinciples.length
     ? detail.dispatchPrinciples
     : detail.keyAnchors
-  detail.timeline = buildTimeline(detail.points, spec, detail.timeline)
-  detail.riskMatrix = buildRiskMatrix(detail)
-  detail.moduleStatus = buildModuleStatus(detail)
+  detail.timeline = buildTimelineV2(detail, spec)
+  detail.riskMatrix = buildRiskMatrixV2(detail, spec)
+  detail.moduleStatus = buildModuleStatusV2(detail)
   detail.audit = {
     generationMode,
     requestedReductions: {
       gridReduction: round(spec.gridReduction ?? 0, 4),
       pvReduction: round(spec.pvReduction ?? 0, 4),
     },
+    requestedAdjustments: {
+      gridReduction: round(detail.targetEnvelope.gridReduction ?? 0, 4),
+      pvReduction: round(detail.targetEnvelope.pvReduction ?? 0, 4),
+      caReduction: round(detail.targetEnvelope.caReduction ?? 0, 4),
+      gmLift: round(detail.targetEnvelope.gmLift ?? 0, 4),
+      pemLift: round(detail.targetEnvelope.pemLift ?? 0, 4),
+      storageLift: round(detail.targetEnvelope.storageLift ?? 0, 4),
+    },
     actualReductions: {
       gridReduction: round(actualGridReduction, 4),
       pvReduction: round(actualPvReduction, 4),
     },
+    actualAdjustments: actualEnvelope,
     validation: {
       passed: validationIssues.length === 0,
       issues: validationIssues,
       retries,
     },
+    impactScore,
+    fallbackReason: generationMode === 'template_fallback' ? validationIssues.join(' | ') : '',
     fallbackUsed: generationMode === 'template_fallback',
   }
   detail.meta = {
@@ -805,6 +1205,7 @@ function enrichDetail(detail, context, spec, generationMode, validationIssues = 
       gridReduction: round(actualGridReduction, 4),
       pvReduction: round(actualPvReduction, 4),
     },
+    presentationMode: spec.presentationMode || 'dramatic',
     responseWindowHours: spec.durationHours || WINDOW_HOURS,
     validationMessage: validationIssues.join(' | '),
   }
@@ -975,6 +1376,186 @@ function buildDeterministicDispatch(context, spec, outline, options = {}) {
   }
 }
 
+function buildDetailFromIntent(plan, context, spec, contextPackage, generationMode, validationIssues = [], retries = 0) {
+  const intent = normalizeDispatchIntent(plan, contextPackage, spec)
+  const detail = buildDramaticDispatch(context, spec, intent, {
+    contextPackage,
+    generationMode,
+    validationMessage: validationIssues.join(' | '),
+  })
+  return enrichDetail(detail, context, spec, generationMode, validationIssues, retries)
+}
+
+function buildDramaticDispatch(context, spec, intent, options = {}) {
+  const contextPackage = options.contextPackage || buildEmergencyContextPackage(context, spec)
+  const baselineWindow = contextPackage.baselineWindow
+  const labels = baselineWindow.labels
+  const stagePlan = Array.isArray(intent.stagePlan) && intent.stagePlan.length
+    ? intent.stagePlan
+    : normalizeStagePlan([], labels, spec)
+  const target = intent.targetAdjustments || buildDefaultDispatchIntent(contextPackage, spec).targetAdjustments
+  const supportPriority = Array.isArray(intent.supportPriority) && intent.supportPriority.length
+    ? intent.supportPriority
+    : ['P_GM', 'P_es_es', 'P_PEM']
+  const bounds = contextPackage.bounds || contextPackage.currentSnapshot?.bounds || {}
+  const gmCap = bounds.P_GM?.max ?? Math.max(maxValue(baselineWindow.series.P_GM), 420) * 1.9
+  const pemCap = bounds.P_PEM?.max ?? Math.max(maxValue(baselineWindow.series.P_PEM), 280) * 1.85
+  const esCap = bounds.P_es_es?.max ?? Math.max(maxValue(baselineWindow.series.P_es_es.map((value) => Math.max(0, value))), 260) * 1.9
+  const ramp = {
+    grid: bounds.P_G?.ramp ?? RAMP_LIMITS.P_G,
+    gm: bounds.P_GM?.ramp ?? RAMP_LIMITS.P_GM,
+    pem: bounds.P_PEM?.ramp ?? RAMP_LIMITS.P_PEM,
+    es: bounds.P_es_es?.ramp ?? RAMP_LIMITS.P_es_es,
+    ca: bounds.P_CA?.ramp ?? RAMP_LIMITS.P_CA,
+  }
+  const priorities = supportPriority.filter((metric) => ['P_GM', 'P_PEM', 'P_es_es'].includes(metric))
+  while (priorities.length < 3) {
+    const next = ['P_GM', 'P_es_es', 'P_PEM'].find((metric) => !priorities.includes(metric))
+    if (!next) break
+    priorities.push(next)
+  }
+  const supportWeights = {
+    [priorities[0]]: 0.42,
+    [priorities[1]]: 0.33,
+    [priorities[2]]: 0.25,
+  }
+  const series = {
+    P_CA: [],
+    P_PV: [],
+    P_GM: [],
+    P_PEM: [],
+    P_G: [],
+    P_es_es: [],
+    gap: [],
+  }
+  const points = []
+  let prev = {
+    P_G: baselineWindow.series.P_G[0] || 0,
+    P_GM: baselineWindow.series.P_GM[0] || 0,
+    P_PEM: baselineWindow.series.P_PEM[0] || 0,
+    P_es_es: Math.max(0, baselineWindow.series.P_es_es[0] || 0),
+    P_CA: baselineWindow.series.P_CA[0] || 0,
+  }
+
+  for (let i = 0; i < STEPS; i += 1) {
+    const stage = stageForIndex(stagePlan, i)
+    const base = baselineWindow.points[i]
+    const supportPulse = stage.phase === 'stabilize'
+      ? 1 + 0.08 * Math.sin(i / 2.8)
+      : stage.phase === 'response'
+        ? 1 + 0.05 * Math.sin(i / 1.9)
+        : stage.phase === 'reserve'
+          ? 1 - 0.04 * Math.cos(i / 3.4)
+          : 1
+
+    const gridReductionNow = clamp(target.gridReductionTarget * (stage.gridReductionFactor || 1), 0, 0.98)
+    const pvReductionNow = clamp(target.pvReductionTarget * (stage.pvReductionFactor || 1), 0, 0.95)
+    const caReductionNow = clamp(target.caReductionTarget * (stage.caReductionFactor || 1), 0.15, 0.76)
+
+    const pGridTarget = base.P_G * (1 - gridReductionNow)
+    const pPV = round(clamp(base.P_PV * (1 - pvReductionNow), 0, base.P_PV), 4)
+    const pGrid = round(applyRamp(pGridTarget, prev.P_G, ramp.grid, Math.max(base.P_G, pGridTarget)), 4)
+    const demandBase = Math.max(0, base.P_CA)
+    const pCATarget = round(Math.max(demandBase * (1 - caReductionNow), demandBase * 0.18), 4)
+    let shortage = Math.max(0, pCATarget - pPV - pGrid)
+
+    const baseGM = Math.max(0, base.P_GM)
+    const basePEM = Math.max(0, base.P_PEM)
+    const baseES = Math.max(0, base.P_es_es)
+    let gmVisible = Math.min(gmCap - baseGM, Math.max(shortage * 0.24, 70) * (stage.supportLiftFactor || 1) + baseGM * target.gmLiftTarget * 0.22)
+    let pemVisible = Math.min(pemCap - basePEM, Math.max(shortage * 0.18, 55) * (stage.supportLiftFactor || 1) + Math.max(basePEM, 120) * target.pemLiftTarget * 0.22)
+    let esVisible = Math.min(esCap - baseES, Math.max(shortage * 0.22, 85) * (stage.supportLiftFactor || 1) + Math.max(baseES, 140) * target.storageLiftTarget * 0.22)
+    const minVisibleTotal = gmVisible + pemVisible + esVisible
+    if (minVisibleTotal > shortage && minVisibleTotal > 0) {
+      const scale = shortage / minVisibleTotal
+      gmVisible *= scale
+      pemVisible *= scale
+      esVisible *= scale
+    }
+    shortage = Math.max(0, shortage - gmVisible - pemVisible - esVisible)
+
+    const gmTarget = round(baseGM + Math.min(gmCap - baseGM, (gmVisible + shortage * (supportWeights.P_GM || 0)) * supportPulse), 4)
+    const pemTarget = round(basePEM + Math.min(pemCap - basePEM, (pemVisible + shortage * (supportWeights.P_PEM || 0)) * supportPulse), 4)
+    const esTarget = round(baseES + Math.min(esCap - baseES, (esVisible + shortage * (supportWeights.P_es_es || 0)) * supportPulse), 4)
+    const pGM = round(applyRamp(gmTarget, prev.P_GM, ramp.gm, gmCap), 4)
+    const pPEM = round(applyRamp(pemTarget, prev.P_PEM, ramp.pem, pemCap), 4)
+    const pES = round(applyRamp(esTarget, prev.P_es_es, ramp.es, esCap), 4)
+
+    const supplyTotal = round(pPV + pGrid + pGM + pPEM + pES, 4)
+    const pCA = round(Math.min(pCATarget, supplyTotal), 4)
+    const gap = round(Math.max(0, pCA - supplyTotal), 4)
+    const supportTotal = pGM + pPEM + pES
+    const riskLevel = gap > 150 || supportTotal > demandBase * 0.42 || (spec.gridReduction || 0) >= 0.4
+      ? 'high'
+      : gap > 40 || supportTotal > demandBase * 0.24
+        ? 'medium'
+        : 'low'
+    const time = makeTimeLabel(context.viewDate, spec.startHour, i)
+
+    points.push({
+      index: i,
+      label: time.label,
+      timestamp: time.timestamp,
+      P_CA: pCA,
+      P_PV: pPV,
+      P_GM: pGM,
+      P_PEM: pPEM,
+      P_G: pGrid,
+      P_es_es: pES,
+      supplyTotal,
+      gap,
+      riskLevel,
+    })
+
+    series.P_CA.push(pCA)
+    series.P_PV.push(pPV)
+    series.P_GM.push(pGM)
+    series.P_PEM.push(pPEM)
+    series.P_G.push(pGrid)
+    series.P_es_es.push(pES)
+    series.gap.push(gap)
+
+    prev = { P_G: pGrid, P_GM: pGM, P_PEM: pPEM, P_es_es: pES, P_CA: pCA }
+  }
+
+  const priorityOrder = ['P_G', 'P_PV', ...priorities, 'P_CA']
+  const keyAnchors = [
+    `Grid reduction target ${Math.round((target.gridReductionTarget || 0) * 100)}% is enforced numerically.`,
+    `PV reduction target ${Math.round((target.pvReductionTarget || 0) * 100)}% is enforced numerically.`,
+    'Electrolyzer load is pulled down visibly when external supply is damaged.',
+    'GM, PEM and storage all rise together to create a dramatic emergency response.',
+  ]
+
+  return {
+    labels,
+    points,
+    series,
+    summary: {},
+    priorityOrder,
+    keyAnchors,
+    explanation: String(intent.explanation || 'Emergency dispatch generated from realtime snapshot and dramatic coordinated synthesis.'),
+    dispatchPrinciples: Array.isArray(intent.dispatchPrinciples) ? intent.dispatchPrinciples : keyAnchors,
+    timeline: Array.isArray(intent.timeline) ? intent.timeline : [],
+    riskMatrix: [],
+    moduleStatus: Array.isArray(intent.moduleStatus) ? intent.moduleStatus : [],
+    stagePlan,
+    contextSnapshot: contextPackage.currentSnapshot,
+    targetEnvelope: {
+      gridReduction: round(target.gridReductionTarget || 0, 4),
+      pvReduction: round(target.pvReductionTarget || 0, 4),
+      caReduction: round(target.caReductionTarget || 0, 4),
+      gmLift: round(target.gmLiftTarget || 0, 4),
+      pemLift: round(target.pemLiftTarget || 0, 4),
+      storageLift: round(target.storageLiftTarget || 0, 4),
+    },
+    meta: {
+      generationMode: options.generationMode || 'llm_direct',
+      validationMessage: options.validationMessage || '',
+      contextSnapshot: contextPackage.currentSnapshot,
+    },
+  }
+}
+
 function validateDispatch(detail, context, spec) {
   const issues = []
   const required = ['P_CA', 'P_PV', 'P_GM', 'P_PEM', 'P_G', 'P_es_es', 'gap']
@@ -1025,6 +1606,13 @@ function validateDispatch(detail, context, spec) {
 
   const actualGridReduction = avgBaseGrid > 0 ? 1 - avgPlanGrid / avgBaseGrid : 0
   const actualPvReduction = avgBasePv > 0 ? 1 - avgPlanPv / avgBasePv : 0
+  const actualCaReduction = avgBaseCA > 0 ? 1 - avgPlanCA / avgBaseCA : 0
+  const avgBaseGM = average(baseGM)
+  const avgBasePEM = average(basePEM)
+  const avgBaseES = average(baseES.map((value) => Math.max(0, value)))
+  const actualGmLift = computeLiftRatio(detail.series.P_GM, baseGM, 280)
+  const actualPemLift = computeLiftRatio(detail.series.P_PEM, basePEM, 180)
+  const actualStorageLift = computeLiftRatio(detail.series.P_es_es, baseES.map((value) => Math.max(0, value)), 180)
 
   if (spec.parameterSource?.gridReduction === 'user' && spec.gridReduction > 0) {
     if (actualGridReduction + 0.06 < spec.gridReduction) issues.push('grid_user_parameter_deviated')
@@ -1036,6 +1624,11 @@ function validateDispatch(detail, context, spec) {
 
   if ((spec.gridReduction > 0 || spec.pvReduction > 0) && avgPlanCA > avgBaseCA + 1) {
     issues.push('ca_above_baseline_under_disturbance')
+  }
+
+  const minCaReduction = clamp(0.12 + (spec.gridReduction || 0) * 0.38 + (spec.pvReduction || 0) * 0.18, 0.12, 0.62)
+  if ((spec.gridReduction > 0 || spec.pvReduction > 0) && actualCaReduction + 0.03 < minCaReduction) {
+    issues.push('ca_not_reduced_enough')
   }
 
   const internalCompensationInsufficient = detail.points.some((point, index) => {
@@ -1055,6 +1648,14 @@ function validateDispatch(detail, context, spec) {
     return externalLoss > 1 && point.P_CA > (baseCA[index] ?? 0) + 1
   })) {
     issues.push('ca_rises_when_external_supply_drops')
+  }
+
+  const severeEvent = (spec.gridReduction || 0) >= 0.4 || (spec.pvReduction || 0) >= 0.25 || spec.type === 'typhoon_weather'
+  if (severeEvent) {
+    if (avgBaseGM > 0 && actualGmLift < 0.12) issues.push('gm_not_lifted_enough')
+    if ((avgBasePEM > 0 || average(detail.series.P_PEM) > 0) && actualPemLift < 0.12) issues.push('pem_not_lifted_enough')
+    if ((avgBaseES > 0 || average(detail.series.P_es_es) > 0) && actualStorageLift < 0.15) issues.push('storage_not_lifted_enough')
+    if (detail.points.every((point) => point.riskLevel === 'low')) issues.push('risk_too_low_for_severe_event')
   }
 
   for (const metric of METRIC_ORDER) {
@@ -1230,16 +1831,18 @@ function serializeRun(row, { includeDatasets = false } = {}) {
 }
 
 async function generateEmergencyDispatchWithLLM(payload, options, context, eventSpec) {
+  const contextPackage = buildEmergencyContextPackage(context, eventSpec)
   let feedbackIssues = []
   let lastError = 'planner_failed'
 
   for (let attempt = 0; attempt < MAX_LLM_ATTEMPTS; attempt += 1) {
     try {
-      const plan = await planEmergencyDispatch(eventSpec, context, options.planner, feedbackIssues, attempt)
-      const detail = buildDetailFromPlanner(
+      const plan = await planEmergencyDispatch(eventSpec, context, options.planner, contextPackage, feedbackIssues, attempt)
+      const detail = buildDetailFromIntent(
         plan,
         context,
         eventSpec,
+        contextPackage,
         attempt === 0 ? 'llm_direct' : 'llm_corrected',
         feedbackIssues,
         attempt,
@@ -1279,6 +1882,7 @@ export async function createEmergencyDispatch(payload = {}, options = {}) {
     activeStrategy,
     viewDate,
   }
+  const contextPackage = buildEmergencyContextPackage(context, eventSpec)
 
   let detail
   let degraded = false
@@ -1290,8 +1894,10 @@ export async function createEmergencyDispatch(payload = {}, options = {}) {
     degraded = generated.degraded
   } catch (error) {
     fallbackReason = error instanceof Error ? error.message : String(error)
-    detail = enrichDetail(buildDeterministicDispatch(context, eventSpec, buildFallbackOutline(eventSpec, fallbackReason), {
-      strict: true,
+    const fallbackIntent = buildFallbackIntent(eventSpec, contextPackage, fallbackReason)
+    detail = enrichDetail(buildDramaticDispatch(context, eventSpec, fallbackIntent, {
+      contextPackage,
+      generationMode: 'template_fallback',
       validationMessage: fallbackReason,
     }), context, eventSpec, 'template_fallback', fallbackReason ? [fallbackReason] : [], MAX_LLM_ATTEMPTS)
     degraded = true

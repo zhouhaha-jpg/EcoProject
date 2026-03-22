@@ -383,7 +383,54 @@ async function generateEmergencyOutline({ spec, prompt, baselineSummary, activeS
   return JSON.parse(completion.choices[0]?.message?.content || '{}')
 }
 
-app.use('/api/emergency', createEmergencyRouter({ planner: generateEmergencyOutline }))
+async function generateEmergencyIntent({ spec, prompt, baselineSummary, activeStrategy, baselineWindow, contextPackage, feedbackIssues = [], attempt = 0 }) {
+  if (!openai) {
+    throw new Error('LLM unavailable')
+  }
+  const completion = await openai.chat.completions.create({
+    model,
+    messages: [
+      {
+        role: 'system',
+        content: [
+          '你是工业园区应急调度总指挥。',
+          '不要直接输出48点数值曲线，而是输出一个可执行的应急调度意图包，下游会基于实时数据与设备边界合成最终曲线。',
+          '输出必须是 JSON，不要输出 Markdown，不要输出 schema 之外字段。',
+          '输出字段固定为：eventAssessment(string), targetAdjustments(object), supportPriority(string[]), stagePlan(array[4]), dispatchPrinciples(string[]), timeline(array), moduleStatus(array), riskHints(string[]), explanation(string)。',
+          'targetAdjustments 必须包含：gridReductionTarget,pvReductionTarget,caReductionTarget,gmLiftTarget,pemLiftTarget,storageLiftTarget。',
+          'stagePlan 必须返回4个阶段，每个阶段必须包含：phase,title,objective,gridReductionFactor,pvReductionFactor,caReductionFactor,supportLiftFactor。',
+          '这是比赛演示场景，结果必须高冲击、明显、可被评委一眼看懂。',
+          '绝对禁止事项：',
+          '1. 不得忽略用户给出的百分比；用户写60%，gridReductionTarget就必须是0.60。',
+          '2. 不得让受损场景下的 P_G 或 P_PV 逆势上升。',
+          '3. 外部供能下降时，P_CA 必须明显下降，不能近似水平。',
+          '4. P_GM、P_PEM、P_es_es 必须都承担明显补偿，不能只有一个模块抬升。',
+          '5. 如果你的意图会导致曲线变化太平、太弱、看不出联动，视为失败。',
+        ].join('\n'),
+      },
+      {
+        role: 'user',
+        content: [
+          `事件: ${prompt}`,
+          `结构化事件: ${JSON.stringify(spec)}`,
+          `当前激活策略: ${activeStrategy}`,
+          `当前方案摘要: ${JSON.stringify(baselineSummary?.[activeStrategy] || {})}`,
+          `4小时基线窗口: ${JSON.stringify(baselineWindow || {})}`,
+          `EmergencyContextPackage: ${JSON.stringify(contextPackage || {})}`,
+          `上一轮校验反馈: ${JSON.stringify(feedbackIssues)}`,
+          `当前尝试轮次: ${attempt + 1}`,
+          '请生成最终可执行的应急调度意图包。用户给出的降幅必须体现在 targetAdjustments 中，并且你需要主动强化联动幅度。',
+        ].join('\n'),
+      },
+    ],
+    response_format: { type: 'json_object' },
+    temperature: 0.2,
+    max_tokens: 3500,
+  })
+  return JSON.parse(completion.choices[0]?.message?.content || '{}')
+}
+
+app.use('/api/emergency', createEmergencyRouter({ planner: generateEmergencyIntent }))
 
 app.post('/api/chat', async (req, res) => {
   if (!openai) {
@@ -790,7 +837,7 @@ async function runScheduledRefresh() {
         baselineMeta: dataset.meta,
         activeStrategy: 'es',
       }, {
-        planner: generateEmergencyOutline,
+        planner: generateEmergencyIntent,
       })
     }
 

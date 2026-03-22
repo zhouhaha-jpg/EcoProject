@@ -1,14 +1,15 @@
 /**
- * Agent 工作区：展示 Agent 工作成果
- * - emergencyPreviewRun：应急调度指挥页
- * - scenarioDataset：What-If 推演 基准 vs 推演 表格+图表
- * - paretoData：Pareto 前沿散点图 + 最优区间建议
+ * Agent 工作区：展示 Agent 结果
+ * - emergencyPreviewRun: 应急调度指挥页
+ * - scenarioDataset: What-If 推演对比
+ * - paretoData: Pareto 前沿分析
  */
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { useStrategy } from '@/context/StrategyContext'
 import ScenarioCompareChart from '@/components/charts/ScenarioCompareChart'
 import ParetoFrontierChart from '@/components/charts/ParetoFrontierChart'
 import EmergencyDispatchChart from '@/components/charts/EmergencyDispatchChart'
+import EmergencyDeltaChart from '@/components/charts/EmergencyDeltaChart'
 import {
   applyEmergencyRunApi,
   fetchEmergencyRuns,
@@ -19,14 +20,18 @@ import type { EmergencyPointDetail, EmergencyRun, StrategyKey } from '@/types'
 
 const STRATEGIES: StrategyKey[] = ['uci', 'cicos', 'cicar', 'cicom', 'pv', 'es']
 const LABELS: Record<StrategyKey, string> = {
-  uci: 'UCI', cicos: 'CICOS', cicar: 'CICAR',
-  cicom: 'CICOM', pv: 'PV', es: 'ES',
+  uci: 'UCI',
+  cicos: 'CICOS',
+  cicar: 'CICAR',
+  cicom: 'CICOM',
+  pv: 'PV',
+  es: 'ES',
 }
 
 function pct(a: number, b: number): string {
   if (b === 0) return '--'
-  const v = ((a - b) / b) * 100
-  return `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`
+  const value = ((a - b) / b) * 100
+  return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`
 }
 
 export default function ScenarioComparePage() {
@@ -91,13 +96,19 @@ export default function ScenarioComparePage() {
     const requestedPv = audit?.requestedReductions?.pvReduction ?? detail.summary.requestedPvReduction ?? 0
     const actualGrid = audit?.actualReductions?.gridReduction ?? detail.summary.actualGridReduction ?? 0
     const actualPv = audit?.actualReductions?.pvReduction ?? detail.summary.actualPvReduction ?? 0
+    const actualAdjustments = audit?.actualAdjustments ?? detail.actualEnvelope
+    const caReduction = actualAdjustments?.caReduction ?? 0
+    const gmLift = actualAdjustments?.gmLift ?? 0
+    const pemLift = actualAdjustments?.pemLift ?? 0
+    const storageLift = actualAdjustments?.storageLift ?? 0
+    const impactScore = detail.impactScore ?? audit?.impactScore ?? 0
     const generationMode = audit?.generationMode ?? detail.meta?.generationMode ?? (currentEmergency.degraded ? 'template_fallback' : 'llm_direct')
 
     return (
       <div className="h-full min-h-0 overflow-auto" style={{ display: 'grid', gridTemplateRows: 'auto auto auto auto', gap: 12 }}>
         <div className="panel shrink-0">
           <div className="panel-title-bar flex items-center justify-between">
-            <span>应急调度指挥页 — {currentEmergency.title}</span>
+            <span>应急调度指挥页 · {currentEmergency.title}</span>
             <div className="flex items-center gap-2 text-[10px]" style={{ color: '#5a7a9a' }}>
               <span>{currentEmergency.source === 'auto' ? 'AUTO' : 'MANUAL'}</span>
               <span>·</span>
@@ -106,7 +117,7 @@ export default function ScenarioComparePage() {
               <span>{currentEmergency.status}</span>
             </div>
           </div>
-          <div style={{ padding: 16, display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 16 }}>
+          <div style={{ padding: 16, display: 'grid', gridTemplateColumns: '1.45fr 1.15fr', gap: 16 }}>
             <div style={{ display: 'grid', gap: 10 }}>
               <div style={{ color: '#e8f4ff', fontSize: 15, fontWeight: 700 }}>{currentEmergency.eventSpec.title}</div>
               <p style={{ color: '#8ba9cc', fontSize: 12, lineHeight: 1.8 }}>
@@ -115,32 +126,46 @@ export default function ScenarioComparePage() {
               <div className="flex flex-wrap gap-2">
                 <ModeBadge label={renderGenerationLabel(generationMode)} tone={generationMode === 'template_fallback' ? 'warn' : generationMode === 'llm_corrected' ? 'info' : 'ok'} />
                 <ModeBadge label={datasetMeta.emergencyActive && datasetMeta.emergencyRunId === currentEmergency.id ? '已应用到全站' : '仅预览'} tone={datasetMeta.emergencyActive && datasetMeta.emergencyRunId === currentEmergency.id ? 'warn' : 'info'} />
+                <ModeBadge label="EMERGENCY MODE" tone="warn" />
                 {(currentEmergency.eventSpec.affectedModules || []).map((tag) => (
                   <span key={tag} className="hud-chip" style={{ fontSize: 10 }}>{tag}</span>
                 ))}
               </div>
               <div style={{ color: '#69f0ae', fontSize: 12 }}>
-                事件参数摘要：{currentEmergency.eventSpec.parameterSummary ?? detail.meta?.parameterSummary ?? '未识别具体幅度，使用默认值'}
+                事件参数摘要：{currentEmergency.eventSpec.parameterSummary ?? detail.meta?.parameterSummary ?? '未识别具体幅度，使用默认边界'}
               </div>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 10 }}>
               <SummaryCell label="电网请求/实际" value={`${Math.round(requestedGrid * 100)}% / ${Math.round(actualGrid * 100)}%`} accent="#ce93d8" />
               <SummaryCell label="光伏请求/实际" value={`${Math.round(requestedPv * 100)}% / ${Math.round(actualPv * 100)}%`} accent="#c6f135" />
+              <SummaryCell label="电解槽降载" value={`${Math.round(caReduction * 100)}%`} accent="#4e9eff" />
+              <SummaryCell label="燃机抬升" value={`+${Math.round(gmLift * 100)}%`} accent="#ffb347" />
+              <SummaryCell label="PEM 抬升" value={`+${Math.round(pemLift * 100)}%`} accent="#29d4ff" />
+              <SummaryCell label="储能抬升" value={`+${Math.round(storageLift * 100)}%`} accent="#ffd740" />
               <SummaryCell label="峰值燃机/PEM" value={`${detail.summary.peakGM.toFixed(0)} / ${detail.summary.peakPEM.toFixed(0)} kW`} accent="#ffb347" />
               <SummaryCell label="最大缺口" value={`${detail.summary.maxGap.toFixed(1)} kW`} accent={detail.summary.maxGap > 25 ? '#ff7043' : '#69f0ae'} />
+              <SummaryCell label="冲击指数" value={`${impactScore.toFixed(0)} / 100`} accent="#00d4ff" />
             </div>
           </div>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.95fr) minmax(360px, 0.95fr)', gap: 12, alignItems: 'stretch' }}>
-          <div className="panel" style={{ height: 560, display: 'flex', flexDirection: 'column', minHeight: 560 }}>
-            <div className="panel-title-bar">4小时应急联动曲线 · 5分钟粒度</div>
-            <div style={{ flex: 1, minHeight: 0, padding: 12 }}>
-              <EmergencyDispatchChart detail={detail} onPointHover={setActivePoint} />
+          <div className="panel" style={{ height: 640, display: 'grid', gridTemplateRows: 'minmax(0, 1.85fr) minmax(180px, 0.95fr)', minHeight: 640 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+              <div className="panel-title-bar">4小时应急联动曲线 · 5分钟粒度</div>
+              <div style={{ flex: 1, minHeight: 0, padding: 12 }}>
+                <EmergencyDispatchChart detail={detail} onPointHover={setActivePoint} />
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0, borderTop: '1px solid #111b2e' }}>
+              <div className="panel-title-bar">相对基线联动增减幅</div>
+              <div style={{ flex: 1, minHeight: 0, padding: '0 12px 12px' }}>
+                <EmergencyDeltaChart detail={detail} />
+              </div>
             </div>
           </div>
 
-          <div className="panel" style={{ height: 560, display: 'flex', flexDirection: 'column', minHeight: 560 }}>
+          <div className="panel" style={{ height: 640, display: 'flex', flexDirection: 'column', minHeight: 640 }}>
             <div className="panel-title-bar">点位与模块状态</div>
             <div style={{ padding: 16, display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', gap: 14, flex: 1, minHeight: 0 }}>
               {point ? (
@@ -268,14 +293,14 @@ export default function ScenarioComparePage() {
         <div className="panel shrink-0">
           <div className="panel-title-bar">调度原则与说明</div>
           <div style={{ padding: 16, color: '#8ba9cc', fontSize: 12, lineHeight: 1.8 }}>
-            <p><b style={{ color: '#4e9eff' }}>优先顺序</b>：{detail.priorityOrder.join(' → ')}</p>
+            <p><b style={{ color: '#4e9eff' }}>优先顺序</b>：{detail.priorityOrder.join(' -> ')}</p>
             <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
               {(detail.dispatchPrinciples || detail.keyAnchors).map((item) => (
                 <div key={item}>• {item}</div>
               ))}
             </div>
             <p style={{ marginTop: 8, color: '#5a7a9a' }}>
-              说明：主图实线为当前应急曲线，虚线为同窗口基线。应急态默认覆盖前 4 小时响应窗口，并以单一应急执行态驱动全站展示。
+              说明：主图实线为当前应急曲线，虚线为同窗口基线。下方副图展示相对基线的增减幅，用于突出联动效果与比赛展示冲击力。
             </p>
           </div>
         </div>
@@ -308,7 +333,7 @@ export default function ScenarioComparePage() {
       <div className="h-full min-h-0 overflow-auto" style={{ display: 'grid', gridTemplateRows: 'auto 1fr auto', gap: 12 }}>
         <div className="panel shrink-0">
           <div className="panel-title-bar flex items-center justify-between">
-            <span>Pareto 前沿 — {paretoLabel ?? '参数扫描'}</span>
+            <span>Pareto 前沿 · {paretoLabel ?? '参数扫描'}</span>
             <span style={{ color: '#3d6080', fontSize: 10, fontWeight: 400 }}>
               成本 vs 碳排 · 最优区间
             </span>
@@ -326,9 +351,6 @@ export default function ScenarioComparePage() {
             <p style={{ marginTop: 8, color: '#3d6080', fontSize: 12 }}>
               绿色标注点为综合指标最优区间。Pareto 扫描对参数进行多轮取值，展示成本-碳排的权衡关系。
             </p>
-            <p style={{ marginTop: 8, color: '#5a7a9a', fontSize: 11 }}>
-              说明：当前优化模型仅考虑运行成本（购电、碳交易等），未包含光伏装机成本。若某参数增大后成本与碳排同步下降，可能表示该参数在运行层面有正向收益；实际决策需结合装机成本等约束综合评估。
-            </p>
           </div>
         </div>
       </div>
@@ -342,7 +364,7 @@ export default function ScenarioComparePage() {
     <div className="h-full min-h-0 overflow-auto" style={{ display: 'grid', gridTemplateRows: 'auto auto 1fr', gap: 12 }}>
       <div className="panel shrink-0">
         <div className="panel-title-bar flex items-center justify-between">
-          <span>Agent 工作区 — {scenarioLabel ?? 'What-If 推演'}</span>
+          <span>Agent 工作区 · {scenarioLabel ?? 'What-If 推演'}</span>
           <span style={{ color: '#3d6080', fontSize: 10, fontWeight: 400 }}>
             基准 vs 推演
           </span>
@@ -365,27 +387,21 @@ export default function ScenarioComparePage() {
             </thead>
             <tbody>
               {STRATEGIES.map((sk) => {
-                const b = baseSummary[sk]
-                const s = scenSummary?.[sk]
-                if (!b || !s) return null
+                const base = baseSummary[sk]
+                const scenario = scenSummary?.[sk]
+                if (!base || !scenario) return null
                 return (
                   <tr key={sk}>
                     <td style={tdStyle}>{LABELS[sk]}</td>
-                    <td style={tdNumStyle}>{b.cost.toFixed(0)}</td>
-                    <td style={tdNumStyle}>{s.cost.toFixed(0)}</td>
-                    <td style={{ ...tdNumStyle, color: s.cost <= b.cost ? '#69f0ae' : '#ff7043' }}>
-                      {pct(s.cost, b.cost)}
-                    </td>
-                    <td style={tdNumStyle}>{b.carbon.toFixed(2)}</td>
-                    <td style={tdNumStyle}>{s.carbon.toFixed(2)}</td>
-                    <td style={{ ...tdNumStyle, color: s.carbon <= b.carbon ? '#69f0ae' : '#ff7043' }}>
-                      {pct(s.carbon, b.carbon)}
-                    </td>
-                    <td style={tdNumStyle}>{b.combined.toFixed(2)}</td>
-                    <td style={tdNumStyle}>{s.combined.toFixed(2)}</td>
-                    <td style={{ ...tdNumStyle, color: s.combined <= b.combined ? '#69f0ae' : '#ff7043' }}>
-                      {pct(s.combined, b.combined)}
-                    </td>
+                    <td style={tdNumStyle}>{base.cost.toFixed(0)}</td>
+                    <td style={tdNumStyle}>{scenario.cost.toFixed(0)}</td>
+                    <td style={{ ...tdNumStyle, color: scenario.cost <= base.cost ? '#69f0ae' : '#ff7043' }}>{pct(scenario.cost, base.cost)}</td>
+                    <td style={tdNumStyle}>{base.carbon.toFixed(2)}</td>
+                    <td style={tdNumStyle}>{scenario.carbon.toFixed(2)}</td>
+                    <td style={{ ...tdNumStyle, color: scenario.carbon <= base.carbon ? '#69f0ae' : '#ff7043' }}>{pct(scenario.carbon, base.carbon)}</td>
+                    <td style={tdNumStyle}>{base.combined.toFixed(2)}</td>
+                    <td style={tdNumStyle}>{scenario.combined.toFixed(2)}</td>
+                    <td style={{ ...tdNumStyle, color: scenario.combined <= base.combined ? '#69f0ae' : '#ff7043' }}>{pct(scenario.combined, base.combined)}</td>
                   </tr>
                 )
               })}
@@ -406,11 +422,10 @@ export default function ScenarioComparePage() {
       <div className="panel min-h-0 flex flex-col">
         <div className="panel-title-bar">推演说明</div>
         <div style={{ flex: 1, padding: 16, color: '#8ba9cc', fontSize: 13, lineHeight: 1.8 }}>
-          <p><b style={{ color: '#4e9eff' }}>基准</b>：系统默认参数下的优化结果（n_PV=10000、G_scale=1.5 等），所有情景对比共用同一基准。</p>
+          <p><b style={{ color: '#4e9eff' }}>基准</b>：系统默认参数下的优化结果，所有情景对比共用同一套基准。</p>
           <p style={{ marginTop: 8 }}>当前推演场景：<b style={{ color: '#00d4ff' }}>{scenarioLabel}</b></p>
           <p style={{ marginTop: 8 }}>
-            表格中绿色数值表示推演结果优于基准，红色表示劣于基准。
-            您可以在右侧 Agent 中继续修改参数进行新一轮推演。
+            表格中绿色数值表示推演结果优于基准，红色表示劣于基准。您可以在右侧 Agent 中继续修改参数进行新一轮推演。
           </p>
         </div>
       </div>
@@ -510,15 +525,26 @@ function RiskMatrixTable({ items }: { items: NonNullable<EmergencyRun['detailPay
 }
 
 const thStyle: CSSProperties = {
-  padding: '10px 10px', textAlign: 'right', color: '#8ba9cc',
-  borderBottom: '1px solid #1e3256', fontWeight: 600, fontSize: 11,
+  padding: '10px 10px',
+  textAlign: 'right',
+  color: '#8ba9cc',
+  borderBottom: '1px solid #1e3256',
+  fontWeight: 600,
+  fontSize: 11,
 }
+
 const tdStyle: CSSProperties = {
-  padding: '8px 10px', color: '#8ba9cc', borderBottom: '1px solid #111b2e',
+  padding: '8px 10px',
+  color: '#8ba9cc',
+  borderBottom: '1px solid #111b2e',
 }
+
 const tdNumStyle: CSSProperties = {
-  padding: '8px 10px', textAlign: 'right', color: '#e8f4ff',
-  borderBottom: '1px solid #111b2e', fontVariantNumeric: 'tabular-nums',
+  padding: '8px 10px',
+  textAlign: 'right',
+  color: '#e8f4ff',
+  borderBottom: '1px solid #111b2e',
+  fontVariantNumeric: 'tabular-nums',
 }
 
 const matrixHeadStyle: CSSProperties = {

@@ -108,6 +108,7 @@ export interface EmergencyEventSpec {
   severity: 'warning' | 'critical' | string
   startHour: number
   durationHours: number
+  presentationMode?: 'dramatic' | string
   pvReduction?: number
   gridReduction?: number
   parameterSource?: {
@@ -163,6 +164,53 @@ export interface EmergencyModuleStatus {
   unit?: string
 }
 
+export interface EmergencyStagePlanItem {
+  phase: string
+  title: string
+  objective: string
+  startIndex?: number
+  endIndex?: number
+  startLabel?: string
+  endLabel?: string
+  gridReductionFactor?: number
+  pvReductionFactor?: number
+  caReductionFactor?: number
+  supportLiftFactor?: number
+}
+
+export interface EmergencyEnvelope {
+  gridReduction?: number
+  pvReduction?: number
+  caReduction?: number
+  gmLift?: number
+  pemLift?: number
+  storageLift?: number
+}
+
+export interface EmergencyContextSnapshot {
+  activeStrategy: StrategyKey | string
+  snapshotHour: number
+  timestamp: string
+  snapshotAt?: string
+  devices: {
+    P_CA: number
+    P_PV: number
+    P_GM: number
+    P_PEM: number
+    P_G: number
+    P_es_es: number
+    H_HS?: number
+  }
+  external: {
+    price_grid?: number
+    ef_grid?: number
+    shortwave_radiation?: number
+    temperature?: number
+    wind_speed?: number
+  }
+  bounds?: Record<string, { min: number; max: number; ramp: number }>
+}
+
 export interface EmergencyDetailSeries {
   labels: string[]
   series: {
@@ -201,22 +249,36 @@ export interface EmergencyDetailSeries {
   timeline?: EmergencyTimelineItem[]
   riskMatrix?: EmergencyRiskCell[]
   moduleStatus?: EmergencyModuleStatus[]
+  stagePlan?: EmergencyStagePlanItem[]
   dispatchPrinciples?: string[]
+  contextSnapshot?: EmergencyContextSnapshot
+  targetEnvelope?: EmergencyEnvelope
+  actualEnvelope?: EmergencyEnvelope
+  impactScore?: number
+  supportLiftSummary?: {
+    gm: number
+    pem: number
+    storage: number
+  }
   audit?: {
     generationMode?: 'llm_direct' | 'llm_corrected' | 'template_fallback' | string
     requestedReductions?: {
       gridReduction?: number
       pvReduction?: number
     }
+    requestedAdjustments?: EmergencyEnvelope
     actualReductions?: {
       gridReduction?: number
       pvReduction?: number
     }
+    actualAdjustments?: EmergencyEnvelope
     validation?: {
       passed: boolean
       issues: string[]
       retries?: number
     }
+    impactScore?: number
+    fallbackReason?: string
     fallbackUsed?: boolean
   }
   meta?: {
@@ -231,6 +293,7 @@ export interface EmergencyDetailSeries {
       gridReduction?: number
       pvReduction?: number
     }
+    presentationMode?: string
     responseWindowHours?: number
     validationMessage?: string
   }

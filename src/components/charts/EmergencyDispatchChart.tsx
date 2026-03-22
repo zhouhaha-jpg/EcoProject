@@ -33,6 +33,22 @@ export default function EmergencyDispatchChart({ detail, onPointHover }: Emergen
       0,
     )
     const glowBase = Math.max(maxValue * 0.08, 60)
+    const stageAreas = (detail.stagePlan || []).map((stage) => ([
+      {
+        name: stage.title,
+        xAxis: detail.labels[stage.startIndex || 0],
+        itemStyle: { color: 'rgba(0,212,255,0.045)' },
+      },
+      {
+        xAxis: detail.labels[Math.min(stage.endIndex || detail.labels.length - 1, detail.labels.length - 1)],
+      },
+    ]))
+    const peakSupportIndex = detail.points.reduce((best, point, index, points) => (
+      point.P_GM + point.P_PEM + point.P_es_es > points[best].P_GM + points[best].P_PEM + points[best].P_es_es ? index : best
+    ), 0)
+    const peakGapIndex = detail.points.reduce((best, point, index, points) => (
+      point.gap > points[best].gap ? index : best
+    ), 0)
 
     return {
       backgroundColor: 'transparent',
@@ -130,6 +146,16 @@ export default function EmergencyDispatchChart({ detail, onPointHover }: Emergen
               ],
             },
           },
+          markArea: stageAreas.length
+            ? {
+                silent: true,
+                label: {
+                  color: '#3d6080',
+                  fontSize: 9,
+                },
+                data: stageAreas,
+              }
+            : undefined,
           tooltip: { show: false },
         },
         ...(detail.baselineSeries
@@ -184,6 +210,27 @@ export default function EmergencyDispatchChart({ detail, onPointHover }: Emergen
             },
             areaStyle: { opacity: 0.3 },
           },
+          markPoint: key === 'P_CA'
+            ? {
+                symbolSize: 38,
+                itemStyle: { color: '#00d4ff', borderColor: '#081320', borderWidth: 1.5 },
+                label: {
+                  color: '#081320',
+                  fontSize: 9,
+                  formatter: ({ data }: { data?: { name?: string } }) => data?.name || '',
+                },
+                data: [
+                  {
+                    name: '支撑峰值',
+                    coord: [detail.labels[peakSupportIndex], detail.series.P_CA[peakSupportIndex]],
+                  },
+                  {
+                    name: '缺口点',
+                    coord: [detail.labels[peakGapIndex], detail.series.P_CA[peakGapIndex]],
+                  },
+                ],
+              }
+            : undefined,
           blur: {
             lineStyle: { opacity: 0.18 },
             areaStyle: { opacity: 0.04 },
