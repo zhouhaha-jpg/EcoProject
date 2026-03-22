@@ -350,8 +350,10 @@ async function generateEmergencyOutline({ spec, prompt, baselineSummary, activeS
         content: [
           '你是工业园区应急调度总指挥。你必须直接生成 4 小时、5 分钟粒度、共 48 个点的多设备联动曲线。',
           '只输出 JSON，不要输出 Markdown，不要输出解释性前后缀。',
+          '输出时优先保证 points(array[48]) 正确，其次再给 priorityOrder、keyAnchors、dispatchPrinciples、explanation。timeline、riskMatrix、moduleStatus 可以省略。',
           '输出字段固定为：priorityOrder(string[]), keyAnchors(string[]), dispatchPrinciples(string[]), explanation(string), points(array[48]), timeline(array), riskMatrix(array), moduleStatus(array)。',
           'points 每个元素必须包含 P_CA,P_PV,P_GM,P_PEM,P_G,P_es_es 六个数值字段。',
+          '如果你无法稳定给出 48 个点，也允许先给 24 个点或 4 个点，系统会插值；但数值方向和降幅必须正确。',
           '绝对禁止事项：',
           '1. 不得忽略用户给出的百分比。',
           '2. 不得让受损场景下的 P_G 或 P_PV 逆势上升。',
@@ -375,8 +377,8 @@ async function generateEmergencyOutline({ spec, prompt, baselineSummary, activeS
       },
     ],
     response_format: { type: 'json_object' },
-    temperature: 0.2,
-    max_tokens: 3200,
+    temperature: 0.1,
+    max_tokens: 5000,
   })
   return JSON.parse(completion.choices[0]?.message?.content || '{}')
 }

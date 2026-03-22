@@ -132,19 +132,19 @@ export default function ScenarioComparePage() {
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.8fr) minmax(320px, 0.9fr)', gap: 12 }}>
-          <div className="panel" style={{ minHeight: 360 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.95fr) minmax(360px, 0.95fr)', gap: 12, alignItems: 'stretch' }}>
+          <div className="panel" style={{ height: 560, display: 'flex', flexDirection: 'column', minHeight: 560 }}>
             <div className="panel-title-bar">4小时应急联动曲线 · 5分钟粒度</div>
-            <div style={{ height: 340, padding: 12 }}>
+            <div style={{ flex: 1, minHeight: 0, padding: 12 }}>
               <EmergencyDispatchChart detail={detail} onPointHover={setActivePoint} />
             </div>
           </div>
 
-          <div className="panel">
+          <div className="panel" style={{ height: 560, display: 'flex', flexDirection: 'column', minHeight: 560 }}>
             <div className="panel-title-bar">点位与模块状态</div>
-            <div style={{ padding: 16, display: 'grid', gap: 14 }}>
+            <div style={{ padding: 16, display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', gap: 14, flex: 1, minHeight: 0 }}>
               {point ? (
-                <div>
+                <div style={{ alignSelf: 'start' }}>
                   <div style={{ color: '#00d4ff', fontFamily: "'Rajdhani', sans-serif", fontSize: 20, fontWeight: 700 }}>
                     {point.label}
                   </div>
@@ -167,7 +167,7 @@ export default function ScenarioComparePage() {
                 <div style={{ color: '#5a7a9a', fontSize: 12 }}>移动鼠标到曲线上查看点位详情。</div>
               )}
 
-              <div style={{ display: 'grid', gap: 8 }}>
+              <div style={{ display: 'grid', gap: 8, minHeight: 0, overflowY: 'auto', paddingRight: 4 }}>
                 {(detail.moduleStatus || []).map((status) => (
                   <ModuleLamp key={status.module} status={status} />
                 ))}

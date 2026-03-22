@@ -498,6 +498,138 @@ function normalizePlannerPoint(rawPoint, baselinePoint, index) {
   return point
 }
 
+function resampleSequence(values, targetLength) {
+  if (!Array.isArray(values) || values.length === 0) return Array.from({ length: targetLength }, () => null)
+  if (values.length === targetLength) return values.slice()
+  if (values.length === 1) return Array.from({ length: targetLength }, () => values[0])
+
+  return Array.from({ length: targetLength }, (_, index) => {
+    const pos = (index * (values.length - 1)) / Math.max(targetLength - 1, 1)
+    const left = Math.floor(pos)
+    const right = Math.min(left + 1, values.length - 1)
+    const frac = pos - left
+    const leftValue = values[left]
+    const rightValue = values[right]
+    if (leftValue == null && rightValue == null) return null
+    if (leftValue == null) return rightValue
+    if (rightValue == null) return leftValue
+    if (typeof leftValue === 'number' && typeof rightValue === 'number') {
+      return leftValue + (rightValue - leftValue) * frac
+    }
+    return frac < 0.5 ? leftValue : rightValue
+  })
+}
+
+function extractPlannerPoints(plan, baselineWindow) {
+  if (Array.isArray(plan?.points) && plan.points.length > 0) {
+    return resampleSequence(plan.points, STEPS)
+  }
+
+  const seriesSource = plan?.series || {}
+  const keys = ['P_CA', 'P_PV', 'P_GM', 'P_PEM', 'P_G', 'P_es_es']
+  const hasSeries = keys.some((key) => Array.isArray(seriesSource?.[key]) && seriesSource[key].length > 0)
+  if (!hasSeries) return baselineWindow.points.map(() => null)
+
+  const rebuiltSeries = Object.fromEntries(keys.map((key) => [
+    key,
+    resampleSequence(Array.isArray(seriesSource?.[key]) ? seriesSource[key] : [], STEPS),
+  ]))
+
+  return Array.from({ length: STEPS }, (_, index) => ({
+    P_CA: rebuiltSeries.P_CA[index],
+    P_PV: rebuiltSeries.P_PV[index],
+    P_GM: rebuiltSeries.P_GM[index],
+    P_PEM: rebuiltSeries.P_PEM[index],
+    P_G: rebuiltSeries.P_G[index],
+    P_es_es: rebuiltSeries.P_es_es[index],
+  }))
+}
+
+function repairDetailAgainstConstraints(detail, context, spec) {
+  const baselineWindow = buildBaselineWindow(context.baselineDataset, context.activeStrategy, spec.startHour, context.viewDate)
+  const gmCap = Math.max(maxValue(baselineWindow.series.P_GM), average(baselineWindow.series.P_GM), 260) * 1.45
+  const pemCap = Math.max(maxValue(baselineWindow.series.P_PEM), average(baselineWindow.series.P_PEM), 180) * 1.45
+  const esCap = Math.max(maxValue(baselineWindow.series.P_es_es.map((value) => Math.abs(value))), 220) * 1.35
+  let prev = null
+
+  const repairedPoints = detail.points.map((point, index) => {
+    const base = baselineWindow.points[index]
+    const next = { ...point }
+
+    if (spec.gridReduction > 0) {
+      const gridCap = base.P_G * (1 - spec.gridReduction)
+      next.P_G = round(Math.min(next.P_G, gridCap), 4)
+    }
+    if (spec.pvReduction > 0) {
+      const pvCap = base.P_PV * (1 - spec.pvReduction)
+      next.P_PV = round(Math.min(next.P_PV, pvCap), 4)
+    }
+
+    const externalLoss = Math.max(0, base.P_G - next.P_G) + Math.max(0, base.P_PV - next.P_PV)
+    if (externalLoss > 1) {
+      const demandCap = base.P_CA * Math.max(0.52, 1 - spec.gridReduction * 0.55 - spec.pvReduction * 0.28)
+      next.P_CA = round(Math.min(next.P_CA, base.P_CA, demandCap), 4)
+    } else {
+      next.P_CA = round(Math.min(next.P_CA, base.P_CA), 4)
+    }
+
+    next.P_GM = round(clamp(next.P_GM, 0, gmCap), 4)
+    next.P_PEM = round(clamp(next.P_PEM, 0, pemCap), 4)
+    next.P_es_es = round(clamp(next.P_es_es, 0, esCap), 4)
+
+    let supplyTotal = next.P_PV + next.P_G + next.P_es_es + next.P_PEM + next.P_GM
+    let shortage = Math.max(0, next.P_CA - supplyTotal)
+    if (shortage > 0) {
+      const esAdd = Math.min(shortage, Math.max(0, esCap - next.P_es_es))
+      next.P_es_es = round(next.P_es_es + esAdd, 4)
+      shortage -= esAdd
+    }
+    if (shortage > 0) {
+      const pemAdd = Math.min(shortage, Math.max(0, pemCap - next.P_PEM))
+      next.P_PEM = round(next.P_PEM + pemAdd, 4)
+      shortage -= pemAdd
+    }
+    if (shortage > 0) {
+      const gmAdd = Math.min(shortage, Math.max(0, gmCap - next.P_GM))
+      next.P_GM = round(next.P_GM + gmAdd, 4)
+      shortage -= gmAdd
+    }
+
+    supplyTotal = next.P_PV + next.P_G + next.P_es_es + next.P_PEM + next.P_GM
+    if (next.P_CA > supplyTotal) {
+      next.P_CA = round(Math.min(next.P_CA, supplyTotal), 4)
+    }
+
+    if (prev) {
+      for (const metric of METRIC_ORDER) {
+        const delta = next[metric] - prev[metric]
+        const limit = RAMP_LIMITS[metric]
+        if (Math.abs(delta) > limit) {
+          next[metric] = round(prev[metric] + Math.sign(delta) * limit, 4)
+        }
+      }
+      if ((spec.gridReduction > 0 || spec.pvReduction > 0) && next.P_CA > base.P_CA) {
+        next.P_CA = round(base.P_CA, 4)
+      }
+    }
+
+    next.supplyTotal = round(next.P_PV + next.P_G + next.P_es_es + next.P_PEM + next.P_GM, 4)
+    next.gap = round(Math.max(0, next.P_CA - next.supplyTotal), 4)
+    next.riskLevel = buildRiskLevel(next.gap, next.P_CA)
+    prev = next
+    return next
+  })
+
+  detail.points = repairedPoints
+  detail.series = buildSeriesFromPoints(repairedPoints)
+  detail.meta = {
+    ...(detail.meta || {}),
+    plannerPointCount: detail.meta?.plannerPointCount ?? repairedPoints.length,
+    repairedByValidator: true,
+  }
+  return detail
+}
+
 function buildTimeline(points, spec, timeline = []) {
   if (Array.isArray(timeline) && timeline.length) {
     return timeline.slice(0, 8).map((item, index) => ({
@@ -681,7 +813,7 @@ function enrichDetail(detail, context, spec, generationMode, validationIssues = 
 
 function buildDetailFromPlanner(plan, context, spec, generationMode, validationIssues = [], retries = 0) {
   const baselineWindow = buildBaselineWindow(context.baselineDataset, context.activeStrategy, spec.startHour, context.viewDate)
-  const rawPoints = Array.isArray(plan?.points) ? plan.points.slice(0, STEPS) : []
+  const rawPoints = extractPlannerPoints(plan, baselineWindow)
   const points = baselineWindow.points.map((baselinePoint, index) => normalizePlannerPoint(rawPoints[index], baselinePoint, index))
   const detail = {
     labels: baselineWindow.labels,
@@ -699,9 +831,9 @@ function buildDetailFromPlanner(plan, context, spec, generationMode, validationI
     timeline: plan?.timeline,
     riskMatrix: Array.isArray(plan?.riskMatrix) ? plan.riskMatrix : [],
     moduleStatus: Array.isArray(plan?.moduleStatus) ? plan.moduleStatus : [],
-    meta: { rawPointCount: rawPoints.length },
+    meta: { plannerPointCount: Array.isArray(plan?.points) ? plan.points.length : rawPoints.length },
   }
-  return enrichDetail(detail, context, spec, generationMode, validationIssues, retries)
+  return enrichDetail(repairDetailAgainstConstraints(detail, context, spec), context, spec, generationMode, validationIssues, retries)
 }
 
 function buildDeterministicDispatch(context, spec, outline, options = {}) {
@@ -845,9 +977,6 @@ function buildDeterministicDispatch(context, spec, outline, options = {}) {
 
 function validateDispatch(detail, context, spec) {
   const issues = []
-  if (detail.meta?.rawPointCount != null && detail.meta.rawPointCount !== STEPS) {
-    issues.push('invalid_point_count')
-  }
   const required = ['P_CA', 'P_PV', 'P_GM', 'P_PEM', 'P_G', 'P_es_es', 'gap']
   for (const key of required) {
     const values = detail.series?.[key]
