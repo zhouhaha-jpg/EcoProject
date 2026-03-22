@@ -14,6 +14,7 @@ import {
   fetchEmergencyRuns,
   restoreEmergencyStateApi,
 } from '@/lib/api'
+import { exportEmergencyRunWorkbook } from '@/lib/emergencyExport'
 import type { EmergencyPointDetail, EmergencyRun, StrategyKey } from '@/types'
 
 const STRATEGIES: StrategyKey[] = ['uci', 'cicos', 'cicar', 'cicom', 'pv', 'es']
@@ -68,6 +69,10 @@ export default function ScenarioComparePage() {
 
   const currentEmergency = emergencyPreviewRun ?? emergencyActiveRun
 
+  useEffect(() => {
+    setActivePoint(null)
+  }, [currentEmergency?.id])
+
   const emergencyHistory = useMemo(() => {
     if (!currentEmergency) return history
     const ids = new Set([currentEmergency.id])
@@ -80,7 +85,7 @@ export default function ScenarioComparePage() {
 
   if (currentEmergency) {
     const detail = currentEmergency.detailPayload
-    const point = activePoint ?? detail.points[0] ?? null
+    const point = activePoint
 
     return (
       <div className="h-full min-h-0 overflow-auto" style={{ display: 'grid', gridTemplateRows: 'auto auto 1fr auto', gap: 12 }}>
@@ -101,6 +106,9 @@ export default function ScenarioComparePage() {
               <p style={{ color: '#8ba9cc', fontSize: 12, lineHeight: 1.8, marginTop: 8 }}>
                 {currentEmergency.explanation}
               </p>
+              <div style={{ marginTop: 8, color: '#69f0ae', fontSize: 12 }}>
+                事件参数摘要：{currentEmergency.eventSpec.parameterSummary ?? detail.meta?.parameterSummary ?? '未识别具体幅度，使用默认值'}
+              </div>
               <div className="flex flex-wrap gap-2" style={{ marginTop: 10 }}>
                 {(currentEmergency.eventSpec.affectedModules || []).map((tag) => (
                   <span key={tag} className="hud-chip" style={{ fontSize: 10 }}>{tag}</span>
@@ -164,6 +172,9 @@ export default function ScenarioComparePage() {
                   <div key={item} style={{ marginBottom: 6 }}>• {item}</div>
                 ))}
               </div>
+              <p style={{ marginTop: 8, color: '#69f0ae' }}>
+                事件参数摘要：{currentEmergency.eventSpec.parameterSummary ?? detail.meta?.parameterSummary ?? '未识别具体幅度，使用默认值'}
+              </p>
               <p style={{ marginTop: 8, color: '#5a7a9a' }}>
                 说明：应急预案默认只覆盖前 4 小时响应窗口；全站其他图表展示的是该 5 分钟曲线聚合后的小时级结果。
               </p>
@@ -196,6 +207,13 @@ export default function ScenarioComparePage() {
                   }}
                 >
                   回退正常状态
+                </button>
+                <button
+                  type="button"
+                  className="rounded border border-[#69f0ae] bg-[#69f0ae]/10 px-3 py-2 text-xs text-[#69f0ae]"
+                  onClick={() => exportEmergencyRunWorkbook(currentEmergency)}
+                >
+                  导出应急数据
                 </button>
               </div>
 

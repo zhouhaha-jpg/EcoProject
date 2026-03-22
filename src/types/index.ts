@@ -109,6 +109,11 @@ export interface EmergencyEventSpec {
   durationHours: number
   pvReduction?: number
   gridReduction?: number
+  parameterSource?: {
+    gridReduction?: 'user' | 'template' | 'none' | string
+    pvReduction?: 'user' | 'template' | 'none' | string
+  }
+  parameterSummary?: string
   priceMultiplier?: number
   carbonMultiplier?: number
   weatherNote?: string
@@ -153,6 +158,21 @@ export interface EmergencyDetailSeries {
   priorityOrder: string[]
   keyAnchors: string[]
   explanation: string
+  meta?: {
+    generationMode?: string
+    parameterSummary?: string
+    parameterSource?: EmergencyEventSpec['parameterSource']
+    requestedReductions?: {
+      gridReduction?: number
+      pvReduction?: number
+    }
+    actualReductions?: {
+      gridReduction?: number
+      pvReduction?: number
+    }
+    responseWindowHours?: number
+    validationMessage?: string
+  }
 }
 
 export interface EmergencyDatasetRef {

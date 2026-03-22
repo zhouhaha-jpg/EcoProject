@@ -22,6 +22,23 @@ const STEPS = (WINDOW_HOURS * 60) / STEP_MINUTES
 const GM_FUEL_COST_PER_KWH = 0.42
 const GM_CARBON_PER_KWH = 0.00078
 
+const GRID_SUBJECT_RE = /(购电|电网|外部供电|市电|网电)/
+const PV_SUBJECT_RE = /(光伏|太阳能|组件出力|光照)/
+
+const CN_DIGITS = {
+  零: 0,
+  一: 1,
+  二: 2,
+  两: 2,
+  三: 3,
+  四: 4,
+  五: 5,
+  六: 6,
+  七: 7,
+  八: 8,
+  九: 9,
+}
+
 function deepClone(value) {
   return JSON.parse(JSON.stringify(value))
 }
@@ -44,6 +61,15 @@ function ensureArray(value, length = 24, fill = 0) {
   const arr = Array.isArray(value) ? value.map((item) => toNumber(item, fill)) : []
   if (arr.length >= length) return arr.slice(0, length)
   return [...arr, ...Array.from({ length: length - arr.length }, () => fill)]
+}
+
+function average(values = []) {
+  if (!values.length) return 0
+  return values.reduce((sum, value) => sum + value, 0) / values.length
+}
+
+function maxValue(values = [], fallback = 0) {
+  return values.length ? Math.max(...values) : fallback
 }
 
 function interpolateHourlyWindow(hourly, startHour, points = STEPS) {
@@ -73,101 +99,269 @@ function avgChunk(values, chunkSize = 12) {
   return out
 }
 
+function parseChineseNumber(token = '') {
+  const text = String(token).trim().replace(/两/g, '二')
+  if (!text) return Number.NaN
+  if (/^\d+(?:\.\d+)?$/.test(text)) return Number(text)
+  if (text === '半') return 0.5
+
+  if (text.includes('点')) {
+    const [left, right] = text.split('点')
+    const leftNum = parseChineseNumber(left)
+    if (!Number.isFinite(leftNum)) return Number.NaN
+    const rightDigits = [...right].map((char) => CN_DIGITS[char]).filter((value) => Number.isFinite(value))
+    if (!rightDigits.length) return Number.NaN
+    return Number(`${leftNum}.${rightDigits.join('')}`)
+  }
+
+  if (text === '十') return 10
+  if (text.startsWith('十')) return 10 + (CN_DIGITS[text[1]] ?? 0)
+  if (text.includes('十')) {
+    const [left, right] = text.split('十')
+    const leftNum = CN_DIGITS[left] ?? Number.NaN
+    const rightNum = right ? (CN_DIGITS[right] ?? Number.NaN) : 0
+    if (!Number.isFinite(leftNum) || !Number.isFinite(rightNum)) return Number.NaN
+    return leftNum * 10 + rightNum
+  }
+
+  if (text.length === 1 && Number.isFinite(CN_DIGITS[text])) return CN_DIGITS[text]
+  return Number.NaN
+}
+
+function parseRatioToken(token = '') {
+  const text = String(token).trim().replace(/\s+/g, '')
+  if (!text) return null
+  if (/(腰斩|减半|对折)/.test(text)) return 0.5
+
+  const percentMatch = text.match(/^(\d+(?:\.\d+)?)%$/)
+  if (percentMatch) return clamp(Number(percentMatch[1]) / 100, 0, 0.99)
+
+  if (text.includes('成')) {
+    const normalized = text.replace(/两/g, '二')
+    const match = normalized.match(/^([零一二三四五六七八九十半\d.]+)成([零一二三四五六七八九十半\d.]*)$/)
+    if (match) {
+      const main = parseChineseNumber(match[1])
+      if (!Number.isFinite(main)) return null
+      let ratio = main / 10
+      const tail = match[2]
+      if (tail === '半') {
+        ratio += 0.05
+      } else if (tail) {
+        const tailNum = parseChineseNumber(tail)
+        if (Number.isFinite(tailNum)) ratio += tailNum / 100
+      }
+      return clamp(ratio, 0, 0.99)
+    }
+  }
+
+  const numeric = parseChineseNumber(text)
+  if (!Number.isFinite(numeric)) return null
+  if (numeric <= 1) return clamp(numeric, 0, 0.99)
+  if (numeric <= 100) return clamp(numeric / 100, 0, 0.99)
+  return null
+}
+
+function splitPromptClauses(text = '') {
+  return String(text)
+    .split(/[，。,；;！!？?\n]/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function extractReductionFromClause(clause) {
+  if (!clause) return null
+  if (/(腰斩|减半|对折)/.test(clause)) {
+    return { reduction: 0.5, sourceLabel: RegExp.$1 }
+  }
+
+  const remainMatch = clause.match(/(?:只剩|仅剩|剩余|剩下|保留|维持在|降到)\s*([0-9.]+%?|[零一二三四五六七八九十两半点]+成?[半零一二三四五六七八九十两点\d.]*)/)
+  if (remainMatch) {
+    const remainRatio = parseRatioToken(remainMatch[1])
+    if (remainRatio != null) {
+      return { reduction: clamp(1 - remainRatio, 0, 0.99), sourceLabel: remainMatch[0] }
+    }
+  }
+
+  const reductionMatch = clause.match(/(?:下降|减少|降低|下调|下跌|削减|压降|缩减|跌幅|降幅)\s*(?:约|大约|近|接近|了|至|到)?\s*([0-9.]+%?|[零一二三四五六七八九十两半点]+成?[半零一二三四五六七八九十两点\d.]*)/)
+  if (reductionMatch) {
+    const ratio = parseRatioToken(reductionMatch[1])
+    if (ratio != null) {
+      return { reduction: clamp(ratio, 0, 0.99), sourceLabel: reductionMatch[0] }
+    }
+  }
+
+  return null
+}
+
+function extractReduction(text, subjectRegex) {
+  const clauses = splitPromptClauses(text)
+  for (const clause of clauses) {
+    if (!subjectRegex.test(clause)) continue
+    const hit = extractReductionFromClause(clause)
+    if (hit) return hit
+  }
+
+  const fullTextHit = extractReductionFromClause(String(text))
+  if (fullTextHit && subjectRegex.test(String(text))) return fullTextHit
+  return null
+}
+
+function buildParameterSummary(spec) {
+  const parts = []
+  if (spec.gridReduction > 0) parts.push(`电网购电 -${Math.round(spec.gridReduction * 100)}%`)
+  if (spec.pvReduction > 0) parts.push(`光伏 -${Math.round(spec.pvReduction * 100)}%`)
+  parts.push(`响应窗口 ${spec.durationHours || WINDOW_HOURS}h`)
+  return parts.join(' / ')
+}
+
+function buildEventTitle({ hasTyphoon, hasGridFault, hasPvDrop }) {
+  if (hasTyphoon && hasGridFault) return '台风电网受限应急预案'
+  if (hasTyphoon) return '台风天气应急预案'
+  if (hasGridFault) return '电网受限应急预案'
+  if (hasPvDrop) return '光伏突降应急预案'
+  return '应急调度预案'
+}
+
 function parsePromptToEventSpec(prompt = '') {
   const text = String(prompt).trim()
   const affectedModules = new Set()
+  const hasTyphoon = /台风|暴雨|恶劣天气|强对流|极端天气/.test(text)
+  const hasGridFault = /电网.*故障|购电.*下降|电网.*下降|限电|电网受限|外部供电受限|购电只剩/.test(text)
+  const hasPvDrop = /光伏.*下降|光伏.*突降|光照.*下降|辐照.*下降|云层|光伏腰斩/.test(text)
+  const hasPriceSurge = /电价.*飙升|价格.*飙升|现货.*高|电价.*上涨/.test(text)
+  const hasCarbonSurge = /碳因子.*高|碳排.*高|高碳|碳价.*高/.test(text)
+
   const spec = {
     type: 'grid_fault_or_limit',
-    title: '应急调度预案',
+    title: buildEventTitle({ hasTyphoon, hasGridFault, hasPvDrop }),
     severity: 'critical',
     startHour: new Date().getHours(),
     durationHours: WINDOW_HOURS,
     pvReduction: 0,
     gridReduction: 0,
-    priceMultiplier: 1,
-    carbonMultiplier: 1,
+    priceMultiplier: hasPriceSurge ? 1.45 : 1,
+    carbonMultiplier: hasCarbonSurge ? 1.3 : 1,
     weatherNote: '',
     affectedModules: [],
     rawPrompt: text,
+    parameterSource: {
+      gridReduction: 'none',
+      pvReduction: 'none',
+    },
+    parameterSummary: '',
   }
 
-  if (/台风|暴雨|恶劣天气|强对流/.test(text)) {
+  if (hasTyphoon) {
     spec.type = 'typhoon_weather'
-    spec.title = '台风天气应急调度'
-    spec.weatherNote = '天气恶化导致光伏和外部供能波动'
-    spec.pvReduction = Math.max(spec.pvReduction, 0.45)
-    affectedModules.add('pv')
+    spec.weatherNote = '天气恶化导致外部供能与光伏出力同步受损'
     affectedModules.add('grid')
+    affectedModules.add('pv')
   }
 
-  if (/电网.*故障|购电.*下降|电网.*下降|限电|电网受限/.test(text)) {
-    spec.type = spec.type === 'typhoon_weather' ? 'typhoon_weather' : 'grid_fault_or_limit'
-    spec.title = spec.title === '应急调度预案' ? '电网故障应急调度' : spec.title
-    spec.gridReduction = Math.max(spec.gridReduction, 0.5)
+  if (hasGridFault) {
+    spec.type = hasTyphoon ? 'typhoon_weather' : 'grid_fault_or_limit'
     affectedModules.add('grid')
     affectedModules.add('gm')
     affectedModules.add('pem')
     affectedModules.add('es')
+    affectedModules.add('ca')
   }
 
-  if (/光伏.*下降|光照.*下降|辐照.*下降|云层/.test(text)) {
-    if (spec.type === 'grid_fault_or_limit' && !/台风|暴雨|恶劣天气|强对流/.test(text)) {
-      spec.type = 'pv_drop'
-      spec.title = '光伏突降应急调度'
-    }
-    spec.pvReduction = Math.max(spec.pvReduction, 0.4)
+  if (hasPvDrop) {
+    if (!hasTyphoon && !hasGridFault) spec.type = 'pv_drop'
     affectedModules.add('pv')
   }
 
-  if (/电价.*飙升|价格.*飙升|现货.*高/.test(text)) {
-    spec.priceMultiplier = 1.45
-    affectedModules.add('market')
+  if (hasPriceSurge) affectedModules.add('market')
+  if (hasCarbonSurge) affectedModules.add('carbon')
+
+  const gridReductionHit = extractReduction(text, GRID_SUBJECT_RE)
+  const pvReductionHit = extractReduction(text, PV_SUBJECT_RE)
+
+  if (gridReductionHit) {
+    spec.gridReduction = clamp(gridReductionHit.reduction, 0, 0.98)
+    spec.parameterSource.gridReduction = 'user'
+  } else if (hasGridFault) {
+    spec.gridReduction = 0.55
+    spec.parameterSource.gridReduction = 'template'
   }
 
-  if (/碳因子.*高|碳排.*高|高碳/.test(text)) {
-    spec.carbonMultiplier = 1.3
-    affectedModules.add('carbon')
+  if (pvReductionHit) {
+    spec.pvReduction = clamp(pvReductionHit.reduction, 0, 0.95)
+    spec.parameterSource.pvReduction = 'user'
+  } else if (hasTyphoon) {
+    spec.pvReduction = 0.45
+    spec.parameterSource.pvReduction = 'template'
+  } else if (hasPvDrop) {
+    spec.pvReduction = 0.4
+    spec.parameterSource.pvReduction = 'template'
   }
 
   spec.affectedModules = [...affectedModules]
+  spec.parameterSummary = buildParameterSummary(spec)
   return spec
 }
 
 function normalizeEventSpec(input, prompt = '') {
   const base = parsePromptToEventSpec(prompt)
-  const spec = { ...base, ...(input || {}) }
+  const spec = {
+    ...base,
+    ...(input || {}),
+    parameterSource: {
+      ...(base.parameterSource || {}),
+      ...(input?.parameterSource || {}),
+    },
+  }
+
   spec.title = spec.title || base.title
   spec.type = spec.type || base.type
   spec.severity = spec.severity || 'critical'
   spec.startHour = clamp(toNumber(spec.startHour, base.startHour), 0, 23)
   spec.durationHours = WINDOW_HOURS
-  spec.pvReduction = clamp(toNumber(spec.pvReduction, base.pvReduction), 0, 0.9)
-  spec.gridReduction = clamp(toNumber(spec.gridReduction, base.gridReduction), 0, 0.95)
   spec.priceMultiplier = Math.max(1, toNumber(spec.priceMultiplier, base.priceMultiplier))
   spec.carbonMultiplier = Math.max(1, toNumber(spec.carbonMultiplier, base.carbonMultiplier))
   spec.weatherNote = String(spec.weatherNote || base.weatherNote || '')
   spec.affectedModules = Array.isArray(spec.affectedModules) && spec.affectedModules.length
-    ? spec.affectedModules
+    ? [...new Set(spec.affectedModules)]
     : base.affectedModules
   spec.rawPrompt = String(spec.rawPrompt || prompt || '')
+
+  if (input?.gridReduction != null && Number.isFinite(Number(input.gridReduction))) {
+    spec.gridReduction = clamp(Number(input.gridReduction), 0, 0.98)
+    spec.parameterSource.gridReduction = 'user'
+  } else {
+    spec.gridReduction = clamp(toNumber(spec.gridReduction, base.gridReduction), 0, 0.98)
+  }
+
+  if (input?.pvReduction != null && Number.isFinite(Number(input.pvReduction))) {
+    spec.pvReduction = clamp(Number(input.pvReduction), 0, 0.95)
+    spec.parameterSource.pvReduction = 'user'
+  } else {
+    spec.pvReduction = clamp(toNumber(spec.pvReduction, base.pvReduction), 0, 0.95)
+  }
+
+  spec.parameterSummary = String(spec.parameterSummary || buildParameterSummary(spec))
   return spec
 }
 
-function buildFallbackOutline(spec) {
-  const priorityOrder = spec.gridReduction > 0
-    ? ['P_PV', 'P_es_es', 'P_PEM', 'P_GM', 'P_G']
-    : ['P_PV', 'P_G', 'P_es_es', 'P_PEM', 'P_GM']
-
+function buildFallbackOutline(spec, reason = '') {
+  const priorityOrder = ['P_G', 'P_PV', 'P_es_es', 'P_PEM', 'P_GM', 'P_CA']
   const keyAnchors = [
-    spec.gridReduction > 0 ? '限制电网购电上限，优先调用园区内部灵活资源补缺口' : '电网维持兜底供能',
-    spec.pvReduction > 0 ? '光伏按事件降额，避免沿用正常天气假设' : '光伏维持基线出力',
-    '储能和 PEM 作为首轮快速响应资源，燃机承担持续补偿',
-    '当局部缺口仍存在时，适度下调电解槽负荷，确保保供优先',
+    spec.gridReduction > 0
+      ? '电网购电先按明确降幅封顶，避免“受限却反升”的不合理结果'
+      : '电网维持基线兜底供能',
+    spec.pvReduction > 0
+      ? '光伏按事件强度直接降额，不再沿用正常天气出力'
+      : '光伏维持基线出力',
+    '储能、PEM、燃机按边界顺序补缺口，优先保供关键负荷',
+    '若外部供能受损且内部补偿不足，则联动下调电解槽负荷直至缺口闭合',
   ]
-
-  const explanation = spec.type === 'typhoon_weather'
-    ? '已按台风天气与外部供能受损场景生成 4 小时应急调度。策略先压低光伏和购电能力，再由储能、PEM、燃机接力补偿，必要时对电解槽进行温和降载。'
-    : '已按突发供能受限场景生成 4 小时应急调度。策略优先保证关键负荷，其次使用园区内部灵活资源补偿缺口，并控制风险扩散。'
+  const explanationBase = spec.type === 'typhoon_weather'
+    ? '已按台风天气与外部供能受损场景生成 4 小时应急调度。'
+    : '已按突发供能受限场景生成 4 小时应急调度。'
+  const explanation = reason
+    ? `${explanationBase} 由于原方案未满足参数或物理约束，已切换为显式参数驱动的确定性方案。`
+    : `${explanationBase} 当前数值曲线严格受事件参数驱动，不允许话术与调度结果脱节。`
 
   return { priorityOrder, keyAnchors, explanation, degraded: true }
 }
@@ -181,18 +375,19 @@ async function planEmergencyOutline(spec, context, planner) {
       baselineSummary: context.baselineDataset?.summary ?? {},
       activeStrategy: context.activeStrategy,
     })
+    const fallback = buildFallbackOutline(spec)
     return {
       priorityOrder: Array.isArray(result?.priorityOrder) && result.priorityOrder.length
         ? result.priorityOrder
-        : buildFallbackOutline(spec).priorityOrder,
+        : fallback.priorityOrder,
       keyAnchors: Array.isArray(result?.keyAnchors) && result.keyAnchors.length
         ? result.keyAnchors
-        : buildFallbackOutline(spec).keyAnchors,
-      explanation: String(result?.explanation || buildFallbackOutline(spec).explanation),
+        : fallback.keyAnchors,
+      explanation: String(result?.explanation || fallback.explanation),
       degraded: false,
     }
   } catch {
-    return buildFallbackOutline(spec)
+    return buildFallbackOutline(spec, 'planner_failed')
   }
 }
 
@@ -227,7 +422,7 @@ function makeTimeLabel(viewDate, startHour, stepIndex) {
   }
 }
 
-function buildDeterministicDispatch(context, spec, outline) {
+function buildDeterministicDispatch(context, spec, outline, options = {}) {
   const { activeStrategy, baselineDataset, viewDate } = context
   const startHour = spec.startHour
   const baseCA = interpolateHourlyWindow(baselineDataset.P_CA?.[activeStrategy], startHour)
@@ -237,19 +432,28 @@ function buildDeterministicDispatch(context, spec, outline) {
   const baseG = interpolateHourlyWindow(baselineDataset.P_G?.[activeStrategy], startHour)
   const baseES = interpolateHourlyWindow(baselineDataset.P_es_es, startHour)
 
-  const gmCap = Math.max(...baseGM, 520) * 1.35
-  const pemCap = Math.max(...basePEM, 240) * 1.45
-  const gridBaseCap = Math.max(...baseG, 1800)
-  const esPowerMax = Math.max(...baseES, 420) * 1.25
-  let esEnergyRemain = esPowerMax * 2.2
+  const gmCap = Math.max(maxValue(baseGM, 0), 260) * (options.strict ? 1.2 : 1.1)
+  const pemCap = Math.max(maxValue(basePEM, 0), 180) * (options.strict ? 1.18 : 1.08)
+  const gridBaseCap = Math.max(maxValue(baseG, 0), 600)
+  const esPowerMax = Math.max(maxValue(baseES.map((value) => Math.abs(value)), 0), 220) * (options.strict ? 1.15 : 1.05)
+  const esEnergyMax = esPowerMax * 2.5
+  let esEnergyRemain = esEnergyMax
 
-  const ramp = { gm: 28, pem: 40, grid: 120, es: 70, ca: 45 }
+  const severityFactor = spec.severity === 'critical' ? 1 : 0.78
+  const ramp = {
+    grid: Math.max(40, gridBaseCap * 0.08),
+    gm: Math.max(18, gmCap * 0.06),
+    pem: Math.max(16, pemCap * 0.1),
+    es: Math.max(25, esPowerMax * 0.18),
+    ca: Math.max(28, maxValue(baseCA, 0) * 0.035),
+  }
+
   let prev = {
-    P_CA: baseCA[0] ?? 0,
+    P_G: clamp((baseG[0] ?? 0) * (1 - spec.gridReduction), 0, gridBaseCap),
     P_GM: Math.min(baseGM[0] ?? 0, gmCap),
     P_PEM: Math.min(basePEM[0] ?? 0, pemCap),
-    P_G: Math.min(baseG[0] ?? 0, gridBaseCap),
     P_es_es: 0,
+    P_CA: baseCA[0] ?? 0,
   }
 
   const labels = []
@@ -265,97 +469,181 @@ function buildDeterministicDispatch(context, spec, outline) {
   const points = []
 
   for (let i = 0; i < STEPS; i += 1) {
-    const demandBase = baseCA[i] ?? prev.P_CA
-    const pvBase = basePV[i] ?? 0
-    const pv = clamp(pvBase * (1 - spec.pvReduction), 0, pvBase)
-    const gridCap = clamp((baseG[i] ?? gridBaseCap) * (1 - spec.gridReduction), 120, gridBaseCap)
-    const caTarget = demandBase * (spec.gridReduction > 0.35 ? 0.96 : 0.99)
-    let pCA = applyRamp(caTarget, prev.P_CA, ramp.ca, demandBase * 1.02)
+    const demandBase = Math.max(0, baseCA[i] ?? prev.P_CA)
+    const pvBase = Math.max(0, basePV[i] ?? 0)
+    const gridBase = Math.max(0, baseG[i] ?? 0)
 
-    let remaining = Math.max(0, pCA - pv)
-    let pGrid = applyRamp(Math.min(gridCap, remaining * 0.22), prev.P_G, ramp.grid, gridCap)
-    remaining -= pGrid
+    const pPV = round(clamp(pvBase * (1 - spec.pvReduction), 0, pvBase), 4)
+    const gridCap = round(clamp(gridBase * (1 - spec.gridReduction), 0, gridBaseCap), 4)
+
+    const netDemandAfterExternal = Math.max(0, demandBase - pPV)
+    const pGrid = round(applyRamp(Math.min(gridCap, netDemandAfterExternal), prev.P_G, ramp.grid, gridCap), 4)
+
+    let shortage = Math.max(0, demandBase - pPV - pGrid)
 
     const esCapNow = Math.min(esPowerMax, esEnergyRemain * (60 / STEP_MINUTES))
-    let pES = applyRamp(Math.min(esCapNow, remaining * 0.48), prev.P_es_es, ramp.es, esCapNow)
-    remaining -= pES
+    const pES = round(applyRamp(Math.min(esCapNow, shortage), prev.P_es_es, ramp.es, esCapNow), 4)
+    shortage = Math.max(0, shortage - pES)
     esEnergyRemain = Math.max(0, esEnergyRemain - pES * (STEP_MINUTES / 60))
 
-    let pPEM = applyRamp(Math.min(pemCap, remaining * 0.72), prev.P_PEM, ramp.pem, pemCap)
-    remaining -= pPEM
+    const pemNeedRatio = clamp(0.55 + spec.gridReduction * 0.2 + spec.pvReduction * 0.08, 0.35, 0.9)
+    const pemTarget = shortage > 0 ? Math.min(pemCap, shortage * pemNeedRatio) : 0
+    const pPEM = round(applyRamp(pemTarget, prev.P_PEM, ramp.pem, pemCap), 4)
+    shortage = Math.max(0, shortage - pPEM)
 
-    let pGM = applyRamp(Math.min(gmCap, remaining), prev.P_GM, ramp.gm, gmCap)
-    remaining -= pGM
+    const gmTarget = shortage > 0 ? Math.min(gmCap, shortage * (1 + spec.gridReduction * 0.25) * severityFactor) : 0
+    const pGM = round(applyRamp(gmTarget, prev.P_GM, ramp.gm, gmCap), 4)
+    shortage = Math.max(0, shortage - pGM)
 
-    if (remaining > 0) {
-      const gridHeadroom = Math.max(0, gridCap - pGrid)
-      const addGrid = Math.min(gridHeadroom, remaining)
-      pGrid += addGrid
-      remaining -= addGrid
-    }
+    const flexibleSupply = pPV + pGrid + pES + pPEM + pGM
+    const curtailment = round(Math.max(0, demandBase - flexibleSupply), 4)
+    const caFloorRatio = options.strict ? 0.7 : 0.82
+    const pCATarget = Math.max(demandBase - curtailment, demandBase * caFloorRatio * (1 - 0.25 * spec.gridReduction))
+    let pCA = round(applyRamp(Math.min(demandBase, pCATarget), prev.P_CA, ramp.ca, demandBase), 4)
 
-    if (remaining > 0) {
-      pCA = Math.max(0, pCA - remaining)
-    }
+    if (curtailment > 0) pCA = round(Math.min(pCA, demandBase - curtailment), 4)
+    if (spec.gridReduction > 0 || spec.pvReduction > 0) pCA = Math.min(pCA, round(demandBase, 4))
 
-    const totalSupply = pv + pGrid + pES + pPEM + pGM
-    const gap = round(pCA - totalSupply, 4)
-    const riskLevel = gap > 120 ? 'high' : gap > 25 ? 'medium' : 'low'
+    const supplyTotal = round(pPV + pGrid + pES + pPEM + pGM, 4)
+    const residualGap = round(Math.max(0, pCA - supplyTotal), 4)
+    const totalGap = round(Math.max(curtailment, residualGap), 4)
+    const curtailmentRatio = demandBase > 0 ? totalGap / demandBase : 0
+    const riskLevel = totalGap > 220 || curtailmentRatio > 0.12
+      ? 'high'
+      : totalGap > 60 || curtailmentRatio > 0.04
+        ? 'medium'
+        : 'low'
     const time = makeTimeLabel(viewDate, startHour, i)
 
     labels.push(time.label)
     series.P_CA.push(round(pCA, 4))
-    series.P_PV.push(round(pv, 4))
-    series.P_G.push(round(pGrid, 4))
-    series.P_es_es.push(round(pES, 4))
-    series.P_PEM.push(round(pPEM, 4))
-    series.P_GM.push(round(pGM, 4))
-    series.gap.push(gap)
+    series.P_PV.push(pPV)
+    series.P_G.push(pGrid)
+    series.P_es_es.push(pES)
+    series.P_PEM.push(pPEM)
+    series.P_GM.push(pGM)
+    series.gap.push(totalGap)
+
     points.push({
       index: i,
       label: time.label,
       timestamp: time.timestamp,
       P_CA: round(pCA, 4),
-      P_PV: round(pv, 4),
-      P_G: round(pGrid, 4),
-      P_es_es: round(pES, 4),
-      P_PEM: round(pPEM, 4),
-      P_GM: round(pGM, 4),
-      supplyTotal: round(totalSupply, 4),
-      gap,
+      P_PV: pPV,
+      P_G: pGrid,
+      P_es_es: pES,
+      P_PEM: pPEM,
+      P_GM: pGM,
+      supplyTotal,
+      gap: totalGap,
       riskLevel,
     })
 
-    prev = { P_CA: pCA, P_G: pGrid, P_es_es: pES, P_PEM: pPEM, P_GM: pGM }
+    prev = { P_G: pGrid, P_GM: pGM, P_PEM: pPEM, P_es_es: pES, P_CA: pCA }
   }
 
-  const summary = {
-    peakGrid: round(Math.max(...series.P_G), 2),
-    peakPEM: round(Math.max(...series.P_PEM), 2),
-    peakGM: round(Math.max(...series.P_GM), 2),
-    peakStorage: round(Math.max(...series.P_es_es), 2),
-    maxGap: round(Math.max(...series.gap), 2),
-  }
+  const actualGridReduction = average(baseG) > 0 ? clamp(1 - average(series.P_G) / average(baseG), 0, 1) : 0
+  const actualPvReduction = average(basePV) > 0 ? clamp(1 - average(series.P_PV) / average(basePV), 0, 1) : 0
 
   return {
     labels,
     points,
     series,
-    summary,
+    summary: {
+      peakGrid: round(maxValue(series.P_G), 2),
+      peakPEM: round(maxValue(series.P_PEM), 2),
+      peakGM: round(maxValue(series.P_GM), 2),
+      peakStorage: round(maxValue(series.P_es_es), 2),
+      maxGap: round(maxValue(series.gap), 2),
+    },
     priorityOrder: outline.priorityOrder,
     keyAnchors: outline.keyAnchors,
     explanation: outline.explanation,
+    meta: {
+      generationMode: options.strict ? 'explicit-parameter-fallback' : 'parameter-driven',
+      parameterSummary: spec.parameterSummary,
+      parameterSource: spec.parameterSource,
+      requestedReductions: {
+        gridReduction: round(spec.gridReduction, 4),
+        pvReduction: round(spec.pvReduction, 4),
+      },
+      actualReductions: {
+        gridReduction: round(actualGridReduction, 4),
+        pvReduction: round(actualPvReduction, 4),
+      },
+      responseWindowHours: spec.durationHours || WINDOW_HOURS,
+      validationMessage: options.validationMessage || '',
+    },
   }
 }
 
-function validateDispatch(detail) {
+function validateDispatch(detail, context, spec) {
   const required = ['P_CA', 'P_PV', 'P_GM', 'P_PEM', 'P_G', 'P_es_es', 'gap']
   for (const key of required) {
     const values = detail.series?.[key]
-    if (!Array.isArray(values) || values.length !== STEPS) return false
-    if (values.some((value) => !Number.isFinite(value) || value < -1e-6)) return false
+    if (!Array.isArray(values) || values.length !== STEPS) return { valid: false, reason: `missing_${key}` }
+    if (values.some((value) => !Number.isFinite(value) || value < -1e-6)) return { valid: false, reason: `invalid_${key}` }
   }
-  return detail.points.every((point) => point.gap <= 180)
+
+  const { activeStrategy, baselineDataset } = context
+  const baseCA = interpolateHourlyWindow(baselineDataset.P_CA?.[activeStrategy], spec.startHour)
+  const basePV = interpolateHourlyWindow(baselineDataset.P_PV?.[activeStrategy], spec.startHour)
+  const baseG = interpolateHourlyWindow(baselineDataset.P_G?.[activeStrategy], spec.startHour)
+  const baseGM = interpolateHourlyWindow(baselineDataset.P_GM?.[activeStrategy], spec.startHour)
+  const basePEM = interpolateHourlyWindow(baselineDataset.P_PEM?.[activeStrategy], spec.startHour)
+  const baseES = interpolateHourlyWindow(baselineDataset.P_es_es, spec.startHour)
+
+  const avgBaseGrid = average(baseG)
+  const avgPlanGrid = average(detail.series.P_G)
+  const peakBaseGrid = maxValue(baseG)
+  const peakPlanGrid = maxValue(detail.series.P_G)
+  const avgBasePv = average(basePV)
+  const avgPlanPv = average(detail.series.P_PV)
+  const avgBaseCA = average(baseCA)
+  const avgPlanCA = average(detail.series.P_CA)
+
+  if (detail.points.some((point) => point.P_CA > point.supplyTotal + 1.5)) {
+    return { valid: false, reason: 'supply_not_closed' }
+  }
+
+  if (spec.gridReduction > 0 && avgBaseGrid > 0) {
+    const tolerance = spec.parameterSource?.gridReduction === 'user' ? 0.06 : 0.12
+    const allowedAvgMax = avgBaseGrid * (1 - Math.max(0, spec.gridReduction - tolerance))
+    const allowedPeakMax = peakBaseGrid * (1 - Math.max(0, spec.gridReduction - tolerance))
+    if (avgPlanGrid > allowedAvgMax + 1) return { valid: false, reason: 'grid_mean_not_reduced' }
+    if (peakPlanGrid > allowedPeakMax + 1) return { valid: false, reason: 'grid_peak_not_reduced' }
+  }
+
+  if (spec.pvReduction > 0 && avgBasePv > 0) {
+    const tolerance = spec.parameterSource?.pvReduction === 'user' ? 0.06 : 0.12
+    const minExpectedReduction = Math.max(0, spec.pvReduction - tolerance)
+    const actualReduction = 1 - avgPlanPv / avgBasePv
+    if (actualReduction < minExpectedReduction) return { valid: false, reason: 'pv_not_reduced_enough' }
+  }
+
+  const actualGridReduction = avgBaseGrid > 0 ? 1 - avgPlanGrid / avgBaseGrid : 0
+  const actualPvReduction = avgBasePv > 0 ? 1 - avgPlanPv / avgBasePv : 0
+
+  if (spec.parameterSource?.gridReduction === 'user' && spec.gridReduction > 0) {
+    if (actualGridReduction + 0.06 < spec.gridReduction) return { valid: false, reason: 'grid_user_parameter_deviated' }
+  }
+
+  if (spec.parameterSource?.pvReduction === 'user' && spec.pvReduction > 0 && avgBasePv > 0) {
+    if (actualPvReduction + 0.06 < spec.pvReduction) return { valid: false, reason: 'pv_user_parameter_deviated' }
+  }
+
+  const internalCompensationInsufficient = detail.points.some((point, index) => {
+    const externalLoss = (baseG[index] ?? 0) - (detail.series.P_G[index] ?? 0) + (basePV[index] ?? 0) - (detail.series.P_PV[index] ?? 0)
+    const internalGain = (detail.series.P_GM[index] ?? 0) + (detail.series.P_PEM[index] ?? 0) + (detail.series.P_es_es[index] ?? 0)
+      - ((baseGM[index] ?? 0) + (basePEM[index] ?? 0) + Math.max(0, baseES[index] ?? 0))
+    return externalLoss > Math.max(0, internalGain) + 1 && point.gap > 0
+  })
+
+  if (internalCompensationInsufficient && avgPlanCA > avgBaseCA + 1) {
+    return { valid: false, reason: 'ca_above_baseline_when_supply_insufficient' }
+  }
+
+  return { valid: true }
 }
 
 function computeSummaryFromDataset(dataset, baselineSummary, priceGrid, carbonGrid) {
@@ -404,7 +692,7 @@ function buildEmergencyDataset(context, detail, spec, runMeta = {}) {
       for (const metric of metrics) {
         const original = dataset[metric]?.[strategy]?.[hour] ?? 0
         const delta = (hourlyEmergency[metric][offset] ?? original) - (selectedBase[metric][hour] ?? 0)
-        const next = clamp(original + delta, 0, Math.max(original * 1.6, hourlyEmergency[metric][offset] * 1.15, 1))
+        const next = clamp(original + delta, 0, Math.max(original * 1.6, (hourlyEmergency[metric][offset] ?? 0) * 1.15, 1))
         dataset[metric][strategy][hour] = round(next, 4)
       }
     }
@@ -511,9 +799,7 @@ function serializeRun(row, { includeDatasets = false } = {}) {
 export async function createEmergencyDispatch(payload = {}, options = {}) {
   const source = payload.source || 'manual'
   const baseline = resolveBaselineInput(payload)
-  if (!baseline?.data) {
-    throw new Error('无法解析应急调度基线数据')
-  }
+  if (!baseline?.data) throw new Error('无法解析应急调度基线数据')
 
   const activeStrategy = payload.activeStrategy || 'es'
   const baselineMeta = baseline.meta || {}
@@ -531,12 +817,20 @@ export async function createEmergencyDispatch(payload = {}, options = {}) {
   }, eventSpec, outline)
 
   let degraded = outline.degraded
-  if (!validateDispatch(detail)) {
+  const validation = validateDispatch(detail, {
+    baselineDataset: baseline.data,
+    activeStrategy,
+  }, eventSpec)
+
+  if (!validation.valid) {
     detail = buildDeterministicDispatch({
       baselineDataset: baseline.data,
       activeStrategy,
       viewDate,
-    }, eventSpec, buildFallbackOutline(eventSpec))
+    }, eventSpec, buildFallbackOutline(eventSpec, validation.reason), {
+      strict: true,
+      validationMessage: validation.reason,
+    })
     degraded = true
   }
 
@@ -562,7 +856,6 @@ export async function createEmergencyDispatch(payload = {}, options = {}) {
   }
   db.prepare('UPDATE datasets SET data = ? WHERE id = ?').run(JSON.stringify(emergencyDataset), emergencyDatasetId)
 
-  const explanation = detail.explanation
   const runId = createEmergencyRun({
     title: eventSpec.title,
     source,
@@ -574,7 +867,7 @@ export async function createEmergencyDispatch(payload = {}, options = {}) {
     baseline_payload: baselineDatasetId ? null : baseline,
     event_spec: eventSpec,
     detail_payload: detail,
-    explanation,
+    explanation: detail.explanation,
   })
 
   const finalDataset = {
@@ -593,14 +886,12 @@ export async function createEmergencyDispatch(payload = {}, options = {}) {
     scope: 'emergency',
     message: `${source === 'auto' ? '自动' : '手动'}应急预案已生成`,
     targetDate: viewDate,
-    algorithm: degraded ? 'Emergency template dispatch' : 'Emergency AI dispatch',
-    detail: `${eventSpec.title} | datasetId ${emergencyDatasetId}`,
+    algorithm: degraded ? 'Emergency explicit-parameter fallback' : 'Emergency parameter-driven dispatch',
+    detail: `${eventSpec.title} | datasetId ${emergencyDatasetId} | ${eventSpec.parameterSummary}`,
   })
 
   const serialized = serializeRun(created, { includeDatasets: true })
-  if (options.broadcast !== false) {
-    broadcastEmergencyPlanCreated(serialized)
-  }
+  if (options.broadcast !== false) broadcastEmergencyPlanCreated(serialized)
   return serialized
 }
 
@@ -697,4 +988,3 @@ export function restoreEmergencyState(runId = null) {
   })
   return payload
 }
-
