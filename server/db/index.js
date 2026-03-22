@@ -64,6 +64,7 @@ export function initDb() {
   const schema = readFileSync(join(__dirname, 'schema.sql'), 'utf-8')
   database.exec(schema)
   ensureColumn(database, 'realtime_data', 'is_forecast', 'is_forecast INTEGER NOT NULL DEFAULT 0')
+  ensureColumn(database, 'conversations', 'workspace_state', 'workspace_state TEXT')
 
   const count = database.prepare('SELECT COUNT(*) as c FROM datasets').get()
   if (count.c === 0) {
@@ -225,13 +226,13 @@ export function listConversations() {
 }
 
 export function getConversation(id) {
-  const row = getDb().prepare('SELECT id, title, mode, created_at, updated_at FROM conversations WHERE id = ?').get(id)
+  const row = getDb().prepare('SELECT id, title, mode, workspace_state, created_at, updated_at FROM conversations WHERE id = ?').get(id)
   if (!row) return null
   const messages = getDb()
     .prepare('SELECT id, role, content, actions, created_at FROM conversation_messages WHERE conversation_id = ? ORDER BY id ASC')
     .all(id)
     .map((m) => ({ ...m, actions: m.actions ? JSON.parse(m.actions) : undefined }))
-  return { ...row, messages }
+  return { ...row, workspaceState: safeParseJson(row.workspace_state, null), messages }
 }
 
 export function createConversation(mode = 'agent') {
@@ -239,10 +240,16 @@ export function createConversation(mode = 'agent') {
   return info.lastInsertRowid
 }
 
-export function updateConversation(id, { title, mode }) {
+export function updateConversation(id, { title, mode, workspaceState }) {
   const db = getDb()
   if (title != null) db.prepare('UPDATE conversations SET title = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(title, id)
   if (mode != null) db.prepare('UPDATE conversations SET mode = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(mode, id)
+  if (workspaceState !== undefined) {
+    db.prepare('UPDATE conversations SET workspace_state = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+      workspaceState == null ? null : JSON.stringify(workspaceState),
+      id,
+    )
+  }
 }
 
 export function appendMessage(conversationId, { role, content, actions }) {

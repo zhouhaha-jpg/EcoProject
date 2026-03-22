@@ -76,6 +76,23 @@ export interface ConversationMessage {
   created_at: string
 }
 
+export interface ConversationWorkspaceState {
+  pageType: 'empty' | 'emergency' | 'scenario' | 'pareto'
+  route: string
+  emergencyRunId?: number | null
+  emergencyApplied?: boolean
+  scenarioPayload?: {
+    dataset: Record<string, unknown>
+    label: string
+  } | null
+  paretoPayload?: {
+    data: Record<string, unknown>
+    label: string
+  } | null
+  selectedPointIndex?: number | null
+  savedAt: string
+}
+
 export async function fetchConversationsList(): Promise<ConversationItem[]> {
   const res = await fetch(`${API_BASE}/conversations`)
   if (!res.ok) throw new Error(await res.text())
@@ -87,6 +104,7 @@ export async function fetchConversation(id: number): Promise<{
   id: number
   title: string
   mode: string
+  workspaceState?: ConversationWorkspaceState | null
   created_at: string
   updated_at: string
   messages: ConversationMessage[]
@@ -150,6 +168,15 @@ export async function runOptimizeSingle(
   })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
+}
+
+export async function updateConversationWorkspace(id: number, workspaceState: ConversationWorkspaceState | null): Promise<void> {
+  const res = await fetch(`${API_BASE}/conversations/${id}/workspace`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ workspaceState }),
+  })
+  if (!res.ok) throw new Error(await res.text())
 }
 
 export async function dispatchEmergencyPlan(payload: {

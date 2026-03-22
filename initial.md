@@ -72,7 +72,7 @@ EcoProject/
 │   ├── config.js                         ← API Key / Base URL / 模型配置
 │   ├── ws.js                             ← WebSocket 服务 (实时推送数据更新/预警/优化结果/应急预案事件)
 │   ├── routes/
-│   │   ├── conversations.js              ← 对话历史 API
+│   │   ├── conversations.js              ← 对话历史 API（含工作区快照读写）
 │   │   ├── datasets.js                   ← 数据集 API
 │   │   ├── emergency.js                  ← 应急调度 API（生成/列表/应用/回退）
 │   │   ├── optimize.js                   ← 优化求解 API (已集成实时数据自动注入)
@@ -82,7 +82,7 @@ EcoProject/
 │   │   ├── schema.sql                    ← 数据集、对话、实时数据、健康度、预警、应急预案、园区配置表
 │   │   └── seed.js                       ← 默认数据集种子
 │   ├── services/
-│   │   ├── emergencyDispatch.js          ← 应急预案生成/校验/入库/应用/回退
+│   │   ├── emergencyDispatch.js          ← LLM主导应急预案生成/校验重试/模板兜底/入库/应用/回退
 │   │   └── realtimeRefresh.js            ← 实时采集 + 自动优化 + WS 广播
 │   ├── python/
 │   │   ├── optimizer.py                  ← 当前主优化器（Python + SciPy）
@@ -99,7 +99,7 @@ EcoProject/
 │   ├── layout/
 │   │   └── MainLayout.tsx                ← 顶栏 + 导航 + Agent 侧边栏
 │   ├── context/
-│   │   └── StrategyContext.tsx           ← 全局数据、场景数据、Pareto、应急预案/应用态状态
+│   │   └── StrategyContext.tsx           ← 全局数据、场景数据、Pareto、应急预案/应用态状态与工作区清理
 │   ├── hooks/
 │   │   ├── useAgentChat.ts               ← Ask/Agent 对话与 tool_calls 编排
 │   │   ├── useAgentContext.ts            ← 注入 LLM 的完整上下文
@@ -109,7 +109,7 @@ EcoProject/
 │   │   └── api.ts                        ← 前端 API 客户端
 │   ├── components/
 │   │   ├── agent/
-│   │   │   ├── AgentSidebar.tsx          ← 侧边栏容器、历史对话、拖拽宽度、主动预警/应急预案入口
+│   │   │   ├── AgentSidebar.tsx          ← 侧边栏容器、历史对话、工作区快照恢复、拖拽宽度、主动预警/应急预案入口
 │   │   │   ├── AgentChat.tsx             ← 聊天窗口、工具链显示
 │   │   │   ├── AgentModeSwitch.tsx       ← Ask / Agent 模式切换
 │   │   │   ├── ConversationList.tsx      ← 历史对话列表
@@ -139,7 +139,7 @@ EcoProject/
 │   │   ├── OverviewPage.tsx              ← 总览页
 │   │   ├── EconomicIndicatorsPage.tsx    ← 经济指标页
 │   │   ├── StorageModulePage.tsx         ← 存储模块页
-│   │   ├── ScenarioComparePage.tsx       ← Agent 工作区（What-If / Pareto / 应急调度指挥页）
+│   │   ├── ScenarioComparePage.tsx       ← Agent 工作区（What-If / Pareto / 应急指挥舱）
 │   │   └── PrefixPage.tsx                ← 电解槽/光伏/燃机/PEM/电网统一模板页
 │   ├── types/
 │   │   └── index.ts                      ← 核心 TS 类型
@@ -225,6 +225,9 @@ interface EcoDataset {
 - `loadParetoData()`：保存 Pareto 扫描结果，并自动计算建议区间
 - `applyEmergencyRunState()`：将应急预案切换为全平台展示态，并保留正常态回退基线
 - `restoreNormalDatasetState()`：恢复到应急应用前的数据集
+- `resetWorkspaceState()`：清空 Agent 工作区结果，并在需要时恢复正常展示态
+
+> 当前应急态已新增 `datasetMeta.emergencyMode = 'single'` 语义。进入应急态后，顶部策略切换器会切换为单一应急执行态提示，不再强调 6 套策略并列比较。
 
 ### 5.3 默认数据来源
 
@@ -259,6 +262,7 @@ interface EcoDataset {
 | `PUT /api/realtime/config` | 更新园区配置（支持前端修改坐标） |
 | `GET /api/realtime/dates` | 可用数据日期列表 |
 | `GET/POST/PUT/DELETE /api/conversations...` | 对话历史增删改查 |
+| `PUT /api/conversations/:id/workspace` | 保存该对话最后一次 Agent 工作区快照 |
 | `WebSocket /ws` | 实时推送：data_updated / alert / optimization_complete / health_update / dataset_updated / emergency_plan_created / emergency_applied / emergency_restored |
 
 ### 6.2 Ask / Agent 两种模式
@@ -346,6 +350,9 @@ interface EcoDataset {
 
 ### 7.5 Agent 工作区 `ScenarioComparePage.tsx`
 
+- 如果当前有 `emergencyPreviewRun` 或 `emergencyActiveRun`：优先展示“应急指挥舱”
+- 指挥舱包含事件横幅、4小时联动曲线、基线虚线对照、点位详情、模块状态灯、事件时间线、风险热区矩阵与历史方案复用区
+- UI 会明确区分 `LLM生成` / `LLM生成·校验修正` / `模板兜底`
 - 如果当前有 `scenarioDataset`：展示“基准 vs 推演”的表格和 3 张对比图
 - 如果当前有 `paretoData`：展示 Pareto 前沿散点图、建议区间和说明文字
 - 如果两者都没有：显示示例指令引导用户在 Agent 面板发起操作
@@ -373,7 +380,7 @@ interface EcoDataset {
 
 ### 8.3 Agent 侧边栏
 
-- `AgentSidebar.tsx`：负责注册 Agent 处理器，并承载历史对话列表和主动预警弹窗
+- `AgentSidebar.tsx`：负责注册 Agent 处理器，并承载历史对话列表、当前会话 ID 本地持久化、工作区快照保存/恢复和主动预警弹窗
 - `AgentChat.tsx`：展示聊天内容、模式切换、工具链执行过程
 - `ProactiveAlert.tsx`：影子优化结果弹窗 + 普通预警列表，支持一键应用方案
 - 工具链显示风格参考 Cursor，显示为非气泡背景条
@@ -394,6 +401,8 @@ interface EcoDataset {
 8. 实时数据管线已建成：Open-Meteo 气象采集 → 浙江 TOU 电价 GBM 模拟 → 碳因子风光建模 → SQLite 存储 → WebSocket 推送 → 前端实时展示。
 9. Agent 新增主动预警能力：检测市场异动（电价尖峰/碳排突变）后自动触发影子优化，通过 WebSocket 推送结果，用户可一键应用。
 10. 园区坐标支持前端配置：通过 ParkConfigPopover 修改经纬度，影响 Open-Meteo 气象查询区域。
+11. 应急调度已从“LLM 出提纲 + 规则拼曲线”升级为“LLM 直接生成 4 小时 / 5 分钟多设备联动曲线，后端只做硬约束校验与反馈重试；连续失败后才退回模板兜底”。
+12. 对话历史现在不仅保存聊天消息，还会保存 Agent 工作区快照；刷新页面或从历史对话切回时，可以恢复对应的应急指挥舱 / What-If / Pareto 工作区。
 11. 三级电价降级策略已实现：优先爬虫（预留）→ GBM 模拟器 → 静态 TOU 兜底。LLM 预警文本同样有降级兜底。
 12. 自动优化闭环已打通：每次数据采集后自动运行 Python 优化器 → 保存到 datasets 表 → 通过 WS `dataset_updated` 广播完整数据集 → 前端 StrategyContext 自动更新 → 所有页面图表同步刷新（经济指标/存储/电解槽/光伏/燃气轮机/PEM/电网）。
 13. 数据源指示器可点击：顶栏 ☀️⚡🌿 标签点击后弹出 24h 三路数据曲线面板（RealtimeDataPanel），展示电价/光照/碳因子实时折线图及统计值。

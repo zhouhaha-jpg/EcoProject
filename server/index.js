@@ -89,7 +89,7 @@ const AGENT_SYSTEM_PROMPT = SYSTEM_PROMPT + `
 ### 优化调度（核心能力）
 - **run_whatif** - What-If 情景推演：修改系统参数，重新运行 MILP 优化，对比新旧方案。当用户说"如果光伏减少30%"、"如果电价上涨"等假设性问题时使用。
 - **add_constraint** - 约束注入：添加额外约束后重新求解。当用户说"限制某时段购电不超过X"时使用。
-- **run_emergency_dispatch** - 应急调度：当用户描述"台风来了"、"电网故障"、"购电下降"、"光伏骤降"等突发场景时使用。该工具会生成 4 小时、5 分钟粒度的应急预案曲线和说明，但默认只生成待应用预案，不会自动切换全站数据。
+- **run_emergency_dispatch** - 应急调度：当用户描述"台风来了"、"电网故障"、"购电下降"、"光伏骤降"等突发场景时使用。该工具必须生成 4 小时、5 分钟粒度的多设备联动曲线，严格执行用户明确给出的降幅，不允许出现“电网下降但曲线反升”之类错误。默认只生成待应用预案，不会自动切换全站数据。
 - **apply_emergency_run** - 应用指定应急预案到全平台展示。
 - **restore_normal_state** - 从应急态恢复到应用前的正常展示状态。
 - **list_emergency_runs** - 获取最近生成的应急预案列表，便于复用历史演示。
@@ -110,7 +110,7 @@ const AGENT_SYSTEM_PROMPT = SYSTEM_PROMPT + `
 - **get_alerts** - 获取最近的市场异动预警事件：电价波动、碳因子突变等，包含预警等级和详情。
 - **carbon_electricity_analysis** - 碳电协同分析：计算含碳税等效电价 P_eff = P_grid + EF_grid × C_carbon，找出"便宜但碳高"和"贵但碳低"的时段。当用户询问"到底是省钱还是减碳"、"碳电套利"等问题时使用。
 
-当用户明确表达突发事件、应急调度、保供、台风、电网故障、购电下降、光伏骤降等意图时，应优先调用 run_emergency_dispatch，而不是普通 What-If。
+当用户明确表达突发事件、应急调度、保供、台风、电网故障、购电下降、光伏骤降等意图时，应优先调用 run_emergency_dispatch，而不是普通 What-If。若用户给出明确百分比，必须严格执行，不能用模糊话术替代。
 
 当检测到市场异动时，你应主动分析其对当前调度方案的影响，并建议用户是否需要查看或应用新生成的应急预案。`
 
@@ -169,7 +169,7 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'run_emergency_dispatch',
-      description: '生成应急调度预案。适用于台风、恶劣天气、电网故障、购电下降、光伏骤降、供能受限等场景。返回待应用的应急预案、5分钟级联动曲线和说明。',
+      description: '生成应急调度预案。适用于台风、恶劣天气、电网故障、购电下降、光伏骤降、供能受限等场景。必须返回可应用的4小时5分钟级多设备联动曲线，且严格执行用户明确给出的降幅与方向约束。',
       parameters: {
         type: 'object',
         properties: {
@@ -338,7 +338,7 @@ const TOOLS = [
   },
 ]
 
-async function generateEmergencyOutline({ spec, prompt, baselineSummary, activeStrategy }) {
+async function generateEmergencyOutline({ spec, prompt, baselineSummary, activeStrategy, baselineWindow, feedbackIssues = [], attempt = 0 }) {
   if (!openai) {
     throw new Error('LLM unavailable')
   }
@@ -347,16 +347,36 @@ async function generateEmergencyOutline({ spec, prompt, baselineSummary, activeS
     messages: [
       {
         role: 'system',
-        content: '你是工业园区应急调度策划助手。只输出 JSON，字段为 priorityOrder(string[]), keyAnchors(string[]), explanation(string)。priorityOrder 仅使用 P_PV,P_es_es,P_PEM,P_GM,P_G,P_CA 这些标识。不要输出数值曲线。',
+        content: [
+          '你是工业园区应急调度总指挥。你必须直接生成 4 小时、5 分钟粒度、共 48 个点的多设备联动曲线。',
+          '只输出 JSON，不要输出 Markdown，不要输出解释性前后缀。',
+          '输出字段固定为：priorityOrder(string[]), keyAnchors(string[]), dispatchPrinciples(string[]), explanation(string), points(array[48]), timeline(array), riskMatrix(array), moduleStatus(array)。',
+          'points 每个元素必须包含 P_CA,P_PV,P_GM,P_PEM,P_G,P_es_es 六个数值字段。',
+          '绝对禁止事项：',
+          '1. 不得忽略用户给出的百分比。',
+          '2. 不得让受损场景下的 P_G 或 P_PV 逆势上升。',
+          '3. 外部供能下降时，P_CA 作为负荷不得逆势上升。',
+          '4. P_GM、P_PEM、P_es_es 只能作为补偿侧抬升，不能制造额外缺口。',
+          '5. 不得输出 schema 之外字段。',
+        ].join('\n'),
       },
       {
         role: 'user',
-        content: `事件: ${prompt}\n结构化事件: ${JSON.stringify(spec)}\n当前激活策略: ${activeStrategy}\n当前方案摘要: ${JSON.stringify(baselineSummary?.[activeStrategy] || {})}\n请给出应急编排优先级、关键动作锚点和一句完整说明。`,
+        content: [
+          `事件: ${prompt}`,
+          `结构化事件: ${JSON.stringify(spec)}`,
+          `当前激活策略: ${activeStrategy}`,
+          `当前方案摘要: ${JSON.stringify(baselineSummary?.[activeStrategy] || {})}`,
+          `4小时基线窗口: ${JSON.stringify(baselineWindow || {})}`,
+          `上一轮校验反馈: ${JSON.stringify(feedbackIssues)}`,
+          `当前尝试轮次: ${attempt + 1}`,
+          '请生成最终可执行的应急联动曲线。用户给出的降幅必须体现在数值结果中。',
+        ].join('\n'),
       },
     ],
     response_format: { type: 'json_object' },
     temperature: 0.2,
-    max_tokens: 400,
+    max_tokens: 3200,
   })
   return JSON.parse(completion.choices[0]?.message?.content || '{}')
 }

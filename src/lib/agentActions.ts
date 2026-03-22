@@ -159,7 +159,7 @@ export async function executeAction(
         }
         return {
           success: true,
-          message: `${data.run?.title ?? '应急预案'} 已生成${data.run?.degraded ? '（降级模式）' : ''}，可在 Agent 工作区查看并决定是否应用。`,
+          message: `${data.run?.title ?? '应急预案'} 已生成${data.run?.detailPayload?.audit?.generationMode === 'template_fallback' ? '（模板兜底）' : ''}，可在 Agent 工作区查看并决定是否应用。`,
           data: data.run,
         }
       }

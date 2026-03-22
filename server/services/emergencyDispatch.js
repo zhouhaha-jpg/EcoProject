@@ -24,6 +24,24 @@ const GM_CARBON_PER_KWH = 0.00078
 
 const GRID_SUBJECT_RE = /(购电|电网|外部供电|市电|网电)/
 const PV_SUBJECT_RE = /(光伏|太阳能|组件出力|光照)/
+const MAX_LLM_ATTEMPTS = 3
+const METRIC_ORDER = ['P_CA', 'P_PV', 'P_GM', 'P_PEM', 'P_G', 'P_es_es']
+const MODULE_LABELS = {
+  P_CA: '电解槽',
+  P_PV: '光伏',
+  P_GM: '燃机',
+  P_PEM: 'PEM',
+  P_G: '电网',
+  P_es_es: '储能',
+}
+const RAMP_LIMITS = {
+  P_CA: 220,
+  P_PV: 160,
+  P_GM: 90,
+  P_PEM: 80,
+  P_G: 120,
+  P_es_es: 120,
+}
 
 const CN_DIGITS = {
   零: 0,
@@ -357,38 +375,26 @@ function buildFallbackOutline(spec, reason = '') {
     '若外部供能受损且内部补偿不足，则联动下调电解槽负荷直至缺口闭合',
   ]
   const explanationBase = spec.type === 'typhoon_weather'
-    ? '已按台风天气与外部供能受损场景生成 4 小时应急调度。'
-    : '已按突发供能受限场景生成 4 小时应急调度。'
+    ? 'LLM 生成失败，已切换为规则模板兜底方案。'
+    : '未能获得可通过校验的 LLM 方案，已切换为规则模板兜底方案。'
   const explanation = reason
-    ? `${explanationBase} 由于原方案未满足参数或物理约束，已切换为显式参数驱动的确定性方案。`
-    : `${explanationBase} 当前数值曲线严格受事件参数驱动，不允许话术与调度结果脱节。`
+    ? `${explanationBase} 失败原因：${reason}。该结果仅用于兜底展示，不代表 LLM 生成。`
+    : `${explanationBase} 当前结果为非 LLM 生成，仅作为应急演示兜底。`
 
   return { priorityOrder, keyAnchors, explanation, degraded: true }
 }
 
-async function planEmergencyOutline(spec, context, planner) {
-  if (!planner) return buildFallbackOutline(spec)
-  try {
-    const result = await planner({
-      spec,
-      prompt: spec.rawPrompt || spec.title,
-      baselineSummary: context.baselineDataset?.summary ?? {},
-      activeStrategy: context.activeStrategy,
-    })
-    const fallback = buildFallbackOutline(spec)
-    return {
-      priorityOrder: Array.isArray(result?.priorityOrder) && result.priorityOrder.length
-        ? result.priorityOrder
-        : fallback.priorityOrder,
-      keyAnchors: Array.isArray(result?.keyAnchors) && result.keyAnchors.length
-        ? result.keyAnchors
-        : fallback.keyAnchors,
-      explanation: String(result?.explanation || fallback.explanation),
-      degraded: false,
-    }
-  } catch {
-    return buildFallbackOutline(spec, 'planner_failed')
-  }
+async function planEmergencyDispatch(spec, context, planner, feedbackIssues = [], attempt = 0) {
+  if (!planner) throw new Error('planner_unavailable')
+  return planner({
+    spec,
+    prompt: spec.rawPrompt || spec.title,
+    baselineSummary: context.baselineDataset?.summary ?? {},
+    activeStrategy: context.activeStrategy,
+    baselineWindow: buildBaselineWindow(context.baselineDataset, context.activeStrategy, spec.startHour, context.viewDate),
+    feedbackIssues,
+    attempt,
+  })
 }
 
 function readRealtimeSnapshot(viewDate) {
@@ -420,6 +426,282 @@ function makeTimeLabel(viewDate, startHour, stepIndex) {
     label,
     timestamp: `${viewDate || getBeijingDate()} ${label}:00`,
   }
+}
+
+function buildBaselineWindow(baselineDataset, activeStrategy, startHour, viewDate) {
+  const series = {
+    P_CA: interpolateHourlyWindow(baselineDataset.P_CA?.[activeStrategy], startHour),
+    P_PV: interpolateHourlyWindow(baselineDataset.P_PV?.[activeStrategy], startHour),
+    P_GM: interpolateHourlyWindow(baselineDataset.P_GM?.[activeStrategy], startHour),
+    P_PEM: interpolateHourlyWindow(baselineDataset.P_PEM?.[activeStrategy], startHour),
+    P_G: interpolateHourlyWindow(baselineDataset.P_G?.[activeStrategy], startHour),
+    P_es_es: interpolateHourlyWindow(baselineDataset.P_es_es, startHour),
+  }
+  const labels = []
+  const points = []
+  for (let i = 0; i < STEPS; i += 1) {
+    const time = makeTimeLabel(viewDate, startHour, i)
+    const supplyTotal = round(series.P_PV[i] + series.P_G[i] + series.P_es_es[i] + series.P_PEM[i] + series.P_GM[i], 4)
+    labels.push(time.label)
+    points.push({
+      index: i,
+      label: time.label,
+      timestamp: time.timestamp,
+      P_CA: round(series.P_CA[i], 4),
+      P_PV: round(series.P_PV[i], 4),
+      P_GM: round(series.P_GM[i], 4),
+      P_PEM: round(series.P_PEM[i], 4),
+      P_G: round(series.P_G[i], 4),
+      P_es_es: round(series.P_es_es[i], 4),
+      supplyTotal,
+      gap: round(Math.max(0, series.P_CA[i] - supplyTotal), 4),
+      riskLevel: 'low',
+    })
+  }
+  return { labels, series, points }
+}
+
+function buildSeriesFromPoints(points) {
+  return {
+    P_CA: points.map((point) => round(point.P_CA, 4)),
+    P_PV: points.map((point) => round(point.P_PV, 4)),
+    P_GM: points.map((point) => round(point.P_GM, 4)),
+    P_PEM: points.map((point) => round(point.P_PEM, 4)),
+    P_G: points.map((point) => round(point.P_G, 4)),
+    P_es_es: points.map((point) => round(point.P_es_es, 4)),
+    gap: points.map((point) => round(point.gap, 4)),
+  }
+}
+
+function buildRiskLevel(gap, demand) {
+  const ratio = demand > 0 ? gap / demand : 0
+  if (gap > 220 || ratio > 0.12) return 'high'
+  if (gap > 60 || ratio > 0.04) return 'medium'
+  return 'low'
+}
+
+function normalizePlannerPoint(rawPoint, baselinePoint, index) {
+  const point = {
+    index,
+    label: baselinePoint.label,
+    timestamp: baselinePoint.timestamp,
+    P_CA: round(Math.max(0, toNumber(rawPoint?.P_CA, baselinePoint.P_CA)), 4),
+    P_PV: round(Math.max(0, toNumber(rawPoint?.P_PV, baselinePoint.P_PV)), 4),
+    P_GM: round(Math.max(0, toNumber(rawPoint?.P_GM, baselinePoint.P_GM)), 4),
+    P_PEM: round(Math.max(0, toNumber(rawPoint?.P_PEM, baselinePoint.P_PEM)), 4),
+    P_G: round(Math.max(0, toNumber(rawPoint?.P_G, baselinePoint.P_G)), 4),
+    P_es_es: round(Math.max(0, toNumber(rawPoint?.P_es_es, Math.max(0, baselinePoint.P_es_es))), 4),
+  }
+  point.supplyTotal = round(point.P_PV + point.P_G + point.P_es_es + point.P_PEM + point.P_GM, 4)
+  point.gap = round(Math.max(0, point.P_CA - point.supplyTotal), 4)
+  point.riskLevel = rawPoint?.riskLevel || buildRiskLevel(point.gap, point.P_CA)
+  return point
+}
+
+function buildTimeline(points, spec, timeline = []) {
+  if (Array.isArray(timeline) && timeline.length) {
+    return timeline.slice(0, 8).map((item, index) => ({
+      time: String(item.time || points[Math.min(index * 12, points.length - 1)]?.label || '--:--'),
+      title: String(item.title || `动作 ${index + 1}`),
+      detail: String(item.detail || item.action || '按预案调整设备联动'),
+      severity: String(item.severity || 'warning'),
+      action: item.action ? String(item.action) : undefined,
+    }))
+  }
+  const peakGapPoint = [...points].sort((a, b) => b.gap - a.gap)[0] || points[0]
+  const peakSupportPoint = [...points].sort((a, b) => (b.P_GM + b.P_PEM + b.P_es_es) - (a.P_GM + a.P_PEM + a.P_es_es))[0] || points[0]
+  return [
+    {
+      time: points[0]?.label || '--:--',
+      title: '事件确认',
+      detail: `${spec.title} 已进入 ${WINDOW_HOURS} 小时应急编排窗口，开始压降外部供能依赖。`,
+      severity: spec.severity || 'critical',
+      action: '锁定电网与光伏降额边界',
+    },
+    {
+      time: peakSupportPoint?.label || '--:--',
+      title: '内部支撑抬升',
+      detail: `燃机、PEM、储能在 ${peakSupportPoint?.label || '--:--'} 附近承担最大补偿任务。`,
+      severity: 'warning',
+      action: '提升内部支撑出力并控制爬坡',
+    },
+    {
+      time: peakGapPoint?.label || '--:--',
+      title: '缺口压制',
+      detail: `在 ${peakGapPoint?.label || '--:--'} 识别到最大供能缺口，联动下调电解槽负荷。`,
+      severity: peakGapPoint?.gap > 120 ? 'critical' : 'warning',
+      action: '压降柔性负荷，闭合供需缺口',
+    },
+    {
+      time: points[points.length - 1]?.label || '--:--',
+      title: '窗口收束',
+      detail: '4 小时应急窗口末端进入收束阶段，保留后续回退或二次编排空间。',
+      severity: 'info',
+      action: '保持单一应急执行态',
+    },
+  ]
+}
+
+function scoreToRiskLevel(score) {
+  if (score >= 72) return 'high'
+  if (score >= 42) return 'medium'
+  return 'low'
+}
+
+function buildRiskMatrix(detail) {
+  const windows = Array.from({ length: WINDOW_HOURS }, (_, index) => ({
+    label: `${String(index).padStart(2, '0')}:00-${String(index + 1).padStart(2, '0')}:00`,
+    start: index * 12,
+    end: index * 12 + 12,
+  }))
+  const moduleSeries = {
+    电网: detail.series.P_G,
+    光伏: detail.series.P_PV,
+    电解槽: detail.series.P_CA,
+    燃机: detail.series.P_GM,
+    PEM: detail.series.P_PEM,
+    储能: detail.series.P_es_es,
+  }
+  return Object.entries(moduleSeries).flatMap(([module, values]) => windows.map((window) => {
+    const slice = values.slice(window.start, window.end)
+    const avg = average(slice)
+    const peak = maxValue(slice)
+    const rawScore = module === '电网'
+      ? (avg / 1000) * 18
+      : module === '光伏'
+        ? (avg / 800) * 16
+        : module === '电解槽'
+          ? (avg / 1000) * 12
+          : module === '燃机'
+            ? (peak / 400) * 20
+            : module === 'PEM'
+              ? (peak / 220) * 22
+              : (peak / 240) * 24
+    const score = round(clamp(rawScore, 5, 100), 0)
+    return {
+      module,
+      windowLabel: window.label,
+      level: scoreToRiskLevel(score),
+      score,
+      reason: `${module} 在 ${window.label} 承担 ${module === '电解槽' ? '负荷压降' : '应急支撑'}任务`,
+    }
+  }))
+}
+
+function buildModuleStatus(detail) {
+  const latestPoint = detail.points[detail.points.length - 1] || detail.points[0]
+  return Object.entries(MODULE_LABELS).map(([key, module]) => {
+    const riskCells = detail.riskMatrix?.filter((cell) => cell.module === module) || []
+    const maxScore = maxValue(riskCells.map((cell) => cell.score), 0)
+    const level = maxScore >= 72 ? 'red' : maxScore >= 42 ? 'amber' : 'green'
+    return {
+      module,
+      level,
+      title: key === 'P_CA'
+        ? '柔性负荷压降'
+        : key === 'P_G' || key === 'P_PV'
+          ? '受损边界执行'
+          : '内部支撑调节',
+      detail: level === 'red'
+        ? `${module} 当前处于高压支撑或高风险状态`
+        : level === 'amber'
+          ? `${module} 当前处于承压运行状态`
+          : `${module} 当前维持正常/待命状态`,
+      suggestion: key === 'P_CA'
+        ? '继续压降柔性负荷，避免逆势抬升'
+        : key === 'P_G' || key === 'P_PV'
+          ? '按事件边界保持降额，不允许反弹'
+          : '维持支撑爬坡，避免超调',
+      currentValue: round(latestPoint?.[key] ?? 0, 2),
+      unit: 'kW',
+    }
+  })
+}
+
+function enrichDetail(detail, context, spec, generationMode, validationIssues = [], retries = 0) {
+  const baselineWindow = buildBaselineWindow(context.baselineDataset, context.activeStrategy, spec.startHour, context.viewDate)
+  const actualGridReduction = average(baselineWindow.series.P_G) > 0 ? clamp(1 - average(detail.series.P_G) / average(baselineWindow.series.P_G), 0, 1) : 0
+  const actualPvReduction = average(baselineWindow.series.P_PV) > 0 ? clamp(1 - average(detail.series.P_PV) / average(baselineWindow.series.P_PV), 0, 1) : 0
+
+  detail.baselineSeries = baselineWindow.series
+  detail.summary = {
+    ...detail.summary,
+    peakGrid: round(maxValue(detail.series.P_G), 2),
+    peakPEM: round(maxValue(detail.series.P_PEM), 2),
+    peakGM: round(maxValue(detail.series.P_GM), 2),
+    peakStorage: round(maxValue(detail.series.P_es_es), 2),
+    peakCA: round(maxValue(detail.series.P_CA), 2),
+    maxGap: round(maxValue(detail.series.gap), 2),
+    requestedGridReduction: round(spec.gridReduction ?? 0, 4),
+    requestedPvReduction: round(spec.pvReduction ?? 0, 4),
+    actualGridReduction: round(actualGridReduction, 4),
+    actualPvReduction: round(actualPvReduction, 4),
+  }
+  detail.dispatchPrinciples = Array.isArray(detail.dispatchPrinciples) && detail.dispatchPrinciples.length
+    ? detail.dispatchPrinciples
+    : detail.keyAnchors
+  detail.timeline = buildTimeline(detail.points, spec, detail.timeline)
+  detail.riskMatrix = buildRiskMatrix(detail)
+  detail.moduleStatus = buildModuleStatus(detail)
+  detail.audit = {
+    generationMode,
+    requestedReductions: {
+      gridReduction: round(spec.gridReduction ?? 0, 4),
+      pvReduction: round(spec.pvReduction ?? 0, 4),
+    },
+    actualReductions: {
+      gridReduction: round(actualGridReduction, 4),
+      pvReduction: round(actualPvReduction, 4),
+    },
+    validation: {
+      passed: validationIssues.length === 0,
+      issues: validationIssues,
+      retries,
+    },
+    fallbackUsed: generationMode === 'template_fallback',
+  }
+  detail.meta = {
+    ...(detail.meta || {}),
+    generationMode,
+    parameterSummary: spec.parameterSummary,
+    parameterSource: spec.parameterSource,
+    requestedReductions: {
+      gridReduction: round(spec.gridReduction ?? 0, 4),
+      pvReduction: round(spec.pvReduction ?? 0, 4),
+    },
+    actualReductions: {
+      gridReduction: round(actualGridReduction, 4),
+      pvReduction: round(actualPvReduction, 4),
+    },
+    responseWindowHours: spec.durationHours || WINDOW_HOURS,
+    validationMessage: validationIssues.join(' | '),
+  }
+  return detail
+}
+
+function buildDetailFromPlanner(plan, context, spec, generationMode, validationIssues = [], retries = 0) {
+  const baselineWindow = buildBaselineWindow(context.baselineDataset, context.activeStrategy, spec.startHour, context.viewDate)
+  const rawPoints = Array.isArray(plan?.points) ? plan.points.slice(0, STEPS) : []
+  const points = baselineWindow.points.map((baselinePoint, index) => normalizePlannerPoint(rawPoints[index], baselinePoint, index))
+  const detail = {
+    labels: baselineWindow.labels,
+    points,
+    series: buildSeriesFromPoints(points),
+    summary: {},
+    priorityOrder: Array.isArray(plan?.priorityOrder) && plan.priorityOrder.length
+      ? plan.priorityOrder
+      : ['P_G', 'P_PV', 'P_es_es', 'P_PEM', 'P_GM', 'P_CA'],
+    keyAnchors: Array.isArray(plan?.keyAnchors) && plan.keyAnchors.length
+      ? plan.keyAnchors.map((item) => String(item))
+      : ['电网与光伏按事件边界降额', '燃机、PEM、储能作为补偿侧抬升', '电解槽在供能受限时联动压降'],
+    explanation: String(plan?.explanation || '已生成应急调度指挥曲线。'),
+    dispatchPrinciples: Array.isArray(plan?.dispatchPrinciples) ? plan.dispatchPrinciples.map((item) => String(item)) : [],
+    timeline: plan?.timeline,
+    riskMatrix: Array.isArray(plan?.riskMatrix) ? plan.riskMatrix : [],
+    moduleStatus: Array.isArray(plan?.moduleStatus) ? plan.moduleStatus : [],
+    meta: { rawPointCount: rawPoints.length },
+  }
+  return enrichDetail(detail, context, spec, generationMode, validationIssues, retries)
 }
 
 function buildDeterministicDispatch(context, spec, outline, options = {}) {
@@ -542,47 +824,38 @@ function buildDeterministicDispatch(context, spec, outline, options = {}) {
     prev = { P_G: pGrid, P_GM: pGM, P_PEM: pPEM, P_es_es: pES, P_CA: pCA }
   }
 
-  const actualGridReduction = average(baseG) > 0 ? clamp(1 - average(series.P_G) / average(baseG), 0, 1) : 0
-  const actualPvReduction = average(basePV) > 0 ? clamp(1 - average(series.P_PV) / average(basePV), 0, 1) : 0
-
   return {
     labels,
     points,
     series,
-    summary: {
-      peakGrid: round(maxValue(series.P_G), 2),
-      peakPEM: round(maxValue(series.P_PEM), 2),
-      peakGM: round(maxValue(series.P_GM), 2),
-      peakStorage: round(maxValue(series.P_es_es), 2),
-      maxGap: round(maxValue(series.gap), 2),
-    },
+    summary: {},
     priorityOrder: outline.priorityOrder,
     keyAnchors: outline.keyAnchors,
     explanation: outline.explanation,
+    dispatchPrinciples: outline.keyAnchors,
+    timeline: [],
+    riskMatrix: [],
+    moduleStatus: [],
     meta: {
-      generationMode: options.strict ? 'explicit-parameter-fallback' : 'parameter-driven',
-      parameterSummary: spec.parameterSummary,
-      parameterSource: spec.parameterSource,
-      requestedReductions: {
-        gridReduction: round(spec.gridReduction, 4),
-        pvReduction: round(spec.pvReduction, 4),
-      },
-      actualReductions: {
-        gridReduction: round(actualGridReduction, 4),
-        pvReduction: round(actualPvReduction, 4),
-      },
-      responseWindowHours: spec.durationHours || WINDOW_HOURS,
+      generationMode: 'template_fallback',
       validationMessage: options.validationMessage || '',
     },
   }
 }
 
 function validateDispatch(detail, context, spec) {
+  const issues = []
+  if (detail.meta?.rawPointCount != null && detail.meta.rawPointCount !== STEPS) {
+    issues.push('invalid_point_count')
+  }
   const required = ['P_CA', 'P_PV', 'P_GM', 'P_PEM', 'P_G', 'P_es_es', 'gap']
   for (const key of required) {
     const values = detail.series?.[key]
-    if (!Array.isArray(values) || values.length !== STEPS) return { valid: false, reason: `missing_${key}` }
-    if (values.some((value) => !Number.isFinite(value) || value < -1e-6)) return { valid: false, reason: `invalid_${key}` }
+    if (!Array.isArray(values) || values.length !== STEPS) {
+      issues.push(`missing_${key}`)
+      continue
+    }
+    if (values.some((value) => !Number.isFinite(value) || value < -1e-6)) issues.push(`invalid_${key}`)
   }
 
   const { activeStrategy, baselineDataset } = context
@@ -603,33 +876,37 @@ function validateDispatch(detail, context, spec) {
   const avgPlanCA = average(detail.series.P_CA)
 
   if (detail.points.some((point) => point.P_CA > point.supplyTotal + 1.5)) {
-    return { valid: false, reason: 'supply_not_closed' }
+    issues.push('supply_not_closed')
   }
 
   if (spec.gridReduction > 0 && avgBaseGrid > 0) {
     const tolerance = spec.parameterSource?.gridReduction === 'user' ? 0.06 : 0.12
     const allowedAvgMax = avgBaseGrid * (1 - Math.max(0, spec.gridReduction - tolerance))
     const allowedPeakMax = peakBaseGrid * (1 - Math.max(0, spec.gridReduction - tolerance))
-    if (avgPlanGrid > allowedAvgMax + 1) return { valid: false, reason: 'grid_mean_not_reduced' }
-    if (peakPlanGrid > allowedPeakMax + 1) return { valid: false, reason: 'grid_peak_not_reduced' }
+    if (avgPlanGrid > allowedAvgMax + 1) issues.push('grid_mean_not_reduced')
+    if (peakPlanGrid > allowedPeakMax + 1) issues.push('grid_peak_not_reduced')
   }
 
   if (spec.pvReduction > 0 && avgBasePv > 0) {
     const tolerance = spec.parameterSource?.pvReduction === 'user' ? 0.06 : 0.12
     const minExpectedReduction = Math.max(0, spec.pvReduction - tolerance)
     const actualReduction = 1 - avgPlanPv / avgBasePv
-    if (actualReduction < minExpectedReduction) return { valid: false, reason: 'pv_not_reduced_enough' }
+    if (actualReduction < minExpectedReduction) issues.push('pv_not_reduced_enough')
   }
 
   const actualGridReduction = avgBaseGrid > 0 ? 1 - avgPlanGrid / avgBaseGrid : 0
   const actualPvReduction = avgBasePv > 0 ? 1 - avgPlanPv / avgBasePv : 0
 
   if (spec.parameterSource?.gridReduction === 'user' && spec.gridReduction > 0) {
-    if (actualGridReduction + 0.06 < spec.gridReduction) return { valid: false, reason: 'grid_user_parameter_deviated' }
+    if (actualGridReduction + 0.06 < spec.gridReduction) issues.push('grid_user_parameter_deviated')
   }
 
   if (spec.parameterSource?.pvReduction === 'user' && spec.pvReduction > 0 && avgBasePv > 0) {
-    if (actualPvReduction + 0.06 < spec.pvReduction) return { valid: false, reason: 'pv_user_parameter_deviated' }
+    if (actualPvReduction + 0.06 < spec.pvReduction) issues.push('pv_user_parameter_deviated')
+  }
+
+  if ((spec.gridReduction > 0 || spec.pvReduction > 0) && avgPlanCA > avgBaseCA + 1) {
+    issues.push('ca_above_baseline_under_disturbance')
   }
 
   const internalCompensationInsufficient = detail.points.some((point, index) => {
@@ -640,10 +917,29 @@ function validateDispatch(detail, context, spec) {
   })
 
   if (internalCompensationInsufficient && avgPlanCA > avgBaseCA + 1) {
-    return { valid: false, reason: 'ca_above_baseline_when_supply_insufficient' }
+    issues.push('ca_above_baseline_when_supply_insufficient')
   }
 
-  return { valid: true }
+  if (detail.points.some((point, index) => {
+    const externalLoss = Math.max(0, (baseG[index] ?? 0) - (detail.series.P_G[index] ?? 0))
+      + Math.max(0, (basePV[index] ?? 0) - (detail.series.P_PV[index] ?? 0))
+    return externalLoss > 1 && point.P_CA > (baseCA[index] ?? 0) + 1
+  })) {
+    issues.push('ca_rises_when_external_supply_drops')
+  }
+
+  for (const metric of METRIC_ORDER) {
+    const values = detail.series?.[metric] || []
+    const limit = RAMP_LIMITS[metric]
+    for (let i = 1; i < values.length; i += 1) {
+      if (Math.abs(values[i] - values[i - 1]) > limit) {
+        issues.push(`${metric}_ramp_exceeded`)
+        break
+      }
+    }
+  }
+
+  return { valid: issues.length === 0, issues }
 }
 
 function computeSummaryFromDataset(dataset, baselineSummary, priceGrid, carbonGrid) {
@@ -675,6 +971,8 @@ function buildEmergencyDataset(context, detail, spec, runMeta = {}) {
     P_GM: ensureArray(baselineDataset.P_GM?.[activeStrategy]),
     P_PEM: ensureArray(baselineDataset.P_PEM?.[activeStrategy]),
     P_G: ensureArray(baselineDataset.P_G?.[activeStrategy]),
+    H_CA: ensureArray(baselineDataset.H_CA?.[activeStrategy]),
+    H_PEM: ensureArray(baselineDataset.H_PEM?.[activeStrategy]),
   }
   const hourlyEmergency = {
     P_CA: avgChunk(detail.series.P_CA),
@@ -688,13 +986,18 @@ function buildEmergencyDataset(context, detail, spec, runMeta = {}) {
   for (const strategy of STRATEGIES) {
     for (let offset = 0; offset < firstHours; offset += 1) {
       const hour = clamp(startHour + offset, 0, 23)
-      const metrics = ['P_CA', 'P_PV', 'P_GM', 'P_PEM', 'P_G']
-      for (const metric of metrics) {
-        const original = dataset[metric]?.[strategy]?.[hour] ?? 0
-        const delta = (hourlyEmergency[metric][offset] ?? original) - (selectedBase[metric][hour] ?? 0)
-        const next = clamp(original + delta, 0, Math.max(original * 1.6, (hourlyEmergency[metric][offset] ?? 0) * 1.15, 1))
-        dataset[metric][strategy][hour] = round(next, 4)
-      }
+      dataset.P_CA[strategy][hour] = round(hourlyEmergency.P_CA[offset] ?? dataset.P_CA[strategy][hour] ?? 0, 4)
+      dataset.P_PV[strategy][hour] = round(hourlyEmergency.P_PV[offset] ?? dataset.P_PV[strategy][hour] ?? 0, 4)
+      dataset.P_GM[strategy][hour] = round(hourlyEmergency.P_GM[offset] ?? dataset.P_GM[strategy][hour] ?? 0, 4)
+      dataset.P_PEM[strategy][hour] = round(hourlyEmergency.P_PEM[offset] ?? dataset.P_PEM[strategy][hour] ?? 0, 4)
+      dataset.P_G[strategy][hour] = round(hourlyEmergency.P_G[offset] ?? dataset.P_G[strategy][hour] ?? 0, 4)
+
+      const baseCa = Math.max(selectedBase.P_CA[hour] ?? 0, 1)
+      const basePem = Math.max(selectedBase.P_PEM[hour] ?? 0, 1)
+      const caScale = (hourlyEmergency.P_CA[offset] ?? baseCa) / baseCa
+      const pemScale = (hourlyEmergency.P_PEM[offset] ?? basePem) / basePem
+      dataset.H_CA[strategy][hour] = round((selectedBase.H_CA[hour] ?? dataset.H_CA[strategy][hour] ?? 0) * caScale, 6)
+      dataset.H_PEM[strategy][hour] = round((selectedBase.H_PEM[hour] ?? dataset.H_PEM[strategy][hour] ?? 0) * pemScale, 6)
     }
   }
 
@@ -715,6 +1018,7 @@ function buildEmergencyDataset(context, detail, spec, runMeta = {}) {
     emergencyRunId: runMeta.emergencyRunId ?? null,
     emergencyActive: Boolean(runMeta.emergencyActive),
     emergencyTitle: spec.title,
+    emergencyMode: 'single',
   }
 
   return dataset
@@ -796,6 +1100,42 @@ function serializeRun(row, { includeDatasets = false } = {}) {
   return run
 }
 
+async function generateEmergencyDispatchWithLLM(payload, options, context, eventSpec) {
+  let feedbackIssues = []
+  let lastError = 'planner_failed'
+
+  for (let attempt = 0; attempt < MAX_LLM_ATTEMPTS; attempt += 1) {
+    try {
+      const plan = await planEmergencyDispatch(eventSpec, context, options.planner, feedbackIssues, attempt)
+      const detail = buildDetailFromPlanner(
+        plan,
+        context,
+        eventSpec,
+        attempt === 0 ? 'llm_direct' : 'llm_corrected',
+        feedbackIssues,
+        attempt,
+      )
+      const validation = validateDispatch(detail, context, eventSpec)
+      if (validation.valid) {
+        detail.audit.validation = {
+          passed: true,
+          issues: validation.issues,
+          retries: attempt,
+        }
+        detail.meta.validationMessage = validation.issues.join(' | ')
+        return { detail, degraded: false }
+      }
+      feedbackIssues = validation.issues
+      lastError = validation.issues.join(',')
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error)
+      feedbackIssues = feedbackIssues.length ? feedbackIssues : [lastError]
+    }
+  }
+
+  throw new Error(lastError || 'llm_generation_failed')
+}
+
 export async function createEmergencyDispatch(payload = {}, options = {}) {
   const source = payload.source || 'manual'
   const baseline = resolveBaselineInput(payload)
@@ -805,42 +1145,32 @@ export async function createEmergencyDispatch(payload = {}, options = {}) {
   const baselineMeta = baseline.meta || {}
   const viewDate = baselineMeta.viewDate || getBeijingDate()
   const eventSpec = normalizeEventSpec(payload.eventSpec, payload.prompt || '')
-  const outline = await planEmergencyOutline(eventSpec, {
-    baselineDataset: baseline.data,
-    activeStrategy,
-  }, options.planner)
-
-  let detail = buildDeterministicDispatch({
+  const context = {
     baselineDataset: baseline.data,
     activeStrategy,
     viewDate,
-  }, eventSpec, outline)
+  }
 
-  let degraded = outline.degraded
-  const validation = validateDispatch(detail, {
-    baselineDataset: baseline.data,
-    activeStrategy,
-  }, eventSpec)
+  let detail
+  let degraded = false
+  let fallbackReason = ''
 
-  if (!validation.valid) {
-    detail = buildDeterministicDispatch({
-      baselineDataset: baseline.data,
-      activeStrategy,
-      viewDate,
-    }, eventSpec, buildFallbackOutline(eventSpec, validation.reason), {
+  try {
+    const generated = await generateEmergencyDispatchWithLLM(payload, options, context, eventSpec)
+    detail = generated.detail
+    degraded = generated.degraded
+  } catch (error) {
+    fallbackReason = error instanceof Error ? error.message : String(error)
+    detail = enrichDetail(buildDeterministicDispatch(context, eventSpec, buildFallbackOutline(eventSpec, fallbackReason), {
       strict: true,
-      validationMessage: validation.reason,
-    })
+      validationMessage: fallbackReason,
+    }), context, eventSpec, 'template_fallback', fallbackReason ? [fallbackReason] : [], MAX_LLM_ATTEMPTS)
     degraded = true
   }
 
   const db = getDb()
   const baselineDatasetId = baselineMeta.datasetId ?? payload.baselineDatasetId ?? null
-  const emergencyDataset = buildEmergencyDataset({
-    baselineDataset: baseline.data,
-    activeStrategy,
-    viewDate,
-  }, detail, eventSpec, {
+  const emergencyDataset = buildEmergencyDataset(context, detail, eventSpec, {
     baselineDatasetId,
     emergencyActive: false,
   })
@@ -853,6 +1183,7 @@ export async function createEmergencyDispatch(payload = {}, options = {}) {
     datasetId: emergencyDatasetId,
     datasetName,
     emergencyActive: false,
+    emergencyMode: 'single',
   }
   db.prepare('UPDATE datasets SET data = ? WHERE id = ?').run(JSON.stringify(emergencyDataset), emergencyDatasetId)
 
@@ -880,13 +1211,14 @@ export async function createEmergencyDispatch(payload = {}, options = {}) {
   db.prepare('UPDATE datasets SET data = ? WHERE id = ?').run(JSON.stringify(finalDataset), emergencyDatasetId)
 
   const created = getEmergencyRunById(runId)
+  const generationMode = detail?.audit?.generationMode || detail?.meta?.generationMode || 'unknown'
   pushServerLog({
     level: degraded ? 'warn' : 'ok',
     status: 'done',
     scope: 'emergency',
     message: `${source === 'auto' ? '自动' : '手动'}应急预案已生成`,
     targetDate: viewDate,
-    algorithm: degraded ? 'Emergency explicit-parameter fallback' : 'Emergency parameter-driven dispatch',
+    algorithm: generationMode,
     detail: `${eventSpec.title} | datasetId ${emergencyDatasetId} | ${eventSpec.parameterSummary}`,
   })
 
@@ -918,6 +1250,7 @@ export function applyEmergencyRun(id) {
     emergencyRunId: row.id,
     baselineDatasetId: row.baseline_dataset_id ?? null,
     emergencyActive: true,
+    emergencyMode: 'single',
   }
   const nextData = { ...dataset.data, _meta: meta }
   getDb().prepare('UPDATE datasets SET data = ? WHERE id = ?').run(JSON.stringify(nextData), dataset.id)
@@ -975,7 +1308,16 @@ export function restoreEmergencyState(runId = null) {
   })
   const payload = {
     run: serializeRun(updated, { includeDatasets: true }),
-    baselineDataset: baseline,
+    baselineDataset: {
+      ...baseline,
+      meta: {
+        ...(baseline.meta || {}),
+        emergencyActive: false,
+        emergencyRunId: null,
+        emergencyTitle: '',
+        emergencyMode: 'single',
+      },
+    },
   }
   broadcastEmergencyRestored(payload)
   pushServerLog({

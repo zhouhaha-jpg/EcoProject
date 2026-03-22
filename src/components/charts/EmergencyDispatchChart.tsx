@@ -132,6 +132,24 @@ export default function EmergencyDispatchChart({ detail, onPointHover }: Emergen
           },
           tooltip: { show: false },
         },
+        ...(detail.baselineSeries
+          ? SERIES_META.map(({ key, name, color }) => ({
+              name: `${name}基线`,
+              type: 'line' as const,
+              data: detail.baselineSeries?.[key] ?? [],
+              symbol: 'none',
+              silent: true,
+              z: 1,
+              lineStyle: {
+                width: 1,
+                type: 'dashed' as const,
+                color: hexToRgba(color, 0.5),
+                opacity: 0.65,
+              },
+              itemStyle: { color },
+              tooltip: { show: false },
+            }))
+          : []),
         ...SERIES_META.map(({ key, name, color }) => ({
           name,
           type: 'line' as const,

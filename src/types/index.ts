@@ -47,6 +47,7 @@ export interface DatasetMeta {
   emergencyRunId?: number | null
   emergencyActive?: boolean
   emergencyTitle?: string
+  emergencyMode?: 'single' | string
 }
 
 export type ServerLogLevel = 'info' | 'warn' | 'ok' | 'err'
@@ -136,6 +137,32 @@ export interface EmergencyPointDetail {
   riskLevel: 'low' | 'medium' | 'high' | string
 }
 
+export interface EmergencyTimelineItem {
+  time: string
+  title: string
+  detail: string
+  severity: 'info' | 'warning' | 'critical' | string
+  action?: string
+}
+
+export interface EmergencyRiskCell {
+  module: string
+  windowLabel: string
+  level: 'low' | 'medium' | 'high' | string
+  score: number
+  reason: string
+}
+
+export interface EmergencyModuleStatus {
+  module: string
+  level: 'green' | 'amber' | 'red' | string
+  title: string
+  detail: string
+  suggestion?: string
+  currentValue?: number
+  unit?: string
+}
+
 export interface EmergencyDetailSeries {
   labels: string[]
   series: {
@@ -148,16 +175,50 @@ export interface EmergencyDetailSeries {
     gap: number[]
   }
   points: EmergencyPointDetail[]
+  baselineSeries?: {
+    P_CA: number[]
+    P_PV: number[]
+    P_GM: number[]
+    P_PEM: number[]
+    P_G: number[]
+    P_es_es: number[]
+  }
   summary: {
     peakGrid: number
     peakPEM: number
     peakGM: number
     peakStorage: number
     maxGap: number
+    peakCA?: number
+    requestedGridReduction?: number
+    requestedPvReduction?: number
+    actualGridReduction?: number
+    actualPvReduction?: number
   }
   priorityOrder: string[]
   keyAnchors: string[]
   explanation: string
+  timeline?: EmergencyTimelineItem[]
+  riskMatrix?: EmergencyRiskCell[]
+  moduleStatus?: EmergencyModuleStatus[]
+  dispatchPrinciples?: string[]
+  audit?: {
+    generationMode?: 'llm_direct' | 'llm_corrected' | 'template_fallback' | string
+    requestedReductions?: {
+      gridReduction?: number
+      pvReduction?: number
+    }
+    actualReductions?: {
+      gridReduction?: number
+      pvReduction?: number
+    }
+    validation?: {
+      passed: boolean
+      issues: string[]
+      retries?: number
+    }
+    fallbackUsed?: boolean
+  }
   meta?: {
     generationMode?: string
     parameterSummary?: string

@@ -57,14 +57,28 @@ router.put('/:id', (req, res) => {
   try {
     const id = parseInt(req.params.id, 10)
     if (isNaN(id)) return res.status(400).json({ error: '无效 ID' })
-    const { title, mode } = req.body
-    if (!title && !mode) return res.status(400).json({ error: '需提供 title 或 mode' })
+    const { title, mode, workspaceState } = req.body
+    if (title == null && mode == null && workspaceState === undefined) return res.status(400).json({ error: '需提供 title、mode 或 workspaceState' })
     const exists = getConversation(id)
     if (!exists) return res.status(404).json({ error: '对话不存在' })
-    updateConversation(id, { title, mode })
+    updateConversation(id, { title, mode, workspaceState })
     res.json({ ok: true })
   } catch (err) {
     console.error('[conversations update]', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.put('/:id/workspace', (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10)
+    if (isNaN(id)) return res.status(400).json({ error: '无效 ID' })
+    const exists = getConversation(id)
+    if (!exists) return res.status(404).json({ error: '对话不存在' })
+    updateConversation(id, { workspaceState: req.body?.workspaceState ?? null })
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('[conversations workspace]', err)
     res.status(500).json({ error: err.message })
   }
 })

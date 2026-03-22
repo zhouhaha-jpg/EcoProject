@@ -4,7 +4,7 @@
  * - scenarioDataset：What-If 推演 基准 vs 推演 表格+图表
  * - paretoData：Pareto 前沿散点图 + 最优区间建议
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { useStrategy } from '@/context/StrategyContext'
 import ScenarioCompareChart from '@/components/charts/ScenarioCompareChart'
 import ParetoFrontierChart from '@/components/charts/ParetoFrontierChart'
@@ -86,39 +86,47 @@ export default function ScenarioComparePage() {
   if (currentEmergency) {
     const detail = currentEmergency.detailPayload
     const point = activePoint
+    const audit = detail.audit
+    const requestedGrid = audit?.requestedReductions?.gridReduction ?? detail.summary.requestedGridReduction ?? 0
+    const requestedPv = audit?.requestedReductions?.pvReduction ?? detail.summary.requestedPvReduction ?? 0
+    const actualGrid = audit?.actualReductions?.gridReduction ?? detail.summary.actualGridReduction ?? 0
+    const actualPv = audit?.actualReductions?.pvReduction ?? detail.summary.actualPvReduction ?? 0
+    const generationMode = audit?.generationMode ?? detail.meta?.generationMode ?? (currentEmergency.degraded ? 'template_fallback' : 'llm_direct')
 
     return (
-      <div className="h-full min-h-0 overflow-auto" style={{ display: 'grid', gridTemplateRows: 'auto auto 1fr auto', gap: 12 }}>
+      <div className="h-full min-h-0 overflow-auto" style={{ display: 'grid', gridTemplateRows: 'auto auto auto auto', gap: 12 }}>
         <div className="panel shrink-0">
           <div className="panel-title-bar flex items-center justify-between">
             <span>应急调度指挥页 — {currentEmergency.title}</span>
             <div className="flex items-center gap-2 text-[10px]" style={{ color: '#5a7a9a' }}>
               <span>{currentEmergency.source === 'auto' ? 'AUTO' : 'MANUAL'}</span>
               <span>·</span>
-              <span>{currentEmergency.degraded ? '降级模式' : 'AI 编排'}</span>
+              <span>{renderGenerationLabel(generationMode)}</span>
               <span>·</span>
               <span>{currentEmergency.status}</span>
             </div>
           </div>
-          <div style={{ padding: 16, display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: 16 }}>
-            <div>
-              <div style={{ color: '#e8f4ff', fontSize: 14, fontWeight: 600 }}>{currentEmergency.eventSpec.title}</div>
-              <p style={{ color: '#8ba9cc', fontSize: 12, lineHeight: 1.8, marginTop: 8 }}>
+          <div style={{ padding: 16, display: 'grid', gridTemplateColumns: '1.6fr 1fr', gap: 16 }}>
+            <div style={{ display: 'grid', gap: 10 }}>
+              <div style={{ color: '#e8f4ff', fontSize: 15, fontWeight: 700 }}>{currentEmergency.eventSpec.title}</div>
+              <p style={{ color: '#8ba9cc', fontSize: 12, lineHeight: 1.8 }}>
                 {currentEmergency.explanation}
               </p>
-              <div style={{ marginTop: 8, color: '#69f0ae', fontSize: 12 }}>
-                事件参数摘要：{currentEmergency.eventSpec.parameterSummary ?? detail.meta?.parameterSummary ?? '未识别具体幅度，使用默认值'}
-              </div>
-              <div className="flex flex-wrap gap-2" style={{ marginTop: 10 }}>
+              <div className="flex flex-wrap gap-2">
+                <ModeBadge label={renderGenerationLabel(generationMode)} tone={generationMode === 'template_fallback' ? 'warn' : generationMode === 'llm_corrected' ? 'info' : 'ok'} />
+                <ModeBadge label={datasetMeta.emergencyActive && datasetMeta.emergencyRunId === currentEmergency.id ? '已应用到全站' : '仅预览'} tone={datasetMeta.emergencyActive && datasetMeta.emergencyRunId === currentEmergency.id ? 'warn' : 'info'} />
                 {(currentEmergency.eventSpec.affectedModules || []).map((tag) => (
                   <span key={tag} className="hud-chip" style={{ fontSize: 10 }}>{tag}</span>
                 ))}
               </div>
+              <div style={{ color: '#69f0ae', fontSize: 12 }}>
+                事件参数摘要：{currentEmergency.eventSpec.parameterSummary ?? detail.meta?.parameterSummary ?? '未识别具体幅度，使用默认值'}
+              </div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
-              <SummaryCell label="峰值电网" value={`${detail.summary.peakGrid.toFixed(0)} kW`} accent="#ce93d8" />
-              <SummaryCell label="峰值燃机" value={`${detail.summary.peakGM.toFixed(0)} kW`} accent="#ffb347" />
-              <SummaryCell label="峰值 PEM" value={`${detail.summary.peakPEM.toFixed(0)} kW`} accent="#29d4ff" />
+              <SummaryCell label="电网请求/实际" value={`${Math.round(requestedGrid * 100)}% / ${Math.round(actualGrid * 100)}%`} accent="#ce93d8" />
+              <SummaryCell label="光伏请求/实际" value={`${Math.round(requestedPv * 100)}% / ${Math.round(actualPv * 100)}%`} accent="#c6f135" />
+              <SummaryCell label="峰值燃机/PEM" value={`${detail.summary.peakGM.toFixed(0)} / ${detail.summary.peakPEM.toFixed(0)} kW`} accent="#ffb347" />
               <SummaryCell label="最大缺口" value={`${detail.summary.maxGap.toFixed(1)} kW`} accent={detail.summary.maxGap > 25 ? '#ff7043' : '#69f0ae'} />
             </div>
           </div>
@@ -133,10 +141,10 @@ export default function ScenarioComparePage() {
           </div>
 
           <div className="panel">
-            <div className="panel-title-bar">当前点位数据</div>
-            <div style={{ padding: 16 }}>
+            <div className="panel-title-bar">点位与模块状态</div>
+            <div style={{ padding: 16, display: 'grid', gap: 14 }}>
               {point ? (
-                <>
+                <div>
                   <div style={{ color: '#00d4ff', fontFamily: "'Rajdhani', sans-serif", fontSize: 20, fontWeight: 700 }}>
                     {point.label}
                   </div>
@@ -154,30 +162,40 @@ export default function ScenarioComparePage() {
                   <div style={{ marginTop: 12, color: point.riskLevel === 'high' ? '#ff7043' : point.riskLevel === 'medium' ? '#ffd740' : '#69f0ae', fontSize: 12, fontWeight: 600 }}>
                     风险等级：{point.riskLevel.toUpperCase()}
                   </div>
-                </>
+                </div>
               ) : (
                 <div style={{ color: '#5a7a9a', fontSize: 12 }}>移动鼠标到曲线上查看点位详情。</div>
               )}
+
+              <div style={{ display: 'grid', gap: 8 }}>
+                {(detail.moduleStatus || []).map((status) => (
+                  <ModuleLamp key={status.module} status={status} />
+                ))}
+              </div>
             </div>
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.2fr) minmax(320px, 0.8fr)', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1.1fr) minmax(320px, 0.9fr)', gap: 12 }}>
           <div className="panel">
-            <div className="panel-title-bar">调度说明</div>
+            <div className="panel-title-bar">事件时间线</div>
             <div style={{ padding: 16, color: '#8ba9cc', fontSize: 12, lineHeight: 1.8 }}>
-              <p><b style={{ color: '#4e9eff' }}>优先顺序</b>：{detail.priorityOrder.join(' → ')}</p>
-              <div style={{ marginTop: 8 }}>
-                {detail.keyAnchors.map((item) => (
-                  <div key={item} style={{ marginBottom: 6 }}>• {item}</div>
+              <div style={{ display: 'grid', gap: 10 }}>
+                {(detail.timeline || []).map((item) => (
+                  <div key={`${item.time}-${item.title}`} style={{ borderLeft: '2px solid #00d4ff55', paddingLeft: 12 }}>
+                    <div style={{ color: '#00d4ff', fontSize: 11, fontWeight: 700 }}>{item.time} · {item.title}</div>
+                    <div style={{ color: '#8ba9cc', marginTop: 4 }}>{item.detail}</div>
+                    {item.action ? <div style={{ color: '#5a7a9a', marginTop: 2 }}>动作：{item.action}</div> : null}
+                  </div>
                 ))}
               </div>
-              <p style={{ marginTop: 8, color: '#69f0ae' }}>
-                事件参数摘要：{currentEmergency.eventSpec.parameterSummary ?? detail.meta?.parameterSummary ?? '未识别具体幅度，使用默认值'}
-              </p>
-              <p style={{ marginTop: 8, color: '#5a7a9a' }}>
-                说明：应急预案默认只覆盖前 4 小时响应窗口；全站其他图表展示的是该 5 分钟曲线聚合后的小时级结果。
-              </p>
+            </div>
+          </div>
+
+          <div className="panel">
+            <div className="panel-title-bar">风险热区</div>
+            <div style={{ padding: 16, overflowX: 'auto' }}>
+              <RiskMatrixTable items={detail.riskMatrix || []} />
             </div>
           </div>
 
@@ -248,9 +266,17 @@ export default function ScenarioComparePage() {
         </div>
 
         <div className="panel shrink-0">
-          <div className="panel-title-bar">展示提示</div>
+          <div className="panel-title-bar">调度原则与说明</div>
           <div style={{ padding: 16, color: '#8ba9cc', fontSize: 12, lineHeight: 1.8 }}>
-            当前应急方案已入库，可反复切回该状态进行展示。若要回到普通推演或 Pareto 分析，可先执行回退，再在右侧 Agent 中继续发起新任务。
+            <p><b style={{ color: '#4e9eff' }}>优先顺序</b>：{detail.priorityOrder.join(' → ')}</p>
+            <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
+              {(detail.dispatchPrinciples || detail.keyAnchors).map((item) => (
+                <div key={item}>• {item}</div>
+              ))}
+            </div>
+            <p style={{ marginTop: 8, color: '#5a7a9a' }}>
+              说明：主图实线为当前应急曲线，虚线为同窗口基线。应急态默认覆盖前 4 小时响应窗口，并以单一应急执行态驱动全站展示。
+            </p>
           </div>
         </div>
       </div>
@@ -412,14 +438,99 @@ function PointRow({ label, value, color }: { label: string; value: number; color
   )
 }
 
-const thStyle: React.CSSProperties = {
+function renderGenerationLabel(mode: string) {
+  if (mode === 'template_fallback') return '模板兜底'
+  if (mode === 'llm_corrected') return 'LLM生成·校验修正'
+  return 'LLM生成'
+}
+
+function ModeBadge({ label, tone }: { label: string; tone: 'ok' | 'info' | 'warn' }) {
+  const palette = tone === 'warn'
+    ? { color: '#ffb199', border: '#ff704355', bg: 'rgba(255,112,67,0.12)' }
+    : tone === 'ok'
+      ? { color: '#69f0ae', border: '#69f0ae55', bg: 'rgba(105,240,174,0.12)' }
+      : { color: '#00d4ff', border: '#00d4ff55', bg: 'rgba(0,212,255,0.12)' }
+  return (
+    <span style={{ fontSize: 10, color: palette.color, border: `1px solid ${palette.border}`, background: palette.bg, borderRadius: 6, padding: '3px 8px' }}>
+      {label}
+    </span>
+  )
+}
+
+function ModuleLamp({ status }: { status: NonNullable<EmergencyRun['detailPayload']['moduleStatus']>[number] }) {
+  const color = status.level === 'red' ? '#ff7043' : status.level === 'amber' ? '#ffd740' : '#69f0ae'
+  return (
+    <div className="rounded border" style={{ borderColor: `${color}33`, background: `${color}10`, padding: 10 }}>
+      <div className="flex items-center gap-2">
+        <span style={{ width: 8, height: 8, borderRadius: '999px', background: color, boxShadow: `0 0 14px ${color}` }} />
+        <span style={{ color: '#e8f4ff', fontSize: 12, fontWeight: 600 }}>{status.module}</span>
+        <span style={{ color, fontSize: 10 }}>{status.title}</span>
+      </div>
+      <div style={{ color: '#8ba9cc', fontSize: 11, marginTop: 6 }}>{status.detail}</div>
+      <div style={{ color: '#5a7a9a', fontSize: 10, marginTop: 4 }}>
+        当前值：{status.currentValue?.toFixed(1) ?? '--'} {status.unit ?? ''}
+      </div>
+      {status.suggestion ? <div style={{ color: '#69f0ae', fontSize: 10, marginTop: 4 }}>建议：{status.suggestion}</div> : null}
+    </div>
+  )
+}
+
+function RiskMatrixTable({ items }: { items: NonNullable<EmergencyRun['detailPayload']['riskMatrix']> }) {
+  const modules = Array.from(new Set(items.map((item) => item.module)))
+  const windows = Array.from(new Set(items.map((item) => item.windowLabel)))
+  return (
+    <table className="w-full border-collapse" style={{ fontSize: 11 }}>
+      <thead>
+        <tr>
+          <th style={matrixHeadStyle}>模块</th>
+          {windows.map((window) => (
+            <th key={window} style={matrixHeadStyle}>{window}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {modules.map((module) => (
+          <tr key={module}>
+            <td style={matrixCellStyle}>{module}</td>
+            {windows.map((window) => {
+              const cell = items.find((item) => item.module === module && item.windowLabel === window)
+              const color = cell?.level === 'high' ? '#ff7043' : cell?.level === 'medium' ? '#ffd740' : '#69f0ae'
+              return (
+                <td key={`${module}-${window}`} style={{ ...matrixCellStyle, color, background: `${color}12` }}>
+                  <div style={{ fontWeight: 700 }}>{cell?.score ?? '--'}</div>
+                  <div style={{ color: '#5a7a9a', fontSize: 10 }}>{cell?.reason ?? '--'}</div>
+                </td>
+              )
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+const thStyle: CSSProperties = {
   padding: '10px 10px', textAlign: 'right', color: '#8ba9cc',
   borderBottom: '1px solid #1e3256', fontWeight: 600, fontSize: 11,
 }
-const tdStyle: React.CSSProperties = {
+const tdStyle: CSSProperties = {
   padding: '8px 10px', color: '#8ba9cc', borderBottom: '1px solid #111b2e',
 }
-const tdNumStyle: React.CSSProperties = {
+const tdNumStyle: CSSProperties = {
   padding: '8px 10px', textAlign: 'right', color: '#e8f4ff',
   borderBottom: '1px solid #111b2e', fontVariantNumeric: 'tabular-nums',
+}
+
+const matrixHeadStyle: CSSProperties = {
+  padding: '8px 10px',
+  borderBottom: '1px solid #1e3256',
+  color: '#8ba9cc',
+  textAlign: 'center',
+}
+
+const matrixCellStyle: CSSProperties = {
+  padding: '8px 10px',
+  borderBottom: '1px solid #111b2e',
+  textAlign: 'center',
+  verticalAlign: 'top',
 }

@@ -2,7 +2,15 @@ import { useStrategy } from '@/context/StrategyContext'
 import type { StrategyKey } from '@/types'
 
 export default function StrategySwitcher() {
-  const { selectedStrategies, toggleStrategy, strategyMeta } = useStrategy()
+  const { selectedStrategies, toggleStrategy, strategyMeta, datasetMeta } = useStrategy()
+
+  if (datasetMeta?.emergencyActive && datasetMeta?.emergencyMode === 'single') {
+    return (
+      <div className="rounded border border-[#ff7043]/50 bg-[#ff7043]/10 px-3 py-1.5 text-[11px] tracking-[0.16em] text-[#ffb199]">
+        EMERGENCY SINGLE MODE
+      </div>
+    )
+  }
 
   return (
     <div className="flex items-center gap-1">

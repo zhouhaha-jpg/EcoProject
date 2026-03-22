@@ -5,6 +5,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useStrategy } from '@/context/StrategyContext'
+import type { ParetoData } from '@/context/StrategyContext'
 import { registerAgentHandlers } from '@/lib/agentActions'
 import { useAgentContext } from '@/hooks/useAgentContext'
 import { useAgentChat } from '@/hooks/useAgentChat'
@@ -16,12 +17,16 @@ import {
   fetchConversationsList,
   fetchConversation,
   deleteConversation,
+  updateConversationWorkspace,
+  fetchEmergencyRun,
 } from '@/lib/api'
 import { applyEmergencyRunApi } from '@/lib/api'
-import type { ConversationItem } from '@/lib/api'
+import type { ConversationItem, ConversationWorkspaceState } from '@/lib/api'
 import type { ChatMessage } from '@/hooks/useAgentChat'
 import type { RealtimeState, ShadowOptimization } from '@/hooks/useRealtimeData'
 import type { EmergencyRun } from '@/types'
+
+const CONVERSATION_STORAGE_KEY = 'eco-agent-current-conversation-id'
 
 const MIN_WIDTH = 280
 const MAX_WIDTH = 520
@@ -35,22 +40,89 @@ interface AgentSidebarProps {
   }
 }
 
+function buildWorkspaceState(args: {
+  scenarioDataset: Record<string, unknown> | null
+  scenarioLabel: string | null
+  paretoData: Record<string, unknown> | null
+  paretoLabel: string | null
+  emergencyPreviewRun: EmergencyRun | null
+  emergencyActiveRun: EmergencyRun | null
+  datasetMetaEmergency: boolean | undefined
+}): ConversationWorkspaceState {
+  const currentEmergency = args.emergencyPreviewRun ?? args.emergencyActiveRun
+  if (currentEmergency) {
+    return {
+      pageType: 'emergency',
+      route: '/scenario',
+      emergencyRunId: currentEmergency.id,
+      emergencyApplied: Boolean(args.datasetMetaEmergency && args.emergencyActiveRun && args.emergencyActiveRun.id === currentEmergency.id),
+      selectedPointIndex: null,
+      savedAt: new Date().toISOString(),
+    }
+  }
+
+  if (args.scenarioDataset && args.scenarioLabel) {
+    return {
+      pageType: 'scenario',
+      route: '/scenario',
+      scenarioPayload: {
+        dataset: args.scenarioDataset,
+        label: args.scenarioLabel,
+      },
+      savedAt: new Date().toISOString(),
+    }
+  }
+
+  if (args.paretoData && args.paretoLabel) {
+    return {
+      pageType: 'pareto',
+      route: '/scenario',
+      paretoPayload: {
+        data: args.paretoData,
+        label: args.paretoLabel,
+      },
+      savedAt: new Date().toISOString(),
+    }
+  }
+
+  return {
+    pageType: 'empty',
+    route: '/scenario',
+    savedAt: new Date().toISOString(),
+  }
+}
+
 export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
   const navigate = useNavigate()
   const {
     setActiveStrategy,
     loadScenarioDataset,
     loadParetoData,
+    scenarioDataset,
+    scenarioLabel,
+    paretoData,
+    paretoLabel,
+    emergencyPreviewRun,
+    emergencyActiveRun,
+    datasetMeta,
     setEmergencyPreviewRun,
     applyEmergencyRunState,
     restoreNormalDatasetState,
+    resetWorkspaceState,
   } = useStrategy()
   const ctx = useAgentContext()
 
   const [conversationList, setConversationList] = useState<ConversationItem[]>([])
-  const [currentConversationId, setCurrentConversationId] = useState<number | null>(null)
+  const [currentConversationId, setCurrentConversationId] = useState<number | null>(() => {
+    if (typeof window === 'undefined') return null
+    const stored = window.localStorage.getItem(CONVERSATION_STORAGE_KEY)
+    const parsed = stored ? Number(stored) : Number.NaN
+    return Number.isFinite(parsed) ? parsed : null
+  })
   const [showHistory, setShowHistory] = useState(false)
   const [listLoading, setListLoading] = useState(false)
+  const hasBootstrappedRef = useRef(false)
+  const restoringWorkspaceRef = useRef(false)
 
   const refreshList = useCallback(async () => {
     setListLoading(true)
@@ -68,16 +140,57 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
     refreshList()
   }, [refreshList])
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (currentConversationId == null) {
+      window.localStorage.removeItem(CONVERSATION_STORAGE_KEY)
+      return
+    }
+    window.localStorage.setItem(CONVERSATION_STORAGE_KEY, String(currentConversationId))
+  }, [currentConversationId])
+
   const chat = useAgentChat(ctx, {
     conversationId: currentConversationId,
     onConversationCreated: (id) => setCurrentConversationId(id),
     onConversationListChange: refreshList,
   })
 
+  const restoreWorkspaceFromState = useCallback(async (workspaceState?: ConversationWorkspaceState | null) => {
+    resetWorkspaceState({ restoreDisplay: true })
+    if (!workspaceState || workspaceState.pageType === 'empty') return
+
+    if (workspaceState.pageType === 'emergency' && workspaceState.emergencyRunId) {
+      try {
+        const run = await fetchEmergencyRun(workspaceState.emergencyRunId)
+        if (workspaceState.emergencyApplied) {
+          applyEmergencyRunState(run, run.emergencyDataset?.data as unknown as Record<string, unknown> | undefined, run.emergencyDataset?.meta)
+        } else {
+          setEmergencyPreviewRun(run)
+        }
+        navigate(workspaceState.route || '/scenario')
+      } catch (error) {
+        console.warn('[restore emergency workspace]', error)
+      }
+      return
+    }
+
+    if (workspaceState.pageType === 'scenario' && workspaceState.scenarioPayload) {
+      loadScenarioDataset(workspaceState.scenarioPayload.dataset, workspaceState.scenarioPayload.label)
+      navigate(workspaceState.route || '/scenario')
+      return
+    }
+
+    if (workspaceState.pageType === 'pareto' && workspaceState.paretoPayload) {
+      loadParetoData(workspaceState.paretoPayload.data as unknown as ParetoData, workspaceState.paretoPayload.label)
+      navigate(workspaceState.route || '/scenario')
+    }
+  }, [applyEmergencyRunState, loadParetoData, loadScenarioDataset, navigate, resetWorkspaceState, setEmergencyPreviewRun])
+
   const handleSelectConversation = useCallback(
     async (id: number) => {
       setCurrentConversationId(id)
       setShowHistory(false)
+      restoringWorkspaceRef.current = true
       try {
         const conv = await fetchConversation(id)
         const msgs: ChatMessage[] = conv.messages.map((m) => ({
@@ -88,11 +201,14 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
         }))
         chat.loadMessages(msgs)
         chat.setMode((conv.mode as 'ask' | 'agent') || 'agent')
+        await restoreWorkspaceFromState(conv.workspaceState)
       } catch (e) {
         console.warn('[load conversation]', e)
+      } finally {
+        restoringWorkspaceRef.current = false
       }
     },
-    [chat]
+    [chat, restoreWorkspaceFromState]
   )
 
   const handleNewConversation = useCallback(() => {
@@ -100,7 +216,8 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
     chat.clearMessages()
     chat.setMode('agent')
     setShowHistory(false)
-  }, [chat])
+    resetWorkspaceState({ restoreDisplay: true })
+  }, [chat, resetWorkspaceState])
 
   const handleDeleteConversation = useCallback(
     async (id: number) => {
@@ -109,14 +226,25 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
         if (currentConversationId === id) {
           setCurrentConversationId(null)
           chat.clearMessages()
+          resetWorkspaceState({ restoreDisplay: true })
         }
         refreshList()
       } catch (e) {
         console.warn('[delete conversation]', e)
       }
     },
-    [currentConversationId, chat, refreshList]
+    [currentConversationId, chat, refreshList, resetWorkspaceState]
   )
+
+  useEffect(() => {
+    if (hasBootstrappedRef.current) return
+    if (currentConversationId == null) {
+      hasBootstrappedRef.current = true
+      return
+    }
+    hasBootstrappedRef.current = true
+    void handleSelectConversation(currentConversationId)
+  }, [currentConversationId, handleSelectConversation])
 
   const [collapsed, setCollapsed] = useState(false)
   const [width, setWidth] = useState(DEFAULT_WIDTH)
@@ -143,6 +271,35 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
     handlers_ref.current = h
     registerAgentHandlers(h)
   }, [navigate, setActiveStrategy, loadScenarioDataset, loadParetoData, setEmergencyPreviewRun, applyEmergencyRunState, restoreNormalDatasetState])
+
+  useEffect(() => {
+    if (currentConversationId == null) return
+    if (restoringWorkspaceRef.current) return
+    const timer = window.setTimeout(() => {
+      const workspaceState = buildWorkspaceState({
+        scenarioDataset: scenarioDataset as unknown as Record<string, unknown> | null,
+        scenarioLabel,
+        paretoData: paretoData as unknown as Record<string, unknown> | null,
+        paretoLabel,
+        emergencyPreviewRun,
+        emergencyActiveRun,
+        datasetMetaEmergency: datasetMeta.emergencyActive,
+      })
+      updateConversationWorkspace(currentConversationId, workspaceState).catch((error) => {
+        console.warn('[save workspace]', error)
+      })
+    }, 200)
+    return () => window.clearTimeout(timer)
+  }, [
+    currentConversationId,
+    datasetMeta.emergencyActive,
+    emergencyActiveRun,
+    emergencyPreviewRun,
+    paretoData,
+    paretoLabel,
+    scenarioDataset,
+    scenarioLabel,
+  ])
 
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault()

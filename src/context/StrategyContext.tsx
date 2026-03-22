@@ -42,6 +42,7 @@ const StrategyContext = createContext<(StrategyContextValue & {
   setEmergencyPreviewRun: (run: EmergencyRun | null) => void
   applyEmergencyRunState: (run: EmergencyRun, dataset?: Record<string, unknown>, meta?: DatasetMeta) => void
   restoreNormalDatasetState: (data?: Record<string, unknown>, meta?: DatasetMeta) => void
+  resetWorkspaceState: (options?: { restoreDisplay?: boolean }) => void
 }) | null>(null)
 
 const ALL_STRATEGIES: StrategyKey[] = ['uci', 'cicos', 'cicar', 'cicom', 'pv', 'es']
@@ -166,6 +167,10 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
     if (!nextDataset) return
 
     setNormalDatasetBackup((current) => current ?? { data: dataset, meta: datasetMeta })
+    setScenarioDataset(null)
+    setScenarioLabel(null)
+    setParetoData(null)
+    setParetoLabel(null)
     applyDisplayDataset(nextDataset as unknown as Record<string, unknown>, {
       ...nextMeta,
       datasetType: 'emergency',
@@ -174,6 +179,7 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
       baselineDatasetId: run.baselineDatasetId ?? nextMeta.baselineDatasetId ?? null,
       emergencyTitle: run.title,
       isHistorical: false,
+      emergencyMode: 'single',
     })
     setEmergencyActiveRun(run)
     setEmergencyPreviewRun(run)
@@ -193,6 +199,17 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
     setEmergencyActiveRun(null)
     setNormalDatasetBackup(null)
   }, [applyDisplayDataset, normalDatasetBackup])
+
+  const resetWorkspaceState = useCallback((options?: { restoreDisplay?: boolean }) => {
+    setScenarioDataset(null)
+    setScenarioLabel(null)
+    setParetoData(null)
+    setParetoLabel(null)
+    setEmergencyPreviewRun(null)
+    if (options?.restoreDisplay && (datasetMeta.emergencyActive || emergencyActiveRun)) {
+      restoreNormalDatasetState()
+    }
+  }, [datasetMeta.emergencyActive, emergencyActiveRun, restoreNormalDatasetState])
 
   useEffect(() => {
     loadLatestDataset()
@@ -255,6 +272,7 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
       setEmergencyPreviewRun,
       applyEmergencyRunState,
       restoreNormalDatasetState,
+      resetWorkspaceState,
     }}>
       {children}
     </StrategyContext.Provider>
