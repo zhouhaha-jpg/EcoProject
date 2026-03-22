@@ -49,6 +49,7 @@ export default function MainLayout() {
     setAnomalyPreviewRun,
     restoreNormalDatasetState,
   } = useStrategy()
+
   const [logOpen, setLogOpen] = useState(false)
   const logButtonRef = useRef<HTMLButtonElement | null>(null)
   const logPanelRef = useRef<HTMLDivElement | null>(null)
@@ -78,9 +79,7 @@ export default function MainLayout() {
     }
 
     const handleEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setLogOpen(false)
-      }
+      if (event.key === 'Escape') setLogOpen(false)
     }
 
     window.addEventListener('mousedown', handlePointerDown)
@@ -96,6 +95,14 @@ export default function MainLayout() {
     () => realtime.serverLogs.filter((log) => log.status === 'start' || log.status === 'progress').length,
     [realtime.serverLogs],
   )
+
+  const sceneMode = datasetMeta.anomalyActive
+    ? 'ANOMALY'
+    : datasetMeta.emergencyActive
+      ? 'EMERGENCY'
+      : datasetMeta.isHistorical
+        ? 'HISTORY'
+        : 'LIVE'
 
   const logPanel = logOpen
     ? createPortal(
@@ -139,7 +146,7 @@ export default function MainLayout() {
           </div>
 
           <div className="border-b px-4 py-2 text-[10px]" style={{ borderColor: '#1e3256', color: '#5a7a9a' }}>
-            {latestLog?.message || '等待后端日志流'}
+            {latestLog?.message || '等待后端日志流...'}
           </div>
 
           <div className="overflow-y-auto px-3 py-3" style={{ maxHeight: 'min(62vh, 640px)' }}>
@@ -159,6 +166,7 @@ export default function MainLayout() {
         >
           <Orbit size={18} strokeWidth={1.8} />
         </div>
+
         <h1 style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: 20, fontWeight: 600, letterSpacing: 2, color: '#e8f4ff' }}>
           <span style={{ color: '#e8f4ff', fontWeight: 600 }}>Eco</span>
           <span style={{ color: '#00d4ff', fontWeight: 700, marginLeft: 2 }}>Verse</span>
@@ -181,8 +189,9 @@ export default function MainLayout() {
           />
 
           <span className="hud-chip" title={`展示日期 ${datasetMeta.viewDate || '本地默认'} | 快照 ${datasetMeta.snapshotAt || '--'}`}>
-            {datasetMeta.anomalyActive ? 'ANOMALY' : datasetMeta.emergencyActive ? 'EMERGENCY' : datasetMeta.isHistorical ? 'HISTORY' : 'LIVE'} {datasetMeta.viewDate || 'LOCAL'}
+            {sceneMode} {datasetMeta.viewDate || 'LOCAL'}
           </span>
+
           <span className="hud-chip" title="当前图表展示的数据快照时间">
             截止 {datasetMeta.snapshotAt ? datasetMeta.snapshotAt.slice(5, 16) : '--'}
           </span>
@@ -218,13 +227,13 @@ export default function MainLayout() {
                 }}
                 className="rounded-sm border border-[#ff7043] bg-[#ff7043]/12 px-3 py-1.5 font-mono text-[11px] tracking-[0.16em] text-[#ffb199] transition-all hover:bg-[#ff7043]/18"
               >
-                鍥為€€姝ｅ父鐘舵€?
+                回退正常状态
               </button>
             </>
           ) : null}
 
           {!datasetMeta.isHistorical && datasetMeta.containsForecast ? (
-            <span className="hud-chip" title="今日未来小时以 forecast 标识返回，不再伪装成已实时落地">
+            <span className="hud-chip" title="今日未来小时使用 forecast 标识返回，不再伪装成已实时落地">
               FCST {String(datasetMeta.forecastFromHour ?? 0).padStart(2, '0')}:00+
             </span>
           ) : null}
