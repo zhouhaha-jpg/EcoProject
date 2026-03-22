@@ -364,7 +364,7 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
               className="text-[10px] text-[#3d6080]"
               style={{ fontFamily: "'Rajdhani', sans-serif", letterSpacing: 1 }}
             >
-              AI
+              ECO
             </span>
           </div>
         ) : (
@@ -376,7 +376,7 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
                 style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: 12, fontWeight: 600, letterSpacing: 2, color: '#8ba9cc' }}
               >
                 <MessageSquare size={14} className="text-[#00d4ff]" />
-                AI Agent
+                EcoClaw
               </div>
               <div className="flex items-center gap-1">
                 <button

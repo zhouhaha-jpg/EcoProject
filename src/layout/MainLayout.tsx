@@ -8,6 +8,7 @@ import {
   Flame,
   GitCompare,
   LayoutDashboard,
+  Orbit,
   Plug,
   Sun,
   TrendingUp,
@@ -26,7 +27,7 @@ import { restoreEmergencyStateApi } from '@/lib/api'
 
 const NAV = [
   { to: '/overview', label: '总览', icon: LayoutDashboard },
-  { to: '/scenario', label: 'Agent工作区', icon: GitCompare },
+  { to: '/scenario', label: 'EcoClaw', icon: GitCompare },
   { to: '/economic', label: '经济指标', icon: TrendingUp },
   { to: '/storage', label: '存储模块', icon: Database },
   { to: '/ca', label: '电解槽', icon: Battery },
@@ -87,7 +88,6 @@ export default function MainLayout() {
     [realtime.serverLogs],
   )
 
-  /* ─── 日志面板（portal 到 body，确保置顶） ─── */
   const logPanel = logOpen
     ? createPortal(
         <div
@@ -144,9 +144,15 @@ export default function MainLayout() {
   return (
     <div className="scanlines flex h-screen w-full flex-col overflow-hidden" style={{ background: '#070c14' }}>
       <header className="hud-header relative z-[260] flex shrink-0 items-center gap-5 px-8 py-4">
-        <div className="logo-pulse" />
+        <div
+          className="flex h-9 w-9 items-center justify-center rounded-full border border-[#00d4ff55] bg-[#00d4ff12] shadow-[0_0_22px_rgba(0,212,255,0.18)]"
+          style={{ color: '#7df9ff' }}
+        >
+          <Orbit size={18} strokeWidth={1.8} />
+        </div>
         <h1 style={{ fontFamily: "'Rajdhani', sans-serif", fontSize: 20, fontWeight: 600, letterSpacing: 2, color: '#e8f4ff' }}>
-          智慧园区 <span style={{ color: '#00d4ff', fontWeight: 700 }}>节能减排</span> 调度平台
+          <span style={{ color: '#e8f4ff', fontWeight: 600 }}>Eco</span>
+          <span style={{ color: '#00d4ff', fontWeight: 700, marginLeft: 2 }}>Verse</span>
         </h1>
 
         <div className="ml-auto flex items-center gap-3">
@@ -186,7 +192,7 @@ export default function MainLayout() {
                 }}
                 className="rounded-sm border border-[#ff7043] bg-[#ff7043]/12 px-3 py-1.5 font-mono text-[11px] tracking-[0.16em] text-[#ffb199] transition-all hover:bg-[#ff7043]/18"
               >
-                回退正常态
+                回退正常状态
               </button>
             </>
           ) : null}
@@ -238,7 +244,7 @@ export default function MainLayout() {
       </div>
 
       <div className="relative z-[1] flex min-h-0 flex-1 overflow-hidden">
-        <main className="flex-1 min-h-0 overflow-hidden p-5">
+        <main className="min-h-0 flex-1 overflow-hidden p-5">
           <Outlet />
         </main>
         <div className="relative h-full shrink-0">

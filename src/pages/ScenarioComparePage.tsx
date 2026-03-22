@@ -1,5 +1,5 @@
 /**
- * Agent 工作区：展示 Agent 结果
+ * EcoClaw：展示 Agent 结果
  * - emergencyPreviewRun: 应急调度指挥页
  * - scenarioDataset: What-If 推演对比
  * - paretoData: Pareto 前沿分析
@@ -312,9 +312,9 @@ export default function ScenarioComparePage() {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="panel" style={{ padding: 32, maxWidth: 640, textAlign: 'center' }}>
-          <div className="panel-title-bar" style={{ textAlign: 'center', marginBottom: 16 }}>Agent 工作区</div>
+          <div className="panel-title-bar" style={{ textAlign: 'center', marginBottom: 16 }}>EcoClaw</div>
           <p style={{ color: '#8ba9cc', fontSize: 13, lineHeight: 1.8 }}>
-            暂无工作成果。请在右侧 Agent 面板中发起 What-If、Pareto 或应急调度任务。
+            暂无工作成果。请在右侧 EcoClaw 面板中发起 What-If、Pareto 或应急调度任务。
           </p>
           <div style={{ marginTop: 16, color: '#3d6080', fontSize: 12 }}>
             <p>示例指令：</p>
@@ -364,7 +364,7 @@ export default function ScenarioComparePage() {
     <div className="h-full min-h-0 overflow-auto" style={{ display: 'grid', gridTemplateRows: 'auto auto 1fr', gap: 12 }}>
       <div className="panel shrink-0">
         <div className="panel-title-bar flex items-center justify-between">
-          <span>Agent 工作区 · {scenarioLabel ?? 'What-If 推演'}</span>
+          <span>EcoClaw · {scenarioLabel ?? 'What-If 推演'}</span>
           <span style={{ color: '#3d6080', fontSize: 10, fontWeight: 400 }}>
             基准 vs 推演
           </span>

@@ -44,7 +44,7 @@ const PATH_MAP: Record<string, string> = {
   '/g': '/g', '电网': '/g', 'g': '/g',
   '/economic': '/economic', '经济指标': '/economic',
   '/storage': '/storage', '存储模块': '/storage',
-  '/scenario': '/scenario', 'Agent工作区': '/scenario', '方案对比': '/scenario',
+  '/scenario': '/scenario', 'EcoClaw': '/scenario', 'Agent工作区': '/scenario', '方案对比': '/scenario',
 }
 
 const STRATEGY_MAP: Record<string, StrategyKey> = {
@@ -159,7 +159,7 @@ export async function executeAction(
         }
         return {
           success: true,
-          message: `${data.run?.title ?? '应急预案'} 已生成${data.run?.detailPayload?.audit?.generationMode === 'template_fallback' ? '（模板兜底）' : ''}，可在 Agent 工作区查看并决定是否应用。`,
+          message: `${data.run?.title ?? '应急预案'} 已生成${data.run?.detailPayload?.audit?.generationMode === 'template_fallback' ? '（模板兜底）' : ''}，可在 EcoClaw 查看并决定是否应用。`,
           data: data.run,
         }
       }
