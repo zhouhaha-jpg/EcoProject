@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useEChart } from './useEChart'
 import type { EmergencyDetailSeries, EmergencyPointDetail } from '@/types'
 
@@ -16,6 +16,8 @@ const SERIES_META = [
   { key: 'P_es_es', name: '储能', color: '#ffd740' },
 ] as const
 
+const DEFAULT_SELECTION = Object.fromEntries(SERIES_META.map((item) => [item.name, true])) as Record<string, boolean>
+
 function hexToRgba(hex: string, alpha: number) {
   const r = parseInt(hex.slice(1, 3), 16)
   const g = parseInt(hex.slice(3, 5), 16)
@@ -23,16 +25,56 @@ function hexToRgba(hex: string, alpha: number) {
   return `rgba(${r},${g},${b},${alpha})`
 }
 
+function computeYAxisExtent(
+  detail: EmergencyDetailSeries,
+  visibleSeries: readonly (typeof SERIES_META)[number][],
+) {
+  let minValue = Number.POSITIVE_INFINITY
+  let maxValue = Number.NEGATIVE_INFINITY
+
+  const includeValues = (values?: number[]) => {
+    if (!values) return
+    for (const value of values) {
+      if (!Number.isFinite(value)) continue
+      minValue = Math.min(minValue, value)
+      maxValue = Math.max(maxValue, value)
+    }
+  }
+
+  visibleSeries.forEach(({ key }) => {
+    includeValues(detail.series[key])
+    includeValues(detail.baselineSeries?.[key])
+  })
+
+  if (!Number.isFinite(minValue) || !Number.isFinite(maxValue)) {
+    return { min: 0, max: 100 }
+  }
+
+  const span = maxValue - minValue
+  const padding = span > 1
+    ? span * 0.16
+    : Math.max(Math.abs(maxValue) * 0.2, 40)
+
+  return {
+    min: Math.floor((minValue - padding * 0.6) / 10) * 10,
+    max: Math.ceil((maxValue + padding) / 10) * 10,
+  }
+}
+
 export default function EmergencyDispatchChart({ detail, onPointHover }: EmergencyDispatchChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const [selectedSeries, setSelectedSeries] = useState<Record<string, boolean>>(DEFAULT_SELECTION)
 
   const option = useMemo(() => {
-    const maxValue = Math.max(
-      ...SERIES_META.flatMap(({ key }) => detail.series[key]),
-      ...detail.series.gap,
+    const visibleSeries = SERIES_META.filter(({ name }) => selectedSeries[name] !== false)
+    const effectiveSeries = visibleSeries.length ? visibleSeries : SERIES_META
+    const axisExtent = computeYAxisExtent(detail, effectiveSeries)
+    const maxSeriesValue = Math.max(
+      ...effectiveSeries.flatMap(({ key }) => detail.series[key]),
+      ...effectiveSeries.flatMap(({ key }) => detail.baselineSeries?.[key] ?? []),
       0,
     )
-    const glowBase = Math.max(maxValue * 0.08, 60)
+    const glowBase = Math.max(maxSeriesValue * 0.08, 60)
     const stageAreas = (detail.stagePlan || []).map((stage) => ([
       {
         name: stage.title,
@@ -58,6 +100,8 @@ export default function EmergencyDispatchChart({ detail, onPointHover }: Emergen
         top: 0,
         itemWidth: 12,
         itemHeight: 8,
+        selected: selectedSeries,
+        inactiveColor: '#41556f',
         textStyle: {
           color: '#8ba9cc',
           fontSize: 10,
@@ -116,7 +160,9 @@ export default function EmergencyDispatchChart({ detail, onPointHover }: Emergen
       },
       yAxis: {
         type: 'value' as const,
-        min: 0,
+        scale: true,
+        min: axisExtent.min,
+        max: axisExtent.max,
         axisLine: { lineStyle: { color: '#1e3256' } },
         axisLabel: {
           color: '#5a7a9a',
@@ -159,7 +205,7 @@ export default function EmergencyDispatchChart({ detail, onPointHover }: Emergen
           tooltip: { show: false },
         },
         ...(detail.baselineSeries
-          ? SERIES_META.map(({ key, name, color }) => ({
+          ? effectiveSeries.map(({ key, name, color }) => ({
               name: `${name}基线`,
               type: 'line' as const,
               data: detail.baselineSeries?.[key] ?? [],
@@ -176,7 +222,7 @@ export default function EmergencyDispatchChart({ detail, onPointHover }: Emergen
               tooltip: { show: false },
             }))
           : []),
-        ...SERIES_META.map(({ key, name, color }) => ({
+        ...effectiveSeries.map(({ key, name, color }) => ({
           name,
           type: 'line' as const,
           data: detail.series[key],
@@ -238,9 +284,9 @@ export default function EmergencyDispatchChart({ detail, onPointHover }: Emergen
         })),
       ],
     }
-  }, [detail])
+  }, [detail, selectedSeries])
 
-  const chartRef = useEChart(containerRef, option, [detail])
+  const chartRef = useEChart(containerRef, option, [detail, selectedSeries])
 
   useEffect(() => {
     const chart = chartRef.current
@@ -267,6 +313,22 @@ export default function EmergencyDispatchChart({ detail, onPointHover }: Emergen
       chart.off('updateAxisPointer', handler)
     }
   }, [chartRef, detail, onPointHover])
+
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+
+    const handler = (event: unknown) => {
+      const legendEvent = event as { selected?: Record<string, boolean> }
+      if (!legendEvent?.selected) return
+      setSelectedSeries((prev) => ({ ...prev, ...legendEvent.selected }))
+    }
+
+    chart.on('legendselectchanged', handler)
+    return () => {
+      chart.off('legendselectchanged', handler)
+    }
+  }, [chartRef])
 
   return <div ref={containerRef} className="h-full min-h-[300px] w-full" />
 }

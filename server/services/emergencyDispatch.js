@@ -1117,6 +1117,45 @@ function buildDramaticCurves(spec, generationMode = 'llm_direct') {
   }
 }
 
+function buildNoiseSeed(spec, generationMode = 'llm_direct') {
+  const source = `${spec.title || ''}|${spec.rawPrompt || ''}|${spec.startHour || 0}|${spec.gridReduction || 0}|${spec.pvReduction || 0}|${generationMode}`
+  let hash = 2166136261
+  for (let i = 0; i < source.length; i += 1) {
+    hash ^= source.charCodeAt(i)
+    hash = Math.imul(hash, 16777619)
+  }
+  return Math.abs(hash >>> 0) || 1
+}
+
+function deterministicNoise(seed, index, channel) {
+  const rawPrimary = Math.sin(seed * 0.013 + index * 12.9898 + channel * 78.233) * 43758.5453
+  const primary = (rawPrimary - Math.floor(rawPrimary)) * 2 - 1
+  const secondary = Math.sin(seed * 0.021 + index * 0.91 + channel * 1.73)
+  return clamp(primary * 0.68 + secondary * 0.32, -1, 1)
+}
+
+function buildWaveOffset({
+  seed,
+  index,
+  channel,
+  progress,
+  baseValue,
+  targetValue,
+  ratio,
+  floor,
+  cap = Infinity,
+}) {
+  const lateFactor = 0.82 + progress * 0.48 + (index / Math.max(STEPS - 1, 1)) * 0.22
+  const amplitude = Math.min(
+    cap,
+    Math.max(
+      floor,
+      Math.max(Math.abs(baseValue), Math.abs(targetValue)) * ratio,
+    ) * lateFactor,
+  )
+  return deterministicNoise(seed, index, channel) * amplitude
+}
+
 function computeImpactScore(actualEnvelope = {}) {
   const grid = (actualEnvelope.gridReduction || 0) * 100
   const pv = (actualEnvelope.pvReduction || 0) * 100
@@ -1518,6 +1557,7 @@ function buildDramaticDispatch(context, spec, intent, options = {}) {
   const contextPackage = options.contextPackage || buildEmergencyContextPackage(context, spec)
   const baselineWindow = contextPackage.baselineWindow
   const labels = baselineWindow.labels
+  const noiseSeed = buildNoiseSeed(spec, options.generationMode || 'llm_direct')
   const stagePlan = Array.isArray(intent.stagePlan) && intent.stagePlan.length
     ? intent.stagePlan
     : normalizeStagePlan([], labels, spec)
@@ -1585,13 +1625,59 @@ function buildDramaticDispatch(context, spec, intent, options = {}) {
     const gmLiftNow = clamp(target.gmLiftTarget * supportProgress, 0, target.gmLiftTarget)
     const pemLiftNow = clamp(target.pemLiftTarget * supportProgress, 0, target.pemLiftTarget)
     const storageLiftNow = clamp(target.storageLiftTarget * supportProgress, 0, target.storageLiftTarget)
+    const externalProgress = Math.max(transition.grid[i], transition.pv[i], transition.ca[i])
 
-    const pGridTarget = base.P_G * (1 - gridReductionNow)
-    const pPVTarget = round(clamp(base.P_PV * (1 - pvReductionNow), 0, base.P_PV), 4)
+    const pGridBaseTarget = base.P_G * (1 - gridReductionNow)
+    const pGridTarget = round(clamp(
+      pGridBaseTarget + buildWaveOffset({
+        seed: noiseSeed,
+        index: i,
+        channel: 1,
+        progress: externalProgress,
+        baseValue: base.P_G,
+        targetValue: pGridBaseTarget,
+        ratio: 0.015,
+        floor: 28,
+        cap: Math.max(base.P_G * 0.07, 80),
+      }),
+      0,
+      base.P_G,
+    ), 4)
+    const pPVBaseTarget = clamp(base.P_PV * (1 - pvReductionNow), 0, base.P_PV)
+    const pPVTarget = round(clamp(
+      pPVBaseTarget + buildWaveOffset({
+        seed: noiseSeed,
+        index: i,
+        channel: 2,
+        progress: externalProgress,
+        baseValue: base.P_PV,
+        targetValue: pPVBaseTarget,
+        ratio: 0.032,
+        floor: 8,
+        cap: Math.max(base.P_PV * 0.12, 20),
+      }),
+      0,
+      base.P_PV,
+    ), 4)
     const pPV = round(applyRamp(pPVTarget, prev.P_PV, ramp.pv, Math.max(base.P_PV, pPVTarget)), 4)
     const pGrid = round(applyRamp(pGridTarget, prev.P_G, ramp.grid, Math.max(base.P_G, pGridTarget)), 4)
     const demandBase = Math.max(0, base.P_CA)
-    const pCATarget = round(Math.max(demandBase * (1 - caReductionNow), demandBase * 0.18), 4)
+    const pCABaseTarget = Math.max(demandBase * (1 - caReductionNow), demandBase * 0.18)
+    const pCATarget = round(clamp(
+      pCABaseTarget + buildWaveOffset({
+        seed: noiseSeed,
+        index: i,
+        channel: 3,
+        progress: externalProgress,
+        baseValue: demandBase,
+        targetValue: pCABaseTarget,
+        ratio: 0.012,
+        floor: 36,
+        cap: Math.max(demandBase * 0.035, 80),
+      }),
+      demandBase * 0.16,
+      demandBase,
+    ), 4)
     const externalLoss = Math.max(0, base.P_G - pGrid) + Math.max(0, base.P_PV - pPV)
     let shortage = Math.max(0, pCATarget - pPV - pGrid)
 
@@ -1629,9 +1715,54 @@ function buildDramaticDispatch(context, spec, intent, options = {}) {
     const supportVisibleTotal = gmVisibleLift + pemVisibleLift + esVisibleLift
     shortage = Math.max(0, shortage - supportVisibleTotal)
 
-    const gmTarget = round(baseGM + Math.min(gmHeadroom, (gmVisibleLift + supportPressure * (supportWeights.P_GM || 0) * 0.55) * supportPulse), 4)
-    const pemTarget = round(basePEM + Math.min(pemHeadroom, (pemVisibleLift + supportPressure * (supportWeights.P_PEM || 0) * 0.5) * supportPulse), 4)
-    const esTarget = round(baseES + Math.min(esHeadroom, (esVisibleLift + supportPressure * (supportWeights.P_es_es || 0) * 0.58) * supportPulse), 4)
+    const gmBaseTarget = baseGM + Math.min(gmHeadroom, (gmVisibleLift + supportPressure * (supportWeights.P_GM || 0) * 0.55) * supportPulse)
+    const pemBaseTarget = basePEM + Math.min(pemHeadroom, (pemVisibleLift + supportPressure * (supportWeights.P_PEM || 0) * 0.5) * supportPulse)
+    const esBaseTarget = baseES + Math.min(esHeadroom, (esVisibleLift + supportPressure * (supportWeights.P_es_es || 0) * 0.58) * supportPulse)
+    const gmTarget = round(clamp(
+      gmBaseTarget + buildWaveOffset({
+        seed: noiseSeed,
+        index: i,
+        channel: 4,
+        progress: supportProgress,
+        baseValue: baseGM,
+        targetValue: gmBaseTarget,
+        ratio: 0.026,
+        floor: 12,
+        cap: Math.max(gmCap * 0.05, 34),
+      }),
+      baseGM,
+      gmCap,
+    ), 4)
+    const pemTarget = round(clamp(
+      pemBaseTarget + buildWaveOffset({
+        seed: noiseSeed,
+        index: i,
+        channel: 5,
+        progress: supportProgress,
+        baseValue: basePEM,
+        targetValue: pemBaseTarget,
+        ratio: 0.03,
+        floor: 10,
+        cap: Math.max(pemCap * 0.06, 24),
+      }),
+      basePEM,
+      pemCap,
+    ), 4)
+    const esTarget = round(clamp(
+      esBaseTarget + buildWaveOffset({
+        seed: noiseSeed,
+        index: i,
+        channel: 6,
+        progress: supportProgress,
+        baseValue: baseES,
+        targetValue: esBaseTarget,
+        ratio: 0.034,
+        floor: 14,
+        cap: Math.max(esCap * 0.065, 28),
+      }),
+      baseES,
+      esCap,
+    ), 4)
     const pGM = round(applyRamp(gmTarget, prev.P_GM, ramp.gm, gmCap), 4)
     const pPEM = round(applyRamp(pemTarget, prev.P_PEM, ramp.pem, pemCap), 4)
     const pES = round(applyRamp(esTarget, prev.P_es_es, ramp.es, esCap), 4)
@@ -1709,6 +1840,7 @@ function buildDramaticDispatch(context, spec, intent, options = {}) {
       validationMessage: options.validationMessage || '',
       contextSnapshot: contextPackage.currentSnapshot,
       transitionProfile: transition.profileKey,
+      noiseSeed,
     },
   }
 }
