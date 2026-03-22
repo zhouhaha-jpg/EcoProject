@@ -205,10 +205,10 @@ export default function EmergencyDispatchChart({ detail, onPointHover }: Emergen
           tooltip: { show: false },
         },
         ...(detail.baselineSeries
-          ? effectiveSeries.map(({ key, name, color }) => ({
+          ? SERIES_META.map(({ key, name, color }) => ({
               name: `${name}基线`,
               type: 'line' as const,
-              data: detail.baselineSeries?.[key] ?? [],
+              data: selectedSeries[name] === false ? [] : (detail.baselineSeries?.[key] ?? []),
               symbol: 'none',
               silent: true,
               z: 1,
@@ -222,7 +222,7 @@ export default function EmergencyDispatchChart({ detail, onPointHover }: Emergen
               tooltip: { show: false },
             }))
           : []),
-        ...effectiveSeries.map(({ key, name, color }) => ({
+        ...SERIES_META.map(({ key, name, color }) => ({
           name,
           type: 'line' as const,
           data: detail.series[key],
