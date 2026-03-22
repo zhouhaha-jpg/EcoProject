@@ -23,7 +23,7 @@ import SystemLog from '@/components/ui/SystemLog'
 import TimeTravelPopover from '@/components/ui/TimeTravelPopover'
 import { useStrategy } from '@/context/StrategyContext'
 import { useRealtimeData } from '@/hooks/useRealtimeData'
-import { restoreEmergencyStateApi } from '@/lib/api'
+import { restoreAnomalyStateApi, restoreEmergencyStateApi } from '@/lib/api'
 
 const NAV = [
   { to: '/overview', label: '总览', icon: LayoutDashboard },
@@ -45,6 +45,8 @@ export default function MainLayout() {
     datasetMeta,
     emergencyActiveRun,
     setEmergencyPreviewRun,
+    anomalyActiveRun,
+    setAnomalyPreviewRun,
     restoreNormalDatasetState,
   } = useStrategy()
   const [logOpen, setLogOpen] = useState(false)
@@ -53,10 +55,17 @@ export default function MainLayout() {
 
   useEffect(() => {
     const latestType = realtime.latestOptDataset?.meta?.datasetType
-    if (realtime.latestOptDataset && latestType !== 'emergency' && !datasetMeta.isHistorical && !datasetMeta.emergencyActive) {
+    if (
+      realtime.latestOptDataset
+      && latestType !== 'emergency'
+      && latestType !== 'anomaly'
+      && !datasetMeta.isHistorical
+      && !datasetMeta.emergencyActive
+      && !datasetMeta.anomalyActive
+    ) {
       updateDataset(realtime.latestOptDataset.data, realtime.latestOptDataset.meta)
     }
-  }, [datasetMeta.emergencyActive, datasetMeta.isHistorical, realtime.latestOptDataset, updateDataset])
+  }, [datasetMeta.anomalyActive, datasetMeta.emergencyActive, datasetMeta.isHistorical, realtime.latestOptDataset, updateDataset])
 
   useEffect(() => {
     if (!logOpen) return
@@ -172,7 +181,7 @@ export default function MainLayout() {
           />
 
           <span className="hud-chip" title={`展示日期 ${datasetMeta.viewDate || '本地默认'} | 快照 ${datasetMeta.snapshotAt || '--'}`}>
-            {datasetMeta.emergencyActive ? 'EMERGENCY' : datasetMeta.isHistorical ? 'HISTORY' : 'LIVE'} {datasetMeta.viewDate || 'LOCAL'}
+            {datasetMeta.anomalyActive ? 'ANOMALY' : datasetMeta.emergencyActive ? 'EMERGENCY' : datasetMeta.isHistorical ? 'HISTORY' : 'LIVE'} {datasetMeta.viewDate || 'LOCAL'}
           </span>
           <span className="hud-chip" title="当前图表展示的数据快照时间">
             截止 {datasetMeta.snapshotAt ? datasetMeta.snapshotAt.slice(5, 16) : '--'}
@@ -193,6 +202,23 @@ export default function MainLayout() {
                 className="rounded-sm border border-[#ff7043] bg-[#ff7043]/12 px-3 py-1.5 font-mono text-[11px] tracking-[0.16em] text-[#ffb199] transition-all hover:bg-[#ff7043]/18"
               >
                 回退正常状态
+              </button>
+            </>
+          ) : datasetMeta.anomalyActive ? (
+            <>
+              <span className="hud-chip live" title={datasetMeta.anomalyTitle || '设备异常态'}>
+                ANOMALY MODE
+              </span>
+              <button
+                type="button"
+                onClick={async () => {
+                  const restored = await restoreAnomalyStateApi(anomalyActiveRun?.id ?? datasetMeta.anomalyRunId ?? null)
+                  restoreNormalDatasetState(restored.baselineDataset.data, restored.baselineDataset.meta)
+                  setAnomalyPreviewRun(restored.run)
+                }}
+                className="rounded-sm border border-[#ff7043] bg-[#ff7043]/12 px-3 py-1.5 font-mono text-[11px] tracking-[0.16em] text-[#ffb199] transition-all hover:bg-[#ff7043]/18"
+              >
+                鍥為€€姝ｅ父鐘舵€?
               </button>
             </>
           ) : null}
