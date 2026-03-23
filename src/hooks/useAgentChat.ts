@@ -6,6 +6,7 @@ import { useState, useCallback } from 'react'
 import type { AgentContextData } from './useAgentContext'
 import { formatContextForLLM } from './useAgentContext'
 import { executeAction } from '@/lib/agentActions'
+import type { ExecutionTraceStep } from '@/types'
 import {
   createConversation,
   appendConversationMessage,
@@ -22,14 +23,21 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
   /** Agent 模式执行的动作及结果 */
-  actions?: { type: string; params: Record<string, unknown>; result: string }[]
+  actions?: {
+    type: string
+    params: Record<string, unknown>
+    result: string
+    trace?: ExecutionTraceStep[]
+    detail?: string
+  }[]
 }
 
 export interface ToolChainStep {
   id: string
-  name: string
-  status: 'running' | 'done'
-  result?: string
+  title: string
+  status: 'pending' | 'running' | 'done' | 'error'
+  detail?: string
+  outcome?: string
 }
 
 export interface UseAgentChatOptions {
@@ -58,7 +66,7 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
       setMessages((prev) => [...prev, userMsg])
       setIsLoading(true)
       setError(null)
-      setToolChain([{ id: 't0', name: 'thinking', status: 'running' }])
+      setToolChain([{ id: 't0', title: '意图解析', status: 'running', detail: content.trim() }])
 
       let cid = conversationId ?? null
       try {
@@ -202,6 +210,27 @@ async function handleStreamResponse(
   }
 }
 
+function buildActionFallbackContent(actions: NonNullable<ChatMessage['actions']>) {
+  return actions
+    .map((action) => `已完成 ${action.type}: ${action.result}`)
+    .join('\n')
+}
+
+function normalizeToolTitle(name: string) {
+  switch (name) {
+    case 'run_whatif':
+      return 'What-if 推演'
+    case 'add_constraint':
+      return '约束注入'
+    case 'trace_causality':
+      return '因果追溯'
+    case 'pareto_scan':
+      return 'Pareto 扫描'
+    default:
+      return name
+  }
+}
+
 interface JsonResponseContext {
   url: string
   initialMessages: ChatMessage[]
@@ -233,18 +262,18 @@ async function handleJsonResponse(
   let content = msg?.content ?? ''
   const toolCalls = msg?.tool_calls ?? []
 
-  const actions: { type: string; params: Record<string, unknown>; result: string }[] = []
+  const actions: NonNullable<ChatMessage['actions']> = []
   const toolResults: { id: string; content: string }[] = []
 
-  const ASYNC_TOOLS = ['run_whatif', 'run_emergency_dispatch', 'apply_emergency_run', 'restore_normal_state', 'add_constraint', 'pareto_scan']
-  const NEED_FOLLOWUP_TOOLS = ['trace_causality']
+  const NEED_FOLLOWUP_TOOLS = ['run_whatif', 'add_constraint', 'pareto_scan', 'trace_causality']
 
   if (toolCalls.length > 0) {
     setToolChain(
       toolCalls.map((tc) => ({
         id: tc.id,
-        name: tc.function?.name ?? '',
+        title: normalizeToolTitle(tc.function?.name ?? ''),
         status: 'running' as const,
+        detail: '等待工具执行结果',
       }))
     )
   }
@@ -269,16 +298,30 @@ async function handleJsonResponse(
         }
       : undefined
     const result = await executeAction(name, params, agentCtx)
-    actions.push({ type: name, params, result: result.message })
+    actions.push({
+      type: name,
+      params,
+      result: result.message,
+      trace: result.trace,
+      detail: result.toolContent,
+    })
 
-    setToolChain((prev) =>
-      prev.map((s) =>
-        s.id === tc.id ? { ...s, status: 'done' as const, result: result.message } : s
+    if (result.trace?.length) {
+      setToolChain(result.trace)
+    } else {
+      setToolChain((prev) =>
+        prev.map((s) =>
+          s.id === tc.id
+            ? { ...s, status: result.success ? 'done' as const : 'error' as const, outcome: result.message }
+            : s
+        )
       )
-    )
+    }
 
     const toolContent =
-      name === 'trace_causality' && result.data && typeof result.data === 'object' && 'deviceState' in result.data
+      result.toolContent
+        ? result.toolContent
+        : name === 'trace_causality' && result.data && typeof result.data === 'object' && 'deviceState' in result.data
         ? String((result.data as { deviceState?: string }).deviceState ?? result.message)
         : result.message
     toolResults.push({ id: tc.id, content: toolContent })
@@ -301,7 +344,7 @@ async function handleJsonResponse(
       ...toolResults.map((tr) => ({ role: 'tool' as const, tool_call_id: tr.id, content: tr.content })),
     ]
 
-    setToolChain((prev) => [...prev, { id: 't-cont', name: 'thinking', status: 'running' }])
+    setToolChain((prev) => [...prev, { id: 't-cont', title: '结论生成', status: 'running', detail: '基于工具结果生成最终分析结论' }])
 
     try {
       const res2 = await fetch(extra.url, {
@@ -320,7 +363,7 @@ async function handleJsonResponse(
           const assistantId = crypto.randomUUID()
           setMessages((prev) => [...prev, { id: assistantId, role: 'assistant', content: '' }])
           setToolChain((prev) =>
-            prev.map((s) => (s.id === 't-cont' ? { ...s, status: 'done' as const } : s))
+            prev.map((s) => (s.id === 't-cont' ? { ...s, status: 'done' as const, outcome: '开始输出最终结论' } : s))
           )
           let fullText = ''
           const reader = res2.body?.getReader()
@@ -354,11 +397,7 @@ async function handleJsonResponse(
             }
           }
           content = fullText
-          const actionText =
-            actions.length > 0
-              ? actions.map((a) => `已执行：${a.type} → ${a.result}`).join('\n')
-              : ''
-          const displayContent = [content, actionText].filter(Boolean).join('\n\n') || '已处理您的请求。'
+          const displayContent = content || (actions.length > 0 ? buildActionFallbackContent(actions) : '已处理您的请求。')
           setMessages((prev) =>
             prev.map((m) =>
               m.id === assistantId ? { ...m, content: displayContent, actions } : m
@@ -377,13 +416,9 @@ async function handleJsonResponse(
           const finalContent = msg2?.content ?? ''
           if (finalContent) content = finalContent
           setToolChain((prev) =>
-            prev.map((s) => (s.id === 't-cont' ? { ...s, status: 'done' as const } : s))
+            prev.map((s) => (s.id === 't-cont' ? { ...s, status: 'done' as const, outcome: '最终结论已生成' } : s))
           )
-          const actionText =
-            actions.length > 0
-              ? actions.map((a) => `已执行：${a.type} → ${a.result}`).join('\n')
-              : ''
-          const displayContent = [content, actionText].filter(Boolean).join('\n\n') || '已处理您的请求。'
+          const displayContent = content || (actions.length > 0 ? buildActionFallbackContent(actions) : '已处理您的请求。')
           const assistantMsg = {
             id: crypto.randomUUID(),
             role: 'assistant' as const,
@@ -402,17 +437,13 @@ async function handleJsonResponse(
       }
     } catch {
       setToolChain((prev) =>
-        prev.map((s) => (s.id === 't-cont' ? { ...s, status: 'done' as const } : s))
+        prev.map((s) => (s.id === 't-cont' ? { ...s, status: 'error' as const, outcome: '结论回灌失败，保留工具执行结果' } : s))
       )
     }
   }
 
   if (!hasFollowup || !extra || toolResults.length === 0) {
-    const actionText =
-      actions.length > 0
-        ? actions.map((a) => `已执行：${a.type} → ${a.result}`).join('\n')
-        : ''
-    const displayContent = [content, actionText].filter(Boolean).join('\n\n') || '已处理您的请求。'
+    const displayContent = content || (actions.length > 0 ? buildActionFallbackContent(actions) : '已处理您的请求。')
 
     const assistantMsg = {
       id: crypto.randomUUID(),

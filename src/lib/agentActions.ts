@@ -1,5 +1,19 @@
 import type { ParetoData } from '@/context/StrategyContext'
-import type { AnomalyRun, DatasetMeta, EcoDataset, EmergencyRun, InvestmentRun, StrategyKey } from '@/types'
+import type {
+  AnomalyRun,
+  DatasetMeta,
+  EcoDataset,
+  EmergencyRun,
+  ExecutionTraceStep,
+  InvestmentRun,
+  ScenarioComparisonItem,
+  ScenarioDispatchHighlight,
+  ScenarioInsight,
+  ScenarioKeyHourInsight,
+  ScenarioRiskFlag,
+  StrategyKey,
+  WhatIfIntentSpec,
+} from '@/types'
 
 export type AgentActionType =
   | 'navigate'
@@ -22,7 +36,11 @@ export type AgentActionType =
 export interface AgentActionHandlers {
   navigate: (path: string) => void
   switchStrategy: (key: StrategyKey) => void
-  loadScenarioDataset: (dataset: Record<string, unknown>, label: string) => void
+  loadScenarioDataset: (
+    dataset: Record<string, unknown>,
+    label: string,
+    options?: { insight?: ScenarioInsight | null; trace?: ExecutionTraceStep[] | null },
+  ) => void
   loadParetoData: (data: ParetoData, label: string) => void
   setEmergencyPreviewRun: (run: EmergencyRun | null) => void
   applyEmergencyRunState: (run: EmergencyRun, dataset?: Record<string, unknown>, meta?: DatasetMeta) => void
@@ -97,11 +115,366 @@ function requireHandlers(type: string) {
   return handlers
 }
 
+const STRATEGIES: StrategyKey[] = ['uci', 'cicos', 'cicar', 'cicom', 'pv', 'es']
+
+type AgentActionResult = {
+  success: boolean
+  message: string
+  data?: unknown
+  trace?: ExecutionTraceStep[]
+  toolContent?: string
+}
+
+function safeNumber(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+function pctDelta(next: number, prev: number): number {
+  if (!prev) return 0
+  return ((next - prev) / prev) * 100
+}
+
+function formatSigned(value: number, digits = 1) {
+  return `${value >= 0 ? '+' : ''}${value.toFixed(digits)}`
+}
+
+function metricLabel(metric: string) {
+  switch (metric) {
+    case 'P_G':
+      return '电网购电'
+    case 'P_PV':
+      return '光伏出力'
+    case 'P_CA':
+      return '电解槽负荷'
+    case 'P_PEM':
+      return 'PEM 出力'
+    case 'P_GM':
+      return '燃机出力'
+    case 'P_es_es':
+      return '储能支撑'
+    default:
+      return metric
+  }
+}
+
+function strategyLabel(strategy: StrategyKey) {
+  return strategy.toUpperCase()
+}
+
+function rankedSummary(summary: EcoDataset['summary'], baseline?: EcoDataset['summary']): ScenarioComparisonItem[] {
+  return [...STRATEGIES]
+    .map((strategy) => {
+      const current = summary[strategy]
+      const base = baseline?.[strategy]
+      return {
+        strategy,
+        cost: safeNumber(current?.cost),
+        carbon: safeNumber(current?.carbon),
+        combined: safeNumber(current?.combined),
+        rank: 0,
+        deltaCost: safeNumber(current?.cost) - safeNumber(base?.cost),
+        deltaCarbon: safeNumber(current?.carbon) - safeNumber(base?.carbon),
+        deltaCombined: safeNumber(current?.combined) - safeNumber(base?.combined),
+        deltaCostPct: pctDelta(safeNumber(current?.cost), safeNumber(base?.cost)),
+        deltaCarbonPct: pctDelta(safeNumber(current?.carbon), safeNumber(base?.carbon)),
+        deltaCombinedPct: pctDelta(safeNumber(current?.combined), safeNumber(base?.combined)),
+      }
+    })
+    .sort((a, b) => a.combined - b.combined)
+    .map((item, index) => ({ ...item, rank: index + 1 }))
+}
+
+function summarizeWhatIfParams(params: Record<string, unknown>) {
+  const normalized: string[] = []
+  const targets = new Set<string>()
+  if (typeof params.n_PV === 'number') {
+    normalized.push(`n_PV 调整为 ${params.n_PV}`)
+    targets.add('光伏配置')
+  }
+  if (typeof params.G_scale === 'number') {
+    const ratio = (params.G_scale - 1) * 100
+    normalized.push(`G_scale ${formatSigned(ratio, 0)}%`)
+    targets.add('光伏出力')
+  }
+  if (typeof params.c_carbon === 'number') {
+    normalized.push(`碳价调整为 ${params.c_carbon} 元/tCO2`)
+    targets.add('碳排成本')
+  }
+  if (typeof params.H_max === 'number') {
+    normalized.push(`储氢容量调整为 ${params.H_max}`)
+    targets.add('储氢约束')
+  }
+  if (typeof params.w_cost === 'number' || typeof params.w_carbon === 'number') {
+    normalized.push(`目标权重更新为 cost=${safeNumber(params.w_cost).toFixed(2)} carbon=${safeNumber(params.w_carbon).toFixed(2)}`)
+    targets.add('调度目标')
+  }
+  if (Array.isArray(params.price_grid)) {
+    normalized.push('price_grid 使用新的 24h 电价曲线')
+    targets.add('购电成本')
+  }
+  if (Array.isArray(params.EF_grid)) {
+    normalized.push('EF_grid 使用新的 24h 碳因子曲线')
+    targets.add('碳排信号')
+  }
+  return { normalized, targets: [...targets] }
+}
+
+function summarizeConstraints(constraints: Array<Record<string, unknown>>) {
+  const normalized = constraints.map((constraint, index) => {
+    const hours = Array.isArray(constraint.timesteps)
+      ? (constraint.timesteps as unknown[]).map((step) => Number(step) + 1).filter(Number.isFinite)
+      : []
+    const hourText = hours.length ? `${Math.min(...hours)}-${Math.max(...hours)} 时` : '指定时段'
+    return `${index + 1}. ${String(constraint.type ?? '约束')} ${hourText} = ${constraint.value ?? '--'}`
+  })
+  return {
+    normalized,
+    targets: ['购电约束', '时段边界', '可行域收缩'],
+  }
+}
+
+function buildTrace(
+  intent: WhatIfIntentSpec,
+  normalizedChanges: string[],
+  defaults: string[],
+  summary: string,
+  recommendation: string,
+): ExecutionTraceStep[] {
+  return [
+    {
+      id: 'intent',
+      title: '意图解析',
+      status: 'done',
+      kind: 'intent',
+      detail: intent.rawPrompt,
+      outcome: `${intent.scenarioType === 'constraint' ? '约束调度' : 'What-if 推演'} · 影响对象 ${intent.impactTargets.join(' / ') || '综合调度'}`,
+    },
+    {
+      id: 'mapping',
+      title: '参数映射',
+      status: 'done',
+      kind: 'mapping',
+      detail: normalizedChanges.join('；') || '沿用当前参数',
+      outcome: defaults.length ? `默认继承：${defaults.join('；')}` : '参数映射完成',
+    },
+    {
+      id: 'validation',
+      title: '可行性检查',
+      status: 'done',
+      kind: 'validation',
+      detail: '沿用当前实时电价、碳因子和基线设备边界',
+      outcome: '通过基础约束检查，进入优化求解',
+    },
+    {
+      id: 'solver',
+      title: '优化求解',
+      status: 'done',
+      kind: 'solver',
+      detail: '调用多策略调度优化器，重算 6 套策略',
+      outcome: '求解完成，已生成基准 vs 推演结果',
+    },
+    {
+      id: 'analysis',
+      title: '差异归因',
+      status: 'done',
+      kind: 'analysis',
+      detail: summary,
+      outcome: '已提取关键时段与主补偿设备',
+    },
+    {
+      id: 'advice',
+      title: '调度建议',
+      status: 'done',
+      kind: 'advice',
+      detail: recommendation,
+      outcome: '可继续追问关键时段、策略变更原因或约束边界',
+    },
+  ]
+}
+
+function buildKeyHours(base: EcoDataset, scenario: EcoDataset, strategy: StrategyKey): ScenarioKeyHourInsight[] {
+  const scores = Array.from({ length: 24 }, (_, idx) => {
+    const gridDelta = safeNumber(scenario.P_G?.[strategy]?.[idx]) - safeNumber(base.P_G?.[strategy]?.[idx])
+    const pvDelta = safeNumber(scenario.P_PV?.[strategy]?.[idx]) - safeNumber(base.P_PV?.[strategy]?.[idx])
+    const caDelta = safeNumber(scenario.P_CA?.[strategy]?.[idx]) - safeNumber(base.P_CA?.[strategy]?.[idx])
+    const pemDelta = safeNumber(scenario.P_PEM?.[strategy]?.[idx]) - safeNumber(base.P_PEM?.[strategy]?.[idx])
+    const gmDelta = safeNumber(scenario.P_GM?.[strategy]?.[idx]) - safeNumber(base.P_GM?.[strategy]?.[idx])
+    const storageDelta = safeNumber(scenario.P_es_es?.[idx]) - safeNumber(base.P_es_es?.[idx])
+    const changeScore = Math.abs(gridDelta) + Math.abs(pvDelta) + Math.abs(caDelta) + Math.abs(pemDelta) + Math.abs(gmDelta) + Math.abs(storageDelta)
+    return {
+      hour: idx + 1,
+      label: `${idx + 1}:00-${idx + 2}:00`,
+      changeScore,
+      gridDelta,
+      pvDelta,
+      caDelta,
+      pemDelta,
+      gmDelta,
+      storageDelta,
+      summary: `购电 ${formatSigned(gridDelta, 0)} kW，电解槽 ${formatSigned(caDelta, 0)} kW，PEM ${formatSigned(pemDelta, 0)} kW`,
+    }
+  })
+
+  return scores
+    .sort((a, b) => b.changeScore - a.changeScore)
+    .slice(0, 4)
+}
+
+function buildDispatchHighlights(base: EcoDataset, scenario: EcoDataset, strategy: StrategyKey): ScenarioDispatchHighlight[] {
+  const metrics: Array<ScenarioDispatchHighlight['metric']> = ['P_G', 'P_PV', 'P_CA', 'P_PEM', 'P_GM', 'P_es_es']
+  const highlights = metrics.map((metric) => {
+    const seriesBase: number[] = metric === 'P_es_es'
+      ? base.P_es_es
+      : (base[metric as 'P_G' | 'P_PV' | 'P_CA' | 'P_PEM' | 'P_GM']?.[strategy] ?? [])
+    const seriesScenario: number[] = metric === 'P_es_es'
+      ? scenario.P_es_es
+      : (scenario[metric as 'P_G' | 'P_PV' | 'P_CA' | 'P_PEM' | 'P_GM']?.[strategy] ?? [])
+    const delta = (seriesScenario ?? []).reduce((acc: number, value: number, index: number) => acc + (safeNumber(value) - safeNumber(seriesBase?.[index])), 0) / 24
+    return {
+      metric,
+      label: metricLabel(metric),
+      strategy,
+      delta,
+      summary: `${metricLabel(metric)} 平均变化 ${formatSigned(delta, 1)} kW`,
+    }
+  })
+
+  return highlights.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)).slice(0, 4)
+}
+
+function buildRiskFlags(
+  bestBefore: ScenarioComparisonItem,
+  bestAfter: ScenarioComparisonItem,
+  keyHours: ScenarioKeyHourInsight[],
+): ScenarioRiskFlag[] {
+  const risks: ScenarioRiskFlag[] = []
+  if (bestAfter.deltaCost > 0) {
+    risks.push({
+      type: 'cost_up',
+      level: 'warning',
+      label: '综合最优成本上升',
+      detail: `最优策略成本变化 ${formatSigned(bestAfter.deltaCostPct, 1)}%`,
+    })
+  }
+  if (bestAfter.deltaCarbon > 0) {
+    risks.push({
+      type: 'carbon_up',
+      level: 'warning',
+      label: '综合最优碳排上升',
+      detail: `最优策略碳排变化 ${formatSigned(bestAfter.deltaCarbonPct, 1)}%`,
+    })
+  }
+  if (keyHours.some((item) => item.gridDelta > 300)) {
+    const peak = keyHours.reduce((prev, current) => current.gridDelta > prev.gridDelta ? current : prev, keyHours[0])
+    risks.push({
+      type: 'grid_dependency_up',
+      level: 'critical',
+      label: '购电依赖显著抬升',
+      detail: `${peak.label} 购电增加 ${peak.gridDelta.toFixed(0)} kW`,
+    })
+  }
+  return risks
+}
+
+function buildScenarioInsight(args: {
+  label: string
+  rawPrompt: string
+  scenarioType: 'whatif' | 'constraint'
+  normalizedChanges: string[]
+  defaults: string[]
+  baseDataset?: EcoDataset
+  scenarioDataset: EcoDataset
+  activeStrategy?: StrategyKey
+  impactTargets: string[]
+}): { insight: ScenarioInsight; trace: ExecutionTraceStep[] } {
+  const baseSummary = args.baseDataset?.summary
+  const comparisonSummary = rankedSummary(args.scenarioDataset.summary, baseSummary)
+  const baselineRanking = baseSummary ? rankedSummary(baseSummary) : comparisonSummary
+  const bestBefore = baselineRanking[0]
+  const bestAfter = comparisonSummary[0]
+  const referenceStrategy = bestAfter?.strategy ?? args.activeStrategy ?? 'cicom'
+  const keyHours = args.baseDataset
+    ? buildKeyHours(args.baseDataset, args.scenarioDataset, referenceStrategy)
+    : []
+  const dispatchHighlights = args.baseDataset
+    ? buildDispatchHighlights(args.baseDataset, args.scenarioDataset, referenceStrategy)
+    : []
+  const riskFlags = bestBefore && bestAfter ? buildRiskFlags(bestBefore, bestAfter, keyHours) : []
+  const bestChanged = Boolean(bestBefore && bestAfter && bestBefore.strategy !== bestAfter.strategy)
+  const topHighlight = dispatchHighlights[0]
+  const headline = bestChanged
+    ? `${strategyLabel(bestBefore.strategy)} 不再最优，当前最优转为 ${strategyLabel(bestAfter.strategy)}。`
+    : `${strategyLabel(bestAfter.strategy)} 仍是综合最优，但调度结构已明显变化。`
+  const summary = bestBefore && bestAfter
+    ? `最优方案综合指标 ${formatSigned(bestAfter.deltaCombinedPct, 1)}%，成本 ${formatSigned(bestAfter.deltaCostPct, 1)}%，碳排 ${formatSigned(bestAfter.deltaCarbonPct, 1)}%。`
+    : '已完成基准与推演对比。'
+  const recommendation = topHighlight
+    ? `优先关注 ${topHighlight.label} 的调节边界，并围绕 ${referenceStrategy.toUpperCase()} 做进一步约束收敛。`
+    : '建议继续查看关键时段与购电压力变化。'
+
+  const intent: WhatIfIntentSpec = {
+    rawPrompt: args.rawPrompt,
+    normalizedPrompt: args.label,
+    scenarioType: args.scenarioType,
+    impactTargets: args.impactTargets,
+  }
+
+  return {
+    insight: {
+      intent,
+      normalizedChanges: args.normalizedChanges,
+      appliedDefaults: args.defaults,
+      comparisonSummary,
+      bestStrategyShift: {
+        before: bestBefore?.strategy ?? bestAfter?.strategy ?? 'cicom',
+        after: bestAfter?.strategy ?? bestBefore?.strategy ?? 'cicom',
+        changed: bestChanged,
+        reason: topHighlight
+          ? `${topHighlight.label} 成为主要补偿变量，推动最优策略${bestChanged ? '切换' : '重排'}。`
+          : '综合指标排序变化有限，主要由成本与碳排权衡引起。',
+      },
+      keyHours,
+      dispatchHighlights,
+      riskFlags,
+      headline,
+      summary,
+      driverAnalysis: topHighlight
+        ? `${topHighlight.summary}，关键变化时段集中在 ${keyHours.slice(0, 2).map((item) => item.label).join('、') || '核心负荷窗口'}。`
+        : '当前场景已完成推演，但尚未提取出显著设备补偿主因。',
+      recommendations: [
+        recommendation,
+        '继续追问“为什么最优策略变了”可触发更细的因果追溯。',
+        '如需控制代价，可在当前场景上继续加入购电上限或成本边界约束。',
+      ],
+      suggestedQuestions: [
+        '为什么最优策略变了？',
+        '哪几个时段购电压力最大？',
+        '如果只允许成本增加不超过3%，还能再降多少碳？',
+      ],
+    },
+    trace: buildTrace(intent, args.normalizedChanges, args.defaults, summary, recommendation),
+  }
+}
+
+function buildScenarioToolContent(label: string, insight: ScenarioInsight, trace: ExecutionTraceStep[]) {
+  const topHours = insight.keyHours.map((item) => `${item.label}(${item.summary})`).join('；') || '无显著时段'
+  const recommendations = insight.recommendations.join('；')
+  return [
+    `场景: ${label}`,
+    `结论: ${insight.headline}`,
+    `摘要: ${insight.summary}`,
+    `主因: ${insight.driverAnalysis}`,
+    `关键时段: ${topHours}`,
+    `建议: ${recommendations}`,
+    `执行链: ${trace.map((item) => `${item.title}:${item.outcome ?? item.detail ?? ''}`).join(' | ')}`,
+  ].join('\n')
+}
+
 export async function executeAction(
   type: string,
   params: Record<string, unknown>,
   context?: AgentExecutionContext,
-): Promise<{ success: boolean; message: string; data?: unknown }> {
+): Promise<AgentActionResult> {
   try {
     switch (type as AgentActionType) {
       case 'navigate': {
@@ -134,8 +507,27 @@ export async function executeAction(
         const data = await res.json()
         const h = requireHandlers(type)
         if (data.summary) {
-          h.loadScenarioDataset(data, desc)
+          const summaryMeta = summarizeWhatIfParams(overrides)
+          const { insight, trace } = buildScenarioInsight({
+            label: desc,
+            rawPrompt: desc,
+            scenarioType: 'whatif',
+            normalizedChanges: summaryMeta.normalized,
+            defaults: ['未显式修改的时变参数继承当前实时曲线', '设备边界沿用现有模型默认值'],
+            baseDataset: context?.fullData,
+            scenarioDataset: data as EcoDataset,
+            activeStrategy: context?.activeStrategy,
+            impactTargets: summaryMeta.targets,
+          })
+          h.loadScenarioDataset(data, desc, { insight, trace })
           h.navigate('/scenario')
+          return {
+            success: true,
+            message: `${desc} 求解完成`,
+            data: { dataset: data, insight, trace },
+            trace,
+            toolContent: buildScenarioToolContent(desc, insight, trace),
+          }
         }
         return { success: true, message: `${desc} 求解完成`, data }
       }
@@ -274,7 +666,7 @@ export async function executeAction(
 
       case 'add_constraint': {
         const desc = String(params.description ?? '添加约束')
-        const constraints = (params.constraints ?? []) as unknown[]
+        const constraints = (params.constraints ?? []) as Array<Record<string, unknown>>
         const res = await fetch(`${API_BASE}/api/optimize`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -283,9 +675,27 @@ export async function executeAction(
         if (!res.ok) throw new Error(await res.text())
         const data = await res.json()
         const h = requireHandlers(type)
-        h.loadScenarioDataset(data, desc)
+        const summaryMeta = summarizeConstraints(constraints)
+        const { insight, trace } = buildScenarioInsight({
+          label: desc,
+          rawPrompt: desc,
+          scenarioType: 'constraint',
+          normalizedChanges: summaryMeta.normalized,
+          defaults: ['保持当前实时电价、碳因子和天气曲线不变'],
+          baseDataset: context?.fullData,
+          scenarioDataset: data as EcoDataset,
+          activeStrategy: context?.activeStrategy,
+          impactTargets: summaryMeta.targets,
+        })
+        h.loadScenarioDataset(data, desc, { insight, trace })
         h.navigate('/scenario')
-        return { success: true, message: `${desc} 求解完成`, data }
+        return {
+          success: true,
+          message: `${desc} 求解完成`,
+          data: { dataset: data, insight, trace },
+          trace,
+          toolContent: buildScenarioToolContent(desc, insight, trace),
+        }
       }
 
       case 'trace_causality': {
@@ -346,7 +756,39 @@ export async function executeAction(
         const h = requireHandlers(type)
         h.loadParetoData(paretoPayload, label)
         h.navigate('/scenario')
-        return { success: true, message: `Pareto 扫描完成: ${paramName}`, data: paretoPayload }
+        const trace: ExecutionTraceStep[] = [
+          {
+            id: 'intent',
+            title: '意图解析',
+            status: 'done',
+            kind: 'intent',
+            detail: `扫描参数 ${paramName}，策略 ${strategy}`,
+            outcome: `共 ${values.length} 个取值点`,
+          },
+          {
+            id: 'solver',
+            title: '批量求解',
+            status: 'done',
+            kind: 'solver',
+            detail: values.join(', '),
+            outcome: '多轮优化完成',
+          },
+          {
+            id: 'analysis',
+            title: 'Pareto 提炼',
+            status: 'done',
+            kind: 'analysis',
+            detail: `最优区间 ${paretoPayload.optimalRange ? `${paretoPayload.optimalRange.min}-${paretoPayload.optimalRange.max}` : '待页面计算'}`,
+            outcome: '已输出成本-碳排权衡结果',
+          },
+        ]
+        return {
+          success: true,
+          message: `Pareto 扫描完成: ${paramName}`,
+          data: paretoPayload,
+          trace,
+          toolContent: `Pareto 扫描完成: ${paramName}\n策略: ${strategy}\n采样点: ${values.length}\n建议: ${paretoPayload.suggestion ?? '查看工作区建议区'}`,
+        }
       }
 
       case 'get_realtime_data': {

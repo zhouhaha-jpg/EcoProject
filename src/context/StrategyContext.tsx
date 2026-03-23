@@ -4,7 +4,9 @@ import type {
   DatasetMeta,
   EcoDataset,
   EmergencyRun,
+  ExecutionTraceStep,
   InvestmentRun,
+  ScenarioInsight,
   StrategyContextValue,
   StrategyKey,
 } from '@/types'
@@ -35,9 +37,15 @@ const FALLBACK_META: DatasetMeta = {
 }
 
 type ExtendedStrategyContext = StrategyContextValue & {
-  loadScenarioDataset: (ds: Record<string, unknown>, label: string) => void
+  loadScenarioDataset: (
+    ds: Record<string, unknown>,
+    label: string,
+    options?: { insight?: ScenarioInsight | null; trace?: ExecutionTraceStep[] | null },
+  ) => void
   scenarioLabel: string | null
   scenarioDataset: EcoDataset | null
+  scenarioInsight: ScenarioInsight | null
+  scenarioTrace: ExecutionTraceStep[]
   loadParetoData: (data: ParetoData, label: string) => void
   paretoLabel: string | null
   paretoData: ParetoData | null
@@ -73,6 +81,8 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
   const [datasetError, setDatasetError] = useState<string | null>(null)
   const [scenarioDataset, setScenarioDataset] = useState<EcoDataset | null>(null)
   const [scenarioLabel, setScenarioLabel] = useState<string | null>(null)
+  const [scenarioInsight, setScenarioInsight] = useState<ScenarioInsight | null>(null)
+  const [scenarioTrace, setScenarioTrace] = useState<ExecutionTraceStep[]>([])
   const [paretoData, setParetoData] = useState<ParetoData | null>(null)
   const [paretoLabel, setParetoLabel] = useState<string | null>(null)
   const [emergencyPreviewRun, setEmergencyPreviewRun] = useState<EmergencyRun | null>(null)
@@ -131,9 +141,15 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
     }
   }, [applyDisplayDataset])
 
-  const loadScenarioDataset = useCallback((ds: Record<string, unknown>, label: string) => {
+  const loadScenarioDataset = useCallback((
+    ds: Record<string, unknown>,
+    label: string,
+    options?: { insight?: ScenarioInsight | null; trace?: ExecutionTraceStep[] | null },
+  ) => {
     setScenarioDataset(ds as unknown as EcoDataset)
     setScenarioLabel(label)
+    setScenarioInsight(options?.insight ?? null)
+    setScenarioTrace(options?.trace ?? [])
     setParetoData(null)
     setParetoLabel(null)
     setInvestmentPlan(null)
@@ -148,6 +164,8 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
       setParetoLabel(label)
       setScenarioDataset(null)
       setScenarioLabel(null)
+      setScenarioInsight(null)
+      setScenarioTrace([])
       setInvestmentPlan(null)
       return
     }
@@ -172,6 +190,8 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
     setParetoLabel(label)
     setScenarioDataset(null)
     setScenarioLabel(null)
+    setScenarioInsight(null)
+    setScenarioTrace([])
     setInvestmentPlan(null)
     if (!emergencyActiveRun) setEmergencyPreviewRun(null)
     if (!anomalyActiveRun) setAnomalyPreviewRun(null)
@@ -189,6 +209,8 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
     setNormalDatasetBackup((current) => current ?? { data: dataset, meta: datasetMeta })
     setScenarioDataset(null)
     setScenarioLabel(null)
+    setScenarioInsight(null)
+    setScenarioTrace([])
     setParetoData(null)
     setParetoLabel(null)
     setInvestmentPlan(null)
@@ -218,6 +240,8 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
     setNormalDatasetBackup((current) => current ?? { data: dataset, meta: datasetMeta })
     setScenarioDataset(null)
     setScenarioLabel(null)
+    setScenarioInsight(null)
+    setScenarioTrace([])
     setParetoData(null)
     setParetoLabel(null)
     setInvestmentPlan(null)
@@ -260,6 +284,8 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
   const resetWorkspaceState = useCallback((options?: { restoreDisplay?: boolean }) => {
     setScenarioDataset(null)
     setScenarioLabel(null)
+    setScenarioInsight(null)
+    setScenarioTrace([])
     setParetoData(null)
     setParetoLabel(null)
     setInvestmentPlan(null)
@@ -318,6 +344,8 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
       loadScenarioDataset,
       scenarioLabel,
       scenarioDataset,
+      scenarioInsight,
+      scenarioTrace,
       loadParetoData,
       paretoLabel,
       paretoData,

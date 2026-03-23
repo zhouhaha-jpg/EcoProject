@@ -2,7 +2,7 @@
 
 > **新 Agent 必须在开始开发前完整阅读此文档。**
 > 本文档以当前仓库代码为准，记录真实架构、已落地能力、遗留限制与注意事项。
-> 生成日期：2026-03-07（最后更新：应急调度工作区 + 应急预案入库/应用/回退 + Agent 应急工具链）
+> 生成日期：2026-03-07（最后更新：What-if 调度工作台 V2 + 结构化 insight/trace + Agent 结论回灌）
 
 ---
 
@@ -20,7 +20,7 @@
 
 平台用于展示和分析氯碱工业多能互补系统在 24 小时时序下的优化调度结果，重点比较 6 种方案（UCI / CICOS / CICAR / CICOM / PV / ES）在功率、储氢、运行成本、碳排放等指标上的差异。
 
-当前系统已从“静态数据看板”升级为“带 Agent 的调度分析平台”，能够通过自然语言触发 What-If 推演、附加约束求解、因果追溯、Pareto 参数扫描，以及新的“应急事件驱动调度”能力。
+当前系统已从“静态数据看板”升级为“带 Agent 的调度分析平台”。当前产品心智以 `What-If 推演 + 自然语言约束调度` 为核心主路径，用户可以直接用自然语言触发参数修改、约束注入、因果追溯和 Pareto 参数扫描；应急、设备异常和投资规划保留为扩展能力，不再作为 EcoClaw 的默认主叙事。
 
 ---
 
@@ -99,7 +99,7 @@ EcoProject/
 │   ├── layout/
 │   │   └── MainLayout.tsx                ← 顶栏 + 导航 + Agent 侧边栏
 │   ├── context/
-│   │   └── StrategyContext.tsx           ← 全局数据、场景数据、Pareto、应急预案/应用态状态与工作区清理
+│   │   └── StrategyContext.tsx           ← 全局数据、What-if insight/trace、Pareto、应急预案/应用态状态与工作区清理
 │   ├── hooks/
 │   │   ├── useAgentChat.ts               ← Ask/Agent 对话与 tool_calls 编排
 │   │   ├── useAgentContext.ts            ← 注入 LLM 的完整上下文
@@ -110,7 +110,7 @@ EcoProject/
 │   ├── components/
 │   │   ├── agent/
 │   │   │   ├── AgentSidebar.tsx          ← 侧边栏容器、历史对话、工作区快照恢复、拖拽宽度、主动预警/应急预案入口
-│   │   │   ├── AgentChat.tsx             ← 聊天窗口、工具链显示
+│   │   │   ├── AgentChat.tsx             ← 聊天窗口、执行轨迹卡片、真实求解日志映射
 │   │   │   ├── AgentModeSwitch.tsx       ← Ask / Agent 模式切换
 │   │   │   ├── ConversationList.tsx      ← 历史对话列表
 │   │   │   └── ProactiveAlert.tsx        ← Agent 主动预警弹窗 (影子优化/市场异动/应急预案)
@@ -139,7 +139,7 @@ EcoProject/
 │   │   ├── OverviewPage.tsx              ← 总览页
 │   │   ├── EconomicIndicatorsPage.tsx    ← 经济指标页
 │   │   ├── StorageModulePage.tsx         ← 存储模块页
-│   │   ├── ScenarioComparePage.tsx       ← Agent 工作区（What-If / Pareto / 应急指挥舱）
+│   │   ├── ScenarioComparePage.tsx       ← What-if 调度工作台（结论/KPI/关键时段/设备差异/追问入口）
 │   │   └── PrefixPage.tsx                ← 电解槽/光伏/燃机/PEM/电网统一模板页
 │   ├── types/
 │   │   └── index.ts                      ← 核心 TS 类型
@@ -171,7 +171,7 @@ EcoProject/
 | 路由 | 页面 | 职责 |
 |---|---|---|
 | `/overview` | `OverviewPage.tsx` | 5 类设备功率总览 + 经济指标入口 |
-| `/scenario` | `ScenarioComparePage.tsx` | Agent 工作区，优先展示应急调度指挥页，否则展示推演结果或 Pareto 前沿 |
+| `/scenario` | `ScenarioComparePage.tsx` | What-if 调度工作台，默认承载情景推演与约束调度结果；应急/异常/投资任务按来源进入各自工作区 |
 | `/economic` | `EconomicIndicatorsPage.tsx` | 成本 / 碳排 / 综合指标表格与图表 |
 | `/storage` | `StorageModulePage.tsx` | 储氢罐与储能数据分析 |
 | `/ca` | `PrefixPage.tsx` | 电解槽功率详情 |
@@ -218,10 +218,11 @@ interface EcoDataset {
 - `dataset`：当前基础数据集
 - `datasetLoading` / `datasetError`：默认数据集加载状态与错误
 - `scenarioDataset` / `scenarioLabel`：What-If 或约束求解结果
+- `scenarioInsight` / `scenarioTrace`：What-If 结构化结论、风险标记与可审计执行链
 - `paretoData` / `paretoLabel`：Pareto 扫描结果
 - `emergencyPreviewRun`：当前正在工作区预览的应急预案
 - `emergencyActiveRun`：当前已应用到全平台的应急态
-- `loadScenarioDataset()`：将新的优化结果载入 Agent 工作区
+- `loadScenarioDataset()`：将新的优化结果及 insight/trace 载入 What-if 工作区
 - `loadParetoData()`：保存 Pareto 扫描结果，并自动计算建议区间
 - `applyEmergencyRunState()`：将应急预案切换为全平台展示态，并保留正常态回退基线
 - `restoreNormalDatasetState()`：恢复到应急应用前的数据集
@@ -350,12 +351,14 @@ interface EcoDataset {
 
 ### 7.5 Agent 工作区 `ScenarioComparePage.tsx`
 
-- 如果当前有 `emergencyPreviewRun` 或 `emergencyActiveRun`：优先展示“应急指挥舱”
+- 默认定位为 `What-if 调度工作台`
+- 如果当前有 `scenarioDataset`：优先展示一句话结论、核心 KPI、策略排名变化、关键时段影响、设备调度差异和下一步追问入口
+- 明细表格仍保留，但降级为折叠明细区
+- 如果当前有 `emergencyPreviewRun` 或 `emergencyActiveRun`：展示“应急指挥舱”
 - 指挥舱包含事件横幅、4小时联动曲线、基线虚线对照、点位详情、模块状态灯、事件时间线、风险热区矩阵与历史方案复用区
 - UI 会明确区分 `LLM生成` / `LLM生成·校验修正` / `模板兜底`
-- 如果当前有 `scenarioDataset`：展示“基准 vs 推演”的表格和 3 张对比图
 - 如果当前有 `paretoData`：展示 Pareto 前沿散点图、建议区间和说明文字
-- 如果两者都没有：显示示例指令引导用户在 Agent 面板发起操作
+- 如果两者都没有：显示 What-if 示例指令，引导用户从自然语言调度分析开始
 
 ---
 
@@ -392,7 +395,7 @@ interface EcoDataset {
 ### 9.1 已确认的重要演进
 
 1. 项目主路由已经从旧版页面体系切换为“总览 / 经济指标 / 存储模块 / Agent工作区 / 设备前缀页”结构。
-2. Agent 已不再只是页面导航助手，而是具备优化重算、附加约束、因果追溯、Pareto 扫描等执行能力。
+2. Agent 已不再只是页面导航助手，而是具备优化重算、附加约束、因果追溯、Pareto 扫描等执行能力，且 What-if / 约束调度已经成为默认主工作流。
 3. 后端已从“仅聊天代理”升级为“聊天 + SQLite + 优化求解 + 对话历史”的完整服务层。
 4. 当前真正执行优化的是 Python `optimizer.py`，不是 MATLAB Engine。
 5. 对话历史与求解结果都会落库，前端可重复打开历史对话。
@@ -403,6 +406,7 @@ interface EcoDataset {
 10. 园区坐标支持前端配置：通过 ParkConfigPopover 修改经纬度，影响 Open-Meteo 气象查询区域。
 11. 应急调度已从“LLM 出提纲 + 规则拼曲线”升级为“LLM 直接生成 4 小时 / 5 分钟多设备联动曲线，后端先做结果修复（点数补齐/方向压实/供需闭合），再做硬约束校验与反馈重试；连续失败后才退回模板兜底”。
 12. 对话历史现在不仅保存聊天消息，还会保存 Agent 工作区快照；刷新页面或从历史对话切回时，可以恢复对应的应急指挥舱 / What-If / Pareto 工作区。
+13. What-if 工作区已增加 `ScenarioInsight` / `ExecutionTraceStep` 结构化状态：聊天区显示执行轨迹卡片，工作区首屏优先显示结论、关键时段、设备差异和下一步追问，而不是只显示“已执行”与对比表格。
 11. 三级电价降级策略已实现：优先爬虫（预留）→ GBM 模拟器 → 静态 TOU 兜底。LLM 预警文本同样有降级兜底。
 12. 自动优化闭环已打通：每次数据采集后自动运行 Python 优化器 → 保存到 datasets 表 → 通过 WS `dataset_updated` 广播完整数据集 → 前端 StrategyContext 自动更新 → 所有页面图表同步刷新（经济指标/存储/电解槽/光伏/燃气轮机/PEM/电网）。
 13. 数据源指示器可点击：顶栏 ☀️⚡🌿 标签点击后弹出 24h 三路数据曲线面板（RealtimeDataPanel），展示电价/光照/碳因子实时折线图及统计值。

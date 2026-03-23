@@ -4,6 +4,7 @@
 
 import { useRef, useEffect, useState } from 'react'
 import type { ChatMessage, ToolChainStep } from '@/hooks/useAgentChat'
+import type { ServerLogEntry } from '@/types'
 import AgentModeSwitch from './AgentModeSwitch'
 import { Send, Trash2, User, Bot, ChevronDown, ChevronUp } from 'lucide-react'
 
@@ -16,6 +17,7 @@ interface AgentChatProps {
   onSend: (content: string) => void
   onClear: () => void
   toolChain?: ToolChainStep[]
+  serverLogs?: ServerLogEntry[]
 }
 
 export default function AgentChat({
@@ -27,6 +29,7 @@ export default function AgentChat({
   onSend,
   onClear,
   toolChain = [],
+  serverLogs = [],
 }: AgentChatProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
@@ -35,6 +38,18 @@ export default function AgentChat({
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' })
   }, [messages])
+
+  useEffect(() => {
+    const handlePrefill = (event: Event) => {
+      const customEvent = event as CustomEvent<{ prompt?: string }>
+      if (!inputRef.current || !customEvent.detail?.prompt) return
+      inputRef.current.value = customEvent.detail.prompt
+      inputRef.current.focus()
+    }
+
+    window.addEventListener('agent:prefill', handlePrefill as EventListener)
+    return () => window.removeEventListener('agent:prefill', handlePrefill as EventListener)
+  }, [])
 
   const handleSubmit = () => {
     const text = inputRef.current?.value?.trim()
@@ -49,6 +64,10 @@ export default function AgentChat({
       handleSubmit()
     }
   }
+
+  const progressLogs = serverLogs
+    .filter((log) => (log.scope === 'optimize' || log.scope === 'api') && (log.status === 'start' || log.status === 'progress' || log.status === 'done' || log.status === 'error'))
+    .slice(0, 4)
 
   return (
     <div className="flex flex-col h-full">
@@ -116,10 +135,29 @@ export default function AgentChat({
             >
               <div className="whitespace-pre-wrap break-words">{m.content}</div>
               {m.actions && m.actions.length > 0 && (
-                <div className="mt-2 pt-2 border-t border-[#1e3256] space-y-1">
+                <div className="mt-2 pt-2 border-t border-[#1e3256] space-y-2">
                   {m.actions.map((a, i) => (
-                    <div key={i} className="text-[10px] text-[#3d6080]">
-                      {a.type}: {a.result}
+                    <div key={i} className="rounded border border-[#1e3256] bg-[#0d1422] px-2.5 py-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] uppercase tracking-[0.12em] text-[#00d4ff]">{a.type}</span>
+                        <span className="text-[10px] text-[#3d6080]">{a.result}</span>
+                      </div>
+                      {a.trace && a.trace.length > 0 ? (
+                        <div className="mt-2 space-y-1.5">
+                          {a.trace.map((step) => (
+                            <div key={step.id} className="rounded border border-[#1e3256]/60 bg-[#111b2e]/70 px-2 py-1.5">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-[10px] text-[#8ba9cc]">{step.title}</span>
+                                <span className="text-[10px] text-[#3d6080]">{step.status}</span>
+                              </div>
+                              {step.detail ? <div className="mt-1 text-[10px] text-[#5a7a9a]">{step.detail}</div> : null}
+                              {step.outcome ? <div className="mt-1 text-[10px] text-[#69f0ae]">{step.outcome}</div> : null}
+                            </div>
+                          ))}
+                        </div>
+                      ) : a.detail ? (
+                        <div className="mt-1.5 whitespace-pre-wrap text-[10px] text-[#5a7a9a]">{a.detail}</div>
+                      ) : null}
                     </div>
                   ))}
                 </div>
@@ -143,28 +181,49 @@ export default function AgentChat({
                 {toolChain.map((step) => (
                   <div
                     key={step.id}
-                    className="flex items-start gap-2 text-[11px] text-[#5a7a9a]"
+                    className="rounded border border-[#1e3256]/50 bg-[#101a2c]/80 px-2.5 py-2 text-[11px] text-[#5a7a9a]"
                   >
-                    <span
-                      className={`shrink-0 mt-1.5 w-1.5 h-1.5 rounded-full ${
-                        step.status === 'running'
-                          ? 'bg-[#00d4ff] animate-pulse'
-                          : 'bg-[#00d4ff]/60'
-                      }`}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <span className="font-medium text-[#8ba9cc]">{step.name}</span>
-                      {step.status === 'done' && (
-                        <span className="ml-1.5 text-[#3d6080]">✓</span>
-                      )}
-                      {thinkingExpanded && step.result && (
-                        <p className="mt-0.5 text-[10px] text-[#3d6080] line-clamp-2">
-                          {step.result}
-                        </p>
-                      )}
+                    <div className="flex items-start gap-2 w-full">
+                      <span
+                        className={`shrink-0 mt-1.5 w-1.5 h-1.5 rounded-full ${
+                          step.status === 'running'
+                            ? 'bg-[#00d4ff] animate-pulse'
+                            : step.status === 'error'
+                              ? 'bg-[#ff7043]'
+                              : 'bg-[#00d4ff]/60'
+                        }`}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-medium text-[#8ba9cc]">{step.title}</span>
+                          <span className="text-[10px] uppercase tracking-[0.08em] text-[#3d6080]">{step.status}</span>
+                        </div>
+                        {step.detail ? (
+                          <p className="mt-1 text-[10px] text-[#5a7a9a]">
+                            {step.detail}
+                          </p>
+                        ) : null}
+                        {thinkingExpanded && step.outcome ? (
+                          <p className="mt-1 text-[10px] text-[#69f0ae]">
+                            {step.outcome}
+                          </p>
+                        ) : null}
+                      </div>
                     </div>
                   </div>
                 ))}
+                {progressLogs.length > 0 && (
+                  <div className="rounded border border-[#1e3256]/50 bg-[#0b1320] px-2.5 py-2">
+                    <div className="text-[10px] uppercase tracking-[0.12em] text-[#3d6080]">求解日志</div>
+                    <div className="mt-1.5 space-y-1">
+                      {progressLogs.map((log) => (
+                        <div key={log.id} className="text-[10px] text-[#5a7a9a]">
+                          <span className="text-[#8ba9cc]">{log.time}</span> {log.message}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
               <button
                 type="button"

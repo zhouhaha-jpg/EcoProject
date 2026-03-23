@@ -2,7 +2,14 @@
  * 后端 API 客户端
  */
 
-import type { AnomalyRun, DatasetMeta, EmergencyRun, InvestmentRun } from '@/types'
+import type {
+  AnomalyRun,
+  DatasetMeta,
+  EmergencyRun,
+  ExecutionTraceStep,
+  InvestmentRun,
+  ScenarioInsight,
+} from '@/types'
 
 const API_BASE = import.meta.env.VITE_API_BASE ? `${import.meta.env.VITE_API_BASE}/api` : '/api'
 
@@ -72,7 +79,13 @@ export interface ConversationMessage {
   id: number
   role: string
   content: string
-  actions?: { type: string; params: Record<string, unknown>; result: string }[]
+  actions?: {
+    type: string
+    params: Record<string, unknown>
+    result: string
+    detail?: string
+    trace?: ExecutionTraceStep[]
+  }[]
   created_at: string
 }
 
@@ -87,6 +100,8 @@ export interface ConversationWorkspaceState {
   scenarioPayload?: {
     dataset: Record<string, unknown>
     label: string
+    insight?: ScenarioInsight | null
+    trace?: ExecutionTraceStep[] | null
   } | null
   paretoPayload?: {
     data: Record<string, unknown>
@@ -143,7 +158,17 @@ export async function updateConversationTitle(id: number, title: string): Promis
 
 export async function appendConversationMessage(
   id: number,
-  msg: { role: string; content: string; actions?: { type: string; params: Record<string, unknown>; result: string }[] }
+  msg: {
+    role: string
+    content: string
+    actions?: {
+      type: string
+      params: Record<string, unknown>
+      result: string
+      detail?: string
+      trace?: ExecutionTraceStep[]
+    }[]
+  }
 ): Promise<void> {
   const res = await fetch(`${API_BASE}/conversations/${id}/messages`, {
     method: 'POST',

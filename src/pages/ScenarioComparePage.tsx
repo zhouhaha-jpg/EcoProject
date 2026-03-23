@@ -18,7 +18,7 @@ import {
   restoreEmergencyStateApi,
 } from '@/lib/api'
 import { exportEmergencyRunWorkbook } from '@/lib/emergencyExport'
-import type { EmergencyPointDetail, EmergencyRun, StrategyKey } from '@/types'
+import type { EmergencyPointDetail, EmergencyRun, ExecutionTraceStep, ScenarioInsight, StrategyKey } from '@/types'
 
 const STRATEGIES: StrategyKey[] = ['uci', 'cicos', 'cicar', 'cicom', 'pv', 'es']
 const LABELS: Record<StrategyKey, string> = {
@@ -41,6 +41,8 @@ export default function ScenarioComparePage() {
     dataset,
     scenarioDataset,
     scenarioLabel,
+    scenarioInsight,
+    scenarioTrace,
     paretoData,
     paretoLabel,
     datasetLoading,
@@ -59,6 +61,7 @@ export default function ScenarioComparePage() {
   const [history, setHistory] = useState<EmergencyRun[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [activePoint, setActivePoint] = useState<EmergencyPointDetail | null>(null)
+  const [detailExpanded, setDetailExpanded] = useState(false)
 
   useEffect(() => {
     let disposed = false
@@ -85,6 +88,10 @@ export default function ScenarioComparePage() {
   useEffect(() => {
     setActivePoint(null)
   }, [currentEmergency?.id])
+
+  useEffect(() => {
+    setDetailExpanded(false)
+  }, [scenarioLabel, paretoLabel, currentEmergency?.id, currentAnomaly?.id])
 
   const emergencyHistory = useMemo(() => {
     if (!currentEmergency) return history
@@ -338,19 +345,17 @@ export default function ScenarioComparePage() {
   if (!scenarioDataset && !paretoData) {
     return (
       <div className="h-full flex items-center justify-center">
-        <div className="panel" style={{ padding: 32, maxWidth: 640, textAlign: 'center' }}>
-          <div className="panel-title-bar" style={{ textAlign: 'center', marginBottom: 16 }}>EcoClaw</div>
+        <div className="panel" style={{ padding: 32, maxWidth: 760, textAlign: 'center' }}>
+          <div className="panel-title-bar" style={{ textAlign: 'center', marginBottom: 16 }}>What-if 调度工作台</div>
           <p style={{ color: '#8ba9cc', fontSize: 13, lineHeight: 1.8 }}>
-            暂无工作成果。请在右侧 EcoClaw 面板中发起 What-If、Pareto 或应急调度任务。
+            当前还没有推演结果。请在右侧 EcoClaw 面板中直接输入自然语言调度问题，优先发起 What-if 推演或约束调度任务。
           </p>
-          <div style={{ marginTop: 16, color: '#3d6080', fontSize: 12 }}>
-            <p>示例指令：</p>
-            <p style={{ color: '#00d4ff' }}>"如果光伏组件数量增加到 20000，碳交易价格提高到 150 元/tCO2"</p>
-            <p style={{ color: '#00d4ff' }}>"限制 19-21 时段电网购电不超过 3000kW"</p>
-            <p style={{ color: '#00d4ff' }}>"分析光伏组件数量从 5000 到 30000 时成本和碳排放的变化趋势"</p>
-            <p style={{ color: '#00d4ff' }}>"台风来了，电网故障，购电下降，光伏出力也下降，请生成应急预案"</p>
-            <p style={{ color: '#00d4ff' }}>"如果把厂区的光伏组件从 2000 增加到 5000，这笔投资几年后回本？"</p>
-            <p style={{ color: '#00d4ff' }}>"燃气轮机温度异常升高，请生成设备异常指挥方案"</p>
+          <div style={{ marginTop: 18, color: '#3d6080', fontSize: 12, display: 'grid', gap: 8 }}>
+            <p>推荐从以下问题开始：</p>
+            <p style={{ color: '#00d4ff' }}>"如果明天电价上涨 20%，光伏下降 30%，最优调度方案会怎么变？"</p>
+            <p style={{ color: '#00d4ff' }}>"限制 19-21 时段电网购电不超过 3000kW，成本和碳排会增加多少？"</p>
+            <p style={{ color: '#00d4ff' }}>"如果只允许成本增加不超过 3%，还能再降多少碳？"</p>
+            <p style={{ color: '#5a7a9a' }}>应急、异常、投资能力仍保留，但现在 What-if 是 EcoClaw 的默认主工作流。</p>
           </div>
         </div>
       </div>
@@ -388,75 +393,241 @@ export default function ScenarioComparePage() {
 
   const baseSummary = dataset.summary
   const scenSummary = scenarioDataset!.summary as Record<StrategyKey, { cost: number; carbon: number; combined: number }>
+  const insight = scenarioInsight ?? buildFallbackScenarioInsight(scenarioLabel ?? 'What-if 推演', baseSummary, scenSummary)
+  const trace = scenarioTrace.length > 0 ? scenarioTrace : buildFallbackTrace(insight)
+  const topStrategy = insight.comparisonSummary[0]
+  const baselineBest = insight.bestStrategyShift.before
+  const quickPrompts = insight.suggestedQuestions.length > 0
+    ? insight.suggestedQuestions
+    : ['为什么最优策略变了？', '哪几个时段购电压力最大？', '如果只允许成本增加不超过3%，还能再降多少碳？']
 
   return (
-    <div className="h-full min-h-0 overflow-auto" style={{ display: 'grid', gridTemplateRows: 'auto auto 1fr', gap: 12 }}>
+    <div className="h-full min-h-0 overflow-auto" style={{ display: 'grid', gridTemplateRows: 'auto auto auto auto auto auto', gap: 12 }}>
       <div className="panel shrink-0">
         <div className="panel-title-bar flex items-center justify-between">
-          <span>EcoClaw · {scenarioLabel ?? 'What-If 推演'}</span>
+          <span>What-if 调度工作台 · {scenarioLabel ?? 'What-If 推演'}</span>
           <span style={{ color: '#3d6080', fontSize: 10, fontWeight: 400 }}>
-            基准 vs 推演
+            自然语言调度引擎
           </span>
         </div>
-        <div className="overflow-x-auto" style={{ padding: 16 }}>
-          <table className="w-full border-collapse" style={{ fontSize: 12, fontFamily: "'Share Tech Mono', monospace" }}>
-            <thead>
-              <tr>
-                <th style={thStyle}>策略</th>
-                <th style={thStyle}>基准成本</th>
-                <th style={thStyle}>推演成本</th>
-                <th style={thStyle}>变化</th>
-                <th style={thStyle}>基准碳排</th>
-                <th style={thStyle}>推演碳排</th>
-                <th style={thStyle}>变化</th>
-                <th style={thStyle}>基准综合</th>
-                <th style={thStyle}>推演综合</th>
-                <th style={thStyle}>变化</th>
-              </tr>
-            </thead>
-            <tbody>
-              {STRATEGIES.map((sk) => {
-                const base = baseSummary[sk]
-                const scenario = scenSummary?.[sk]
-                if (!base || !scenario) return null
-                return (
-                  <tr key={sk}>
-                    <td style={tdStyle}>{LABELS[sk]}</td>
-                    <td style={tdNumStyle}>{base.cost.toFixed(0)}</td>
-                    <td style={tdNumStyle}>{scenario.cost.toFixed(0)}</td>
-                    <td style={{ ...tdNumStyle, color: scenario.cost <= base.cost ? '#69f0ae' : '#ff7043' }}>{pct(scenario.cost, base.cost)}</td>
-                    <td style={tdNumStyle}>{base.carbon.toFixed(2)}</td>
-                    <td style={tdNumStyle}>{scenario.carbon.toFixed(2)}</td>
-                    <td style={{ ...tdNumStyle, color: scenario.carbon <= base.carbon ? '#69f0ae' : '#ff7043' }}>{pct(scenario.carbon, base.carbon)}</td>
-                    <td style={tdNumStyle}>{base.combined.toFixed(2)}</td>
-                    <td style={tdNumStyle}>{scenario.combined.toFixed(2)}</td>
-                    <td style={{ ...tdNumStyle, color: scenario.combined <= base.combined ? '#69f0ae' : '#ff7043' }}>{pct(scenario.combined, base.combined)}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
+        <div style={{ padding: 16, display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 14 }}>
+          <div className="panel" style={{ padding: 16 }}>
+            <div style={{ color: '#5a7a9a', fontSize: 10, letterSpacing: 1.2 }}>一句话结论</div>
+            <div style={{ color: '#e8f4ff', fontSize: 24, lineHeight: 1.4, fontWeight: 700, marginTop: 10 }}>
+              {insight.headline}
+            </div>
+            <div style={{ color: '#8ba9cc', fontSize: 13, lineHeight: 1.8, marginTop: 10 }}>
+              {insight.summary}
+            </div>
+            <div style={{ color: '#5a7a9a', fontSize: 12, lineHeight: 1.8, marginTop: 10 }}>
+              {insight.driverAnalysis}
+            </div>
+            <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              {(insight.normalizedChanges.length > 0 ? insight.normalizedChanges : ['沿用当前实时参数曲线']).map((item) => (
+                <span key={item} className="hud-chip" style={{ fontSize: 10 }}>{item}</span>
+              ))}
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 10 }}>
+            <SummaryCell label="当前最优策略" value={topStrategy ? LABELS[topStrategy.strategy] : '--'} accent="#00d4ff" />
+            <SummaryCell label="基准最优策略" value={LABELS[baselineBest] ?? '--'} accent="#4e9eff" />
+            <SummaryCell label="综合变化" value={topStrategy ? formatPct(topStrategy.deltaCombinedPct) : '--'} accent={topStrategy && topStrategy.deltaCombinedPct <= 0 ? '#69f0ae' : '#ff7043'} />
+            <SummaryCell label="成本变化" value={topStrategy ? formatPct(topStrategy.deltaCostPct) : '--'} accent={topStrategy && topStrategy.deltaCostPct <= 0 ? '#69f0ae' : '#ff7043'} />
+            <SummaryCell label="碳排变化" value={topStrategy ? formatPct(topStrategy.deltaCarbonPct) : '--'} accent={topStrategy && topStrategy.deltaCarbonPct <= 0 ? '#69f0ae' : '#ff7043'} />
+            <SummaryCell label="风险提示" value={insight.riskFlags[0]?.label ?? '无显著风险'} accent={insight.riskFlags.length ? '#ffb347' : '#69f0ae'} />
+          </div>
         </div>
       </div>
 
-      <div className="panel shrink-0" style={{ minHeight: 180 }}>
-        <div className="panel-title-bar">基准 vs 推演 对比图</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, padding: 16, height: 160 }}>
-          <ScenarioCompareChart baseSummary={baseSummary} scenarioSummary={scenSummary} metric="cost" />
-          <ScenarioCompareChart baseSummary={baseSummary} scenarioSummary={scenSummary} metric="carbon" />
-          <ScenarioCompareChart baseSummary={baseSummary} scenarioSummary={scenSummary} metric="combined" />
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 0.8fr)', gap: 12 }}>
+        <div className="panel shrink-0">
+          <div className="panel-title-bar">策略排名变化区</div>
+          <div style={{ padding: 16, display: 'grid', gap: 8 }}>
+            {insight.comparisonSummary.map((item) => (
+              <div key={item.strategy} className="rounded border" style={{ borderColor: '#1e3256', background: 'rgba(13,20,34,0.9)', padding: 12 }}>
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div style={{ color: '#e8f4ff', fontWeight: 700, fontSize: 14 }}>{LABELS[item.strategy]}</div>
+                    <div style={{ color: '#5a7a9a', fontSize: 11 }}>综合排名 #{item.rank}</div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ color: item.deltaCombinedPct <= 0 ? '#69f0ae' : '#ff7043', fontSize: 15, fontWeight: 700 }}>
+                      {formatPct(item.deltaCombinedPct)}
+                    </div>
+                    <div style={{ color: '#5a7a9a', fontSize: 10 }}>combined</div>
+                  </div>
+                </div>
+                <div style={{ marginTop: 8, display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
+                  <MiniMetric label="成本" value={formatPct(item.deltaCostPct)} tone={item.deltaCostPct <= 0 ? 'good' : 'bad'} />
+                  <MiniMetric label="碳排" value={formatPct(item.deltaCarbonPct)} tone={item.deltaCarbonPct <= 0 ? 'good' : 'bad'} />
+                  <MiniMetric label="综合" value={formatPct(item.deltaCombinedPct)} tone={item.deltaCombinedPct <= 0 ? 'good' : 'bad'} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="panel shrink-0">
+          <div className="panel-title-bar">Agent 建议与下一步追问区</div>
+          <div style={{ padding: 16, display: 'grid', gap: 10 }}>
+            <div className="rounded border" style={{ borderColor: '#1e3256', background: 'rgba(13,20,34,0.9)', padding: 12 }}>
+              <div style={{ color: '#00d4ff', fontSize: 11, letterSpacing: 1 }}>调度建议</div>
+              <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
+                {insight.recommendations.map((item) => (
+                  <div key={item} style={{ color: '#8ba9cc', fontSize: 12, lineHeight: 1.7 }}>{item}</div>
+                ))}
+              </div>
+            </div>
+            <div className="rounded border" style={{ borderColor: '#1e3256', background: 'rgba(13,20,34,0.9)', padding: 12 }}>
+              <div style={{ color: '#5a7a9a', fontSize: 11, letterSpacing: 1 }}>继续分析</div>
+              <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
+                {quickPrompts.map((prompt) => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    onClick={() => window.dispatchEvent(new CustomEvent('agent:prefill', { detail: { prompt } }))}
+                    className="rounded border border-[#1e3256] bg-[#111b2e] px-3 py-2 text-left text-xs text-[#8ba9cc] transition-colors hover:border-[#00d4ff]/50 hover:text-[#e8f4ff]"
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className="panel min-h-0 flex flex-col">
-        <div className="panel-title-bar">推演说明</div>
-        <div style={{ flex: 1, padding: 16, color: '#8ba9cc', fontSize: 13, lineHeight: 1.8 }}>
-          <p><b style={{ color: '#4e9eff' }}>基准</b>：系统默认参数下的优化结果，所有情景对比共用同一套基准。</p>
-          <p style={{ marginTop: 8 }}>当前推演场景：<b style={{ color: '#00d4ff' }}>{scenarioLabel}</b></p>
-          <p style={{ marginTop: 8 }}>
-            表格中绿色数值表示推演结果优于基准，红色表示劣于基准。您可以在右侧 Agent 中继续修改参数进行新一轮推演。
-          </p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 12 }}>
+        <div className="panel">
+          <div className="panel-title-bar">关键时段影响区</div>
+          <div style={{ padding: 16, display: 'grid', gap: 8 }}>
+            {insight.keyHours.length > 0 ? insight.keyHours.map((item) => (
+              <div key={item.hour} className="rounded border" style={{ borderColor: '#1e3256', background: 'rgba(13,20,34,0.86)', padding: 12 }}>
+                <div className="flex items-center justify-between gap-2">
+                  <div style={{ color: '#e8f4ff', fontWeight: 700 }}>{item.label}</div>
+                  <div style={{ color: '#00d4ff', fontSize: 11 }}>影响分 {item.changeScore.toFixed(0)}</div>
+                </div>
+                <div style={{ color: '#8ba9cc', fontSize: 12, marginTop: 8, lineHeight: 1.7 }}>{item.summary}</div>
+                <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  <MetricChip label="购电" value={`${formatSignedValue(item.gridDelta)} kW`} />
+                  <MetricChip label="光伏" value={`${formatSignedValue(item.pvDelta)} kW`} />
+                  <MetricChip label="电解槽" value={`${formatSignedValue(item.caDelta)} kW`} />
+                  <MetricChip label="PEM" value={`${formatSignedValue(item.pemDelta)} kW`} />
+                </div>
+              </div>
+            )) : (
+              <div style={{ color: '#5a7a9a', fontSize: 12 }}>当前结果未提取到关键影响时段。</div>
+            )}
+          </div>
         </div>
+
+        <div className="panel">
+          <div className="panel-title-bar">设备调度差异区</div>
+          <div style={{ padding: 16, display: 'grid', gap: 8 }}>
+            {insight.dispatchHighlights.length > 0 ? insight.dispatchHighlights.map((item) => (
+              <div key={`${item.metric}-${item.label}`} className="rounded border" style={{ borderColor: '#1e3256', background: 'rgba(13,20,34,0.86)', padding: 12 }}>
+                <div className="flex items-center justify-between gap-2">
+                  <div style={{ color: '#e8f4ff', fontWeight: 700 }}>{item.label}</div>
+                  <div style={{ color: Math.abs(item.delta) < 1 ? '#8ba9cc' : item.delta <= 0 ? '#69f0ae' : '#ffb347', fontSize: 13, fontWeight: 700 }}>
+                    {formatSignedValue(item.delta)} kW
+                  </div>
+                </div>
+                <div style={{ color: '#5a7a9a', fontSize: 11, marginTop: 5 }}>参考策略 {LABELS[item.strategy]}</div>
+                <div style={{ color: '#8ba9cc', fontSize: 12, marginTop: 8, lineHeight: 1.7 }}>{item.summary}</div>
+              </div>
+            )) : (
+              <div style={{ color: '#5a7a9a', fontSize: 12 }}>当前结果未提取到显著设备补偿差异。</div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 12 }}>
+        <div className="panel">
+          <div className="panel-title-bar">执行轨迹区</div>
+          <div style={{ padding: 16, display: 'grid', gap: 8 }}>
+            {trace.map((step) => (
+              <div key={step.id} className="rounded border" style={{ borderColor: '#1e3256', background: 'rgba(13,20,34,0.86)', padding: 12 }}>
+                <div className="flex items-center justify-between gap-2">
+                  <div style={{ color: '#e8f4ff', fontWeight: 700 }}>{step.title}</div>
+                  <div style={{ color: step.status === 'error' ? '#ff7043' : step.status === 'running' ? '#00d4ff' : '#69f0ae', fontSize: 10 }}>
+                    {step.status.toUpperCase()}
+                  </div>
+                </div>
+                {step.detail ? <div style={{ color: '#8ba9cc', fontSize: 12, marginTop: 8, lineHeight: 1.7 }}>{step.detail}</div> : null}
+                {step.outcome ? <div style={{ color: '#5a7a9a', fontSize: 11, marginTop: 6 }}>{step.outcome}</div> : null}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="panel">
+          <div className="panel-title-bar">基准 vs 推演 对比图</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12, padding: 16, height: 420 }}>
+            <ScenarioCompareChart baseSummary={baseSummary} scenarioSummary={scenSummary} metric="cost" />
+            <ScenarioCompareChart baseSummary={baseSummary} scenarioSummary={scenSummary} metric="carbon" />
+            <ScenarioCompareChart baseSummary={baseSummary} scenarioSummary={scenSummary} metric="combined" />
+          </div>
+        </div>
+      </div>
+
+      <div className="panel shrink-0">
+        <div className="panel-title-bar flex items-center justify-between">
+          <span>明细表与对比数据</span>
+          <button
+            type="button"
+            onClick={() => setDetailExpanded((value) => !value)}
+            className="rounded border border-[#1e3256] bg-[#111b2e] px-3 py-1.5 text-[11px] text-[#8ba9cc] transition-colors hover:border-[#00d4ff]/50 hover:text-[#e8f4ff]"
+          >
+            {detailExpanded ? '收起' : '展开'}
+          </button>
+        </div>
+        {detailExpanded ? (
+          <div className="overflow-x-auto" style={{ padding: 16 }}>
+            <table className="w-full border-collapse" style={{ fontSize: 12, fontFamily: "'Share Tech Mono', monospace" }}>
+              <thead>
+                <tr>
+                  <th style={thStyle}>策略</th>
+                  <th style={thStyle}>基准成本</th>
+                  <th style={thStyle}>推演成本</th>
+                  <th style={thStyle}>变化</th>
+                  <th style={thStyle}>基准碳排</th>
+                  <th style={thStyle}>推演碳排</th>
+                  <th style={thStyle}>变化</th>
+                  <th style={thStyle}>基准综合</th>
+                  <th style={thStyle}>推演综合</th>
+                  <th style={thStyle}>变化</th>
+                </tr>
+              </thead>
+              <tbody>
+                {STRATEGIES.map((sk) => {
+                  const base = baseSummary[sk]
+                  const scenario = scenSummary?.[sk]
+                  if (!base || !scenario) return null
+                  return (
+                    <tr key={sk}>
+                      <td style={tdStyle}>{LABELS[sk]}</td>
+                      <td style={tdNumStyle}>{base.cost.toFixed(0)}</td>
+                      <td style={tdNumStyle}>{scenario.cost.toFixed(0)}</td>
+                      <td style={{ ...tdNumStyle, color: scenario.cost <= base.cost ? '#69f0ae' : '#ff7043' }}>{pct(scenario.cost, base.cost)}</td>
+                      <td style={tdNumStyle}>{base.carbon.toFixed(2)}</td>
+                      <td style={tdNumStyle}>{scenario.carbon.toFixed(2)}</td>
+                      <td style={{ ...tdNumStyle, color: scenario.carbon <= base.carbon ? '#69f0ae' : '#ff7043' }}>{pct(scenario.carbon, base.carbon)}</td>
+                      <td style={tdNumStyle}>{base.combined.toFixed(2)}</td>
+                      <td style={tdNumStyle}>{scenario.combined.toFixed(2)}</td>
+                      <td style={{ ...tdNumStyle, color: scenario.combined <= base.combined ? '#69f0ae' : '#ff7043' }}>{pct(scenario.combined, base.combined)}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div style={{ padding: 16, color: '#5a7a9a', fontSize: 12 }}>
+            当前首屏优先展示结论、关键时段和设备差异。展开后可查看完整策略对比明细。
+          </div>
+        )}
       </div>
     </div>
   )
@@ -480,6 +651,107 @@ function PointRow({ label, value, color }: { label: string; value: number; color
       </span>
     </div>
   )
+}
+
+function MiniMetric({ label, value, tone }: { label: string; value: string; tone: 'good' | 'bad' | 'neutral' }) {
+  const color = tone === 'good' ? '#69f0ae' : tone === 'bad' ? '#ff7043' : '#8ba9cc'
+  return (
+    <div className="rounded border" style={{ borderColor: '#1e3256', background: 'rgba(17,27,46,0.7)', padding: '8px 10px' }}>
+      <div style={{ color: '#5a7a9a', fontSize: 10 }}>{label}</div>
+      <div style={{ color, fontSize: 13, fontWeight: 700, marginTop: 4 }}>{value}</div>
+    </div>
+  )
+}
+
+function MetricChip({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="hud-chip" style={{ fontSize: 10 }}>
+      {label} {value}
+    </span>
+  )
+}
+
+function formatPct(value: number) {
+  if (!Number.isFinite(value)) return '--'
+  return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`
+}
+
+function formatSignedValue(value: number) {
+  if (!Number.isFinite(value)) return '--'
+  return `${value >= 0 ? '+' : ''}${value.toFixed(0)}`
+}
+
+function buildFallbackScenarioInsight(
+  label: string,
+  baseSummary: Record<StrategyKey, { cost: number; carbon: number; combined: number }>,
+  scenarioSummary: Record<StrategyKey, { cost: number; carbon: number; combined: number }>,
+): ScenarioInsight {
+  const ranking = STRATEGIES.map((strategy) => ({
+    strategy,
+    cost: scenarioSummary[strategy]?.cost ?? 0,
+    carbon: scenarioSummary[strategy]?.carbon ?? 0,
+    combined: scenarioSummary[strategy]?.combined ?? 0,
+    rank: 0,
+    deltaCost: (scenarioSummary[strategy]?.cost ?? 0) - (baseSummary[strategy]?.cost ?? 0),
+    deltaCarbon: (scenarioSummary[strategy]?.carbon ?? 0) - (baseSummary[strategy]?.carbon ?? 0),
+    deltaCombined: (scenarioSummary[strategy]?.combined ?? 0) - (baseSummary[strategy]?.combined ?? 0),
+    deltaCostPct: percentDelta((scenarioSummary[strategy]?.cost ?? 0), (baseSummary[strategy]?.cost ?? 0)),
+    deltaCarbonPct: percentDelta((scenarioSummary[strategy]?.carbon ?? 0), (baseSummary[strategy]?.carbon ?? 0)),
+    deltaCombinedPct: percentDelta((scenarioSummary[strategy]?.combined ?? 0), (baseSummary[strategy]?.combined ?? 0)),
+  })).sort((a, b) => a.combined - b.combined).map((item, index) => ({ ...item, rank: index + 1 }))
+
+  const baselineBest = [...STRATEGIES].sort((a, b) => baseSummary[a].combined - baseSummary[b].combined)[0]
+  const currentBest = ranking[0]?.strategy ?? baselineBest
+
+  return {
+    intent: {
+      rawPrompt: label,
+      normalizedPrompt: label,
+      scenarioType: 'whatif',
+      impactTargets: ['综合调度'],
+    },
+    normalizedChanges: ['已执行场景推演'],
+    appliedDefaults: ['未补充结构化 insight，采用页面兜底分析'],
+    comparisonSummary: ranking,
+    bestStrategyShift: {
+      before: baselineBest,
+      after: currentBest,
+      changed: baselineBest !== currentBest,
+      reason: '基于综合指标排序自动生成',
+    },
+    keyHours: [],
+    dispatchHighlights: [],
+    riskFlags: [],
+    headline: `${LABELS[currentBest]} 为当前综合最优策略。`,
+    summary: '当前结果由页面根据基准与推演汇总指标自动生成。',
+    driverAnalysis: '如需更细的时段归因，可继续触发因果追溯或重新发起带约束的推演。',
+    recommendations: ['继续查看关键时段、购电压力与约束边界。'],
+    suggestedQuestions: ['为什么最优策略变了？', '哪几个时段购电压力最大？'],
+  }
+}
+
+function buildFallbackTrace(insight: ScenarioInsight): ExecutionTraceStep[] {
+  return [
+    {
+      id: 'fallback-intent',
+      title: '意图解析',
+      status: 'done',
+      detail: insight.intent.normalizedPrompt,
+      outcome: '已恢复推演工作区',
+    },
+    {
+      id: 'fallback-analysis',
+      title: '结果归纳',
+      status: 'done',
+      detail: insight.summary,
+      outcome: '页面使用已有数据完成兜底分析',
+    },
+  ]
+}
+
+function percentDelta(next: number, prev: number) {
+  if (!prev) return 0
+  return ((next - prev) / prev) * 100
 }
 
 function renderGenerationLabel(mode: string) {

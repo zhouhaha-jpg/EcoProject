@@ -21,6 +21,91 @@ export interface StrategySummary {
   combined: number   // 综合目标函数
 }
 
+export interface WhatIfIntentSpec {
+  rawPrompt: string
+  normalizedPrompt: string
+  scenarioType: 'whatif' | 'constraint' | 'pareto' | string
+  impactTargets: string[]
+}
+
+export interface ExecutionTraceStep {
+  id: string
+  title: string
+  status: 'pending' | 'running' | 'done' | 'error'
+  detail?: string
+  outcome?: string
+  kind?: 'intent' | 'mapping' | 'validation' | 'solver' | 'analysis' | 'advice' | string
+}
+
+export interface ScenarioRiskFlag {
+  type: 'cost_up' | 'carbon_up' | 'grid_dependency_up' | 'stability_risk' | string
+  level: 'info' | 'warning' | 'critical' | string
+  label: string
+  detail: string
+}
+
+export interface ScenarioComparisonItem extends StrategySummary {
+  strategy: StrategyKey
+  rank: number
+  deltaCost: number
+  deltaCarbon: number
+  deltaCombined: number
+  deltaCostPct: number
+  deltaCarbonPct: number
+  deltaCombinedPct: number
+}
+
+export interface ScenarioBestStrategyShift {
+  before: StrategyKey
+  after: StrategyKey
+  changed: boolean
+  reason: string
+}
+
+export interface ScenarioKeyHourInsight {
+  hour: number
+  label: string
+  changeScore: number
+  gridDelta: number
+  pvDelta: number
+  caDelta: number
+  pemDelta: number
+  gmDelta: number
+  storageDelta: number
+  summary: string
+}
+
+export interface ScenarioDispatchHighlight {
+  metric: 'P_G' | 'P_PV' | 'P_CA' | 'P_PEM' | 'P_GM' | 'P_es_es' | string
+  label: string
+  strategy: StrategyKey
+  delta: number
+  summary: string
+}
+
+export interface ScenarioInsight {
+  intent: WhatIfIntentSpec
+  normalizedChanges: string[]
+  appliedDefaults: string[]
+  comparisonSummary: ScenarioComparisonItem[]
+  bestStrategyShift: ScenarioBestStrategyShift
+  keyHours: ScenarioKeyHourInsight[]
+  dispatchHighlights: ScenarioDispatchHighlight[]
+  riskFlags: ScenarioRiskFlag[]
+  headline: string
+  summary: string
+  driverAnalysis: string
+  recommendations: string[]
+  suggestedQuestions: string[]
+}
+
+export interface ScenarioWorkspacePayload {
+  dataset: EcoDataset
+  label: string
+  insight?: ScenarioInsight | null
+  trace?: ExecutionTraceStep[] | null
+}
+
 /** 24小时时序数据（index 0 = 第1小时） */
 export type HourlyData = number[]
 

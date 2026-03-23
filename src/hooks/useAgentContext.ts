@@ -33,7 +33,7 @@ const PAGE_LABELS: Record<string, string> = {
   '/gm': '燃气轮机',
   '/pem': '质子膜燃料电池',
   '/g': '电网',
-  '/scenario': 'EcoClaw',
+  '/scenario': 'What-if调度工作台',
 }
 
 function stats(arr: number[]) {

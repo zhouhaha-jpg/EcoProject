@@ -26,7 +26,7 @@ import { applyEmergencyRunApi } from '@/lib/api'
 import type { ConversationItem, ConversationWorkspaceState } from '@/lib/api'
 import type { ChatMessage } from '@/hooks/useAgentChat'
 import type { RealtimeState, ShadowOptimization } from '@/hooks/useRealtimeData'
-import type { AnomalyRun, EmergencyRun, InvestmentRun } from '@/types'
+import type { AnomalyRun, EmergencyRun, ExecutionTraceStep, InvestmentRun, ScenarioInsight } from '@/types'
 
 const CONVERSATION_STORAGE_KEY = 'eco-agent-current-conversation-id'
 
@@ -45,6 +45,8 @@ interface AgentSidebarProps {
 function buildWorkspaceState(args: {
   scenarioDataset: Record<string, unknown> | null
   scenarioLabel: string | null
+  scenarioInsight: ScenarioInsight | null
+  scenarioTrace: ExecutionTraceStep[]
   paretoData: Record<string, unknown> | null
   paretoLabel: string | null
   emergencyPreviewRun: EmergencyRun | null
@@ -95,6 +97,8 @@ function buildWorkspaceState(args: {
       scenarioPayload: {
         dataset: args.scenarioDataset,
         label: args.scenarioLabel,
+        insight: args.scenarioInsight,
+        trace: args.scenarioTrace,
       },
       savedAt: new Date().toISOString(),
     }
@@ -127,6 +131,8 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
     loadParetoData,
     scenarioDataset,
     scenarioLabel,
+    scenarioInsight,
+    scenarioTrace,
     paretoData,
     paretoLabel,
     emergencyPreviewRun,
@@ -238,7 +244,10 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
     }
 
     if (workspaceState.pageType === 'scenario' && workspaceState.scenarioPayload) {
-      loadScenarioDataset(workspaceState.scenarioPayload.dataset, workspaceState.scenarioPayload.label)
+      loadScenarioDataset(workspaceState.scenarioPayload.dataset, workspaceState.scenarioPayload.label, {
+        insight: workspaceState.scenarioPayload.insight ?? null,
+        trace: workspaceState.scenarioPayload.trace ?? [],
+      })
       navigate(workspaceState.route || '/scenario')
       return
     }
@@ -317,7 +326,11 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
 
   const handlers_ref = useRef<{
     navigate: (path: string) => void
-    loadScenarioDataset: (ds: Record<string, unknown>, label: string) => void
+    loadScenarioDataset: (
+      ds: Record<string, unknown>,
+      label: string,
+      options?: { insight?: ScenarioInsight | null; trace?: ExecutionTraceStep[] | null },
+    ) => void
     setEmergencyPreviewRun?: (run: EmergencyRun | null) => void
   } | null>(null)
 
@@ -345,6 +358,8 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
       const workspaceState = buildWorkspaceState({
         scenarioDataset: scenarioDataset as unknown as Record<string, unknown> | null,
         scenarioLabel,
+        scenarioInsight,
+        scenarioTrace,
         paretoData: paretoData as unknown as Record<string, unknown> | null,
         paretoLabel,
         emergencyPreviewRun,
@@ -372,6 +387,8 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
     paretoLabel,
     scenarioDataset,
     scenarioLabel,
+    scenarioInsight,
+    scenarioTrace,
     datasetMeta.anomalyActive,
   ])
 
@@ -522,6 +539,7 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
                   onSend={chat.sendMessage}
                   onClear={handleNewConversation}
                   toolChain={chat.toolChain}
+                  serverLogs={realtimeData?.serverLogs ?? []}
                 />
               )}
             </div>
