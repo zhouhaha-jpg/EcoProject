@@ -539,24 +539,6 @@ app.post('/api/chat', async (req, res) => {
         }
         res.write('data: [DONE]\n\n')
         res.end()
-        pushServerLog({
-          level: 'err',
-          status: 'error',
-          scope: 'scheduler',
-          message: '定时任务抓取实时外部数据失败',
-          algorithm: 'DataFetcher aggregator',
-          detail: stderr.slice(0, 240) || `exit ${code}`,
-        })
-        pushServerLog({
-          level: 'err',
-          status: 'error',
-          scope: 'optimize',
-          message: '后台自动实时优化失败',
-          targetDate: fetchResult.date,
-          range: `${fetchResult.date} 00:00-23:00`,
-          algorithm: 'MILP 6-strategy dispatch',
-          detail: stderr.slice(0, 240) || `exit ${code}`,
-        })
         return
       }
 
@@ -600,7 +582,7 @@ app.post('/api/chat', async (req, res) => {
     const msg = err?.error?.message ?? err?.message ?? String(err)
     if (!res.headersSent) {
       res.status(status).json({ error: msg })
-    } else {
+    } else if (!res.writableEnded) {
       res.write(`data: ${JSON.stringify({ error: msg })}\n\n`)
       res.end()
     }

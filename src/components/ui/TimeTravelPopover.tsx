@@ -21,8 +21,15 @@ export default function TimeTravelPopover() {
   useEffect(() => {
     if (!open) return
     setLoadingDates(true)
+    setMessage('')
     fetch(`${API_BASE}/api/realtime/dates`)
-      .then((res) => res.json())
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(await res.text() || `HTTP ${res.status}`)
+        }
+        const text = await res.text()
+        return text ? JSON.parse(text) : []
+      })
       .then((data) => {
         const nextDates = Array.isArray(data) ? data : []
         setDates(nextDates)

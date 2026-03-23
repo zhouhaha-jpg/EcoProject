@@ -20,6 +20,133 @@ interface AgentChatProps {
   serverLogs?: ServerLogEntry[]
 }
 
+function renderInlineMarkdown(text: string) {
+  const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*)/g).filter(Boolean)
+  return parts.map((part, index) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={`${part}-${index}`} className="font-semibold text-[#e8f4ff]">{part.slice(2, -2)}</strong>
+    }
+    if (part.startsWith('`') && part.endsWith('`')) {
+      return (
+        <code
+          key={`${part}-${index}`}
+          className="rounded bg-[#0a1420] px-1.5 py-0.5 text-[#00d4ff]"
+          style={{ fontFamily: "'Share Tech Mono', monospace" }}
+        >
+          {part.slice(1, -1)}
+        </code>
+      )
+    }
+    if (part.startsWith('*') && part.endsWith('*')) {
+      return <em key={`${part}-${index}`} className="text-[#cfe6ff]">{part.slice(1, -1)}</em>
+    }
+    return <span key={`${part}-${index}`}>{part}</span>
+  })
+}
+
+function renderMarkdownContent(content: string) {
+  const elements: JSX.Element[] = []
+  const bulletBuffer: string[] = []
+  const orderedBuffer: string[] = []
+  const tableBuffer: string[] = []
+
+  const flushBullets = () => {
+    if (!bulletBuffer.length) return
+    elements.push(
+      <ul key={`ul-${elements.length}`} className="space-y-1 pl-4 text-[#8ba9cc]" style={{ listStyleType: 'disc' }}>
+        {bulletBuffer.map((item, index) => (
+          <li key={`${item}-${index}`}>{renderInlineMarkdown(item)}</li>
+        ))}
+      </ul>,
+    )
+    bulletBuffer.length = 0
+  }
+
+  const flushOrdered = () => {
+    if (!orderedBuffer.length) return
+    elements.push(
+      <ol key={`ol-${elements.length}`} className="space-y-1 pl-4 text-[#8ba9cc]" style={{ listStyleType: 'decimal' }}>
+        {orderedBuffer.map((item, index) => (
+          <li key={`${item}-${index}`}>{renderInlineMarkdown(item)}</li>
+        ))}
+      </ol>,
+    )
+    orderedBuffer.length = 0
+  }
+
+  const flushTables = () => {
+    if (!tableBuffer.length) return
+    elements.push(
+      <pre
+        key={`pre-${elements.length}`}
+        className="overflow-x-auto rounded border border-[#1e3256] bg-[#0a1420] px-3 py-2 text-[11px] text-[#8ba9cc]"
+        style={{ fontFamily: "'Share Tech Mono', monospace", whiteSpace: 'pre-wrap' }}
+      >
+        {tableBuffer.join('\n')}
+      </pre>,
+    )
+    tableBuffer.length = 0
+  }
+
+  const flushAll = () => {
+    flushBullets()
+    flushOrdered()
+    flushTables()
+  }
+
+  content.split('\n').forEach((line, index) => {
+    const trimmed = line.trim()
+    if (!trimmed) {
+      flushAll()
+      return
+    }
+
+    if (/^\|.*\|$/.test(trimmed)) {
+      flushBullets()
+      flushOrdered()
+      tableBuffer.push(trimmed)
+      return
+    }
+
+    const headingMatch = trimmed.match(/^(#{1,4})\s+(.*)$/)
+    if (headingMatch) {
+      flushAll()
+      const level = headingMatch[1].length
+      const fontSize = level === 1 ? 18 : level === 2 ? 16 : level === 3 ? 14 : 13
+      elements.push(
+        <div key={`h-${index}`} style={{ color: '#e8f4ff', fontWeight: 700, fontSize, marginTop: 4 }}>
+          {renderInlineMarkdown(headingMatch[2])}
+        </div>,
+      )
+      return
+    }
+
+    if (/^[-*]\s+/.test(trimmed)) {
+      flushOrdered()
+      flushTables()
+      bulletBuffer.push(trimmed.replace(/^[-*]\s+/, ''))
+      return
+    }
+
+    if (/^\d+\.\s+/.test(trimmed)) {
+      flushBullets()
+      flushTables()
+      orderedBuffer.push(trimmed.replace(/^\d+\.\s+/, ''))
+      return
+    }
+
+    flushAll()
+    elements.push(
+      <p key={`p-${index}`} className="text-[#8ba9cc]" style={{ lineHeight: 1.8 }}>
+        {renderInlineMarkdown(trimmed)}
+      </p>,
+    )
+  })
+
+  flushAll()
+  return <div className="space-y-2">{elements}</div>
+}
+
 export default function AgentChat({
   messages,
   isLoading,
@@ -133,7 +260,9 @@ export default function AgentChat({
               }`}
               style={{ fontFamily: "'Noto Sans SC', sans-serif" }}
             >
-              <div className="whitespace-pre-wrap break-words">{m.content}</div>
+              {m.role === 'assistant'
+                ? <div className="break-words">{renderMarkdownContent(m.content)}</div>
+                : <div className="whitespace-pre-wrap break-words">{m.content}</div>}
               {m.actions && m.actions.length > 0 && (
                 <div className="mt-2 pt-2 border-t border-[#1e3256] space-y-2">
                   {m.actions.map((a, i) => (

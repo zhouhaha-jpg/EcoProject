@@ -443,7 +443,7 @@ export default function ScenarioComparePage() {
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 0.8fr)', gap: 12 }}>
         <div className="panel shrink-0">
           <div className="panel-title-bar">策略排名变化区</div>
-          <div style={{ padding: 16, display: 'grid', gap: 8 }}>
+          <div style={{ padding: 16, display: 'grid', gap: 8, maxHeight: 420, overflowY: 'auto', paddingRight: 10 }}>
             {insight.comparisonSummary.map((item) => (
               <div key={item.strategy} className="rounded border" style={{ borderColor: '#1e3256', background: 'rgba(13,20,34,0.9)', padding: 12 }}>
                 <div className="flex items-center justify-between gap-3">

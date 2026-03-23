@@ -231,6 +231,32 @@ function normalizeToolTitle(name: string) {
   }
 }
 
+async function fakeStreamAssistantMessage(
+  text: string,
+  actions: ChatMessage['actions'],
+  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>,
+) {
+  const assistantId = crypto.randomUUID()
+  if (!text) {
+    setMessages((prev) => [...prev, { id: assistantId, role: 'assistant', content: '', ...(actions ? { actions } : {}) }])
+    return
+  }
+
+  setMessages((prev) => [...prev, { id: assistantId, role: 'assistant', content: '', ...(actions ? { actions } : {}) }])
+
+  const chunkSize = Math.max(16, Math.ceil(text.length / 55))
+  let current = ''
+  for (let i = 0; i < text.length; i += chunkSize) {
+    current += text.slice(i, i + chunkSize)
+    setMessages((prev) =>
+      prev.map((message) =>
+        message.id === assistantId ? { ...message, content: current, ...(actions ? { actions } : {}) } : message,
+      ),
+    )
+    await new Promise((resolve) => window.setTimeout(resolve, 18))
+  }
+}
+
 interface JsonResponseContext {
   url: string
   initialMessages: ChatMessage[]
@@ -419,13 +445,7 @@ async function handleJsonResponse(
             prev.map((s) => (s.id === 't-cont' ? { ...s, status: 'done' as const, outcome: '最终结论已生成' } : s))
           )
           const displayContent = content || (actions.length > 0 ? buildActionFallbackContent(actions) : '已处理您的请求。')
-          const assistantMsg = {
-            id: crypto.randomUUID(),
-            role: 'assistant' as const,
-            content: displayContent,
-            ...(actions.length > 0 && { actions }),
-          }
-          setMessages((prev) => [...prev, assistantMsg])
+          await fakeStreamAssistantMessage(displayContent, actions.length > 0 ? actions : undefined, setMessages)
           if (extra.conversationId) {
             appendConversationMessage(extra.conversationId, {
               role: 'assistant',
@@ -444,14 +464,7 @@ async function handleJsonResponse(
 
   if (!hasFollowup || !extra || toolResults.length === 0) {
     const displayContent = content || (actions.length > 0 ? buildActionFallbackContent(actions) : '已处理您的请求。')
-
-    const assistantMsg = {
-      id: crypto.randomUUID(),
-      role: 'assistant' as const,
-      content: displayContent,
-      ...(actions.length > 0 && { actions }),
-    }
-    setMessages((prev) => [...prev, assistantMsg])
+    await fakeStreamAssistantMessage(displayContent, actions.length > 0 ? actions : undefined, setMessages)
 
     if (extra?.conversationId) {
       appendConversationMessage(extra.conversationId, {
