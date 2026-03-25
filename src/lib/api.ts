@@ -5,10 +5,12 @@
 import type {
   AnomalyRun,
   DatasetMeta,
+  EcoDataset,
   EmergencyRun,
   ExecutionTraceStep,
   InvestmentRun,
   ScenarioInsight,
+  ScenarioFollowupOption,
 } from '@/types'
 
 const API_BASE = import.meta.env.VITE_API_BASE ? `${import.meta.env.VITE_API_BASE}/api` : '/api'
@@ -199,6 +201,55 @@ export async function runOptimizeSingle(
   })
   if (!res.ok) throw new Error(await res.text())
   return res.json()
+}
+
+export async function runOptimizePlan(payload: {
+  prompt: string
+  targetDate?: string
+  H2_target?: number
+  weatherMode?: string
+  extra_constraints?: unknown[]
+}) {
+  const res = await fetch(`${API_BASE}/optimize/plan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json() as Promise<{
+    data: EcoDataset
+    label: string
+    meta: {
+      targetDate: string
+      weatherMode: string
+      H2TargetKg: number | null
+      weatherScaleApplied: number | null
+    }
+  }>
+}
+
+export async function continueScenarioAnalysisApi(payload: {
+  question: string
+  baseDataset: EcoDataset
+  scenarioDataset: EcoDataset
+  scenarioLabel: string
+  scenarioInsight: ScenarioInsight
+  option?: ScenarioFollowupOption | null
+  previousTrace?: ExecutionTraceStep[]
+}) {
+  const res = await fetch(`${API_BASE}/scenario/followup`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json() as Promise<{
+    dataset: EcoDataset
+    label: string
+    insight: ScenarioInsight
+    trace: ExecutionTraceStep[]
+    toolContent: string
+  }>
 }
 
 export async function updateConversationWorkspace(id: number, workspaceState: ConversationWorkspaceState | null): Promise<void> {

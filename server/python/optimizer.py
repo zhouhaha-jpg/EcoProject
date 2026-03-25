@@ -65,6 +65,7 @@ def default_params():
         'w_carbon': 0.5, 'w_cost': 0.5,
         'norm_carbon': 288.63, 'norm_cost': 202486.53,
         'ES_max_ratio': 0.2,
+        'H2_target': None,
     }
 
 
@@ -91,7 +92,7 @@ class SystemOptimizer:
         U_rated = self.U_rev + self.k_ohm * p['i_rated']
         self.P_CA_rated = p['n_e'] * U_rated * p['i_rated'] / 1e3
         self.n_H2_rated = p['eta_F'] * p['n_e'] * p['i_rated'] / (Z * F_CONST)
-        self.H2_target = self.n_H2_rated * 3600 * T
+        self.H2_target = p.get('H2_target') or (self.n_H2_rated * 3600 * T)
 
         G = np.asarray(p['G_profile'], dtype=float) * p['G_scale']
         self.P_PV = p['n_PV'] * p['A_PVcl'] * G * p['eta_PV'] * p['eta_inv'] * p['f_PV']

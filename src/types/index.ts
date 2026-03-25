@@ -24,8 +24,23 @@ export interface StrategySummary {
 export interface WhatIfIntentSpec {
   rawPrompt: string
   normalizedPrompt: string
-  scenarioType: 'whatif' | 'constraint' | 'pareto' | string
+  scenarioType: 'whatif' | 'constraint' | 'pareto' | 'planning' | 'weather_plan' | 'deep_analysis' | string
   impactTargets: string[]
+}
+
+export interface ScenarioFollowupOption {
+  id: string
+  label: string
+  kind: 'inspect' | 'optimize'
+  question: string
+  payload?: Record<string, unknown>
+}
+
+export interface ScenarioAnalysisStep {
+  depth: number
+  question: string
+  conclusion: string
+  kind: 'inspect' | 'optimize'
 }
 
 export interface ExecutionTraceStep {
@@ -97,6 +112,12 @@ export interface ScenarioInsight {
   driverAnalysis: string
   recommendations: string[]
   suggestedQuestions: string[]
+  workspaceMode?: 'whatif' | 'day_plan'
+  selectedStrategy?: StrategyKey
+  analysisDepth?: number
+  analysisHistory?: ScenarioAnalysisStep[]
+  followupOptions?: ScenarioFollowupOption[]
+  broadcastText?: string
   followupQuestion?: string
   followupAnswer?: string
   analysisMode?: 'baseline' | 'followup'

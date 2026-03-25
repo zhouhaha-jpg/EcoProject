@@ -6,7 +6,7 @@ import { useState, useCallback } from 'react'
 import type { AgentContextData } from './useAgentContext'
 import { formatContextForLLM } from './useAgentContext'
 import { executeAction } from '@/lib/agentActions'
-import type { ExecutionTraceStep } from '@/types'
+import type { ExecutionTraceStep, ScenarioFollowupOption } from '@/types'
 import {
   createConversation,
   appendConversationMessage,
@@ -97,11 +97,12 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
         anomalyRunId: ctx.anomalyRunId,
       }
 
-      if (mode === 'agent' && ctx.currentPage === '/scenario' && ctx.scenarioDataset && isScenarioFollowupQuestion(content.trim())) {
+      const matchedFollowupOption = findScenarioFollowupOption(content.trim(), ctx.scenarioInsight?.followupOptions)
+      if (mode === 'agent' && ctx.currentPage === '/scenario' && ctx.scenarioDataset && (matchedFollowupOption || isScenarioFollowupQuestion(content.trim()))) {
         try {
-          const localResult = await executeAction('analyze_scenario_followup', { question: content.trim() }, agentCtx)
+          const localResult = await executeAction('continue_scenario_analysis', { question: content.trim() }, agentCtx)
           const actionPayload = [{
-            type: 'analyze_scenario_followup',
+            type: 'continue_scenario_analysis',
             params: { question: content.trim() },
             result: localResult.message,
             trace: localResult.trace,
@@ -273,6 +274,10 @@ function normalizeToolTitle(name: string) {
       return 'What-if 推演'
     case 'add_constraint':
       return '约束注入'
+    case 'plan_next_day_dispatch':
+      return '次日计划调度'
+    case 'continue_scenario_analysis':
+      return '继续分析'
     case 'trace_causality':
       return '因果追溯'
     case 'pareto_scan':
@@ -309,14 +314,18 @@ async function fakeStreamAssistantMessage(
 }
 
 function isScenarioFollowupQuestion(content: string) {
-  const normalized = content.replace(/\s+/g, '').toLowerCase()
-  const asksWhyStrategy = normalized.includes('为什么') && normalized.includes('最优策略')
-  const asksPeakGridHours = normalized.includes('哪几个时段') && (normalized.includes('购电') || normalized.includes('电网')) && normalized.includes('压力最大')
-  const asksCarbonUnderCostCap =
-    normalized.includes('成本增加不超过3%')
-    || (normalized.includes('成本') && normalized.includes('3%') && normalized.includes('还能再降多少碳'))
+  const normalized = content.replace(/\s+/g, '')
+  return normalized.includes('继续分析')
+    || (normalized.includes('为什么') && normalized.includes('最优策略'))
+    || (normalized.includes('哪几个时段') && (normalized.includes('购电') || normalized.includes('电网')) && normalized.includes('压力最大'))
+    || normalized.includes('补偿')
+    || normalized.includes('压低10%')
+}
 
-  return asksWhyStrategy || asksPeakGridHours || asksCarbonUnderCostCap
+function findScenarioFollowupOption(content: string, options?: ScenarioFollowupOption[] | null) {
+  if (!Array.isArray(options) || options.length === 0) return null
+  const normalized = content.trim()
+  return options.find((option) => option.label === normalized || option.question === normalized) ?? null
 }
 
 interface JsonResponseContext {
@@ -353,7 +362,7 @@ async function handleJsonResponse(
   const actions: NonNullable<ChatMessage['actions']> = []
   const toolResults: { id: string; content: string }[] = []
 
-  const NEED_FOLLOWUP_TOOLS = ['run_whatif', 'add_constraint', 'pareto_scan', 'trace_causality']
+  const NEED_FOLLOWUP_TOOLS = ['run_whatif', 'add_constraint', 'pareto_scan', 'trace_causality', 'plan_next_day_dispatch', 'continue_scenario_analysis']
 
   if (toolCalls.length > 0) {
     setToolChain(

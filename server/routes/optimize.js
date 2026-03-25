@@ -8,27 +8,38 @@ import { pushServerLog } from '../ws.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PYTHON_SCRIPT = join(__dirname, '..', 'python', 'optimizer.py')
+const H2_MOLAR_MASS = 2.016
+const CLOUDY_WEATHER_SCALE = 0.58
 
 const router = Router()
 
-function getRealtimeOverrides() {
+export function getDateOffset(days = 0) {
+  const base = new Date(`${getBeijingDate()}T00:00:00+08:00`)
+  base.setUTCDate(base.getUTCDate() + days)
+  return base.toISOString().slice(0, 10)
+}
+
+export function getRealtimeOverrides(date = getBeijingDate(), weatherMode = 'forecast') {
   try {
     const db = getDb()
-    const today = getBeijingDate()
     const rows = db.prepare(
       'SELECT hour, price_grid, ef_grid, shortwave_radiation FROM realtime_data WHERE data_date = ? ORDER BY hour'
-    ).all(today)
+    ).all(date)
 
     if (rows.length < 24) return null
 
     const prices = rows.map((row) => row.price_grid)
     const efGrid = rows.map((row) => row.ef_grid)
-    const radiation = rows.map((row) => row.shortwave_radiation)
+    const weatherScale = weatherMode === 'cloudy' ? CLOUDY_WEATHER_SCALE : 1
+    const radiation = rows.map((row) => row.shortwave_radiation * weatherScale)
     const gMax = Math.max(...radiation, 1)
     const gProfile = radiation.map((value) => value / gMax)
     const gScale = gMax / 1000 * 1.5
 
     return {
+      targetDate: date,
+      weatherMode,
+      weatherScaleApplied: weatherScale === 1 ? null : weatherScale,
       price_grid: prices,
       EF_grid: efGrid,
       G_profile: gProfile,
@@ -41,15 +52,15 @@ function getRealtimeOverrides() {
       status: 'error',
       scope: 'optimize',
       message: '读取北京时间实时参数失败，回退默认优化参数',
-      targetDate: getBeijingDate(),
+      targetDate: date,
       detail: error.message,
     })
     return null
   }
 }
 
-function mergeRealtimeParams(userParams) {
-  const realtime = getRealtimeOverrides()
+export function mergeRealtimeParams(userParams, options = {}) {
+  const realtime = getRealtimeOverrides(options.targetDate ?? getBeijingDate(), options.weatherMode ?? 'forecast')
   if (!realtime) return userParams
 
   const merged = { ...userParams }
@@ -61,7 +72,7 @@ function mergeRealtimeParams(userParams) {
   return merged
 }
 
-function runPython(input, context = {}) {
+export function runPython(input, context = {}) {
   const startedAt = Date.now()
   const targetDate = context.targetDate || getBeijingDate()
   const algorithm = input.mode === 'single'
@@ -211,6 +222,78 @@ router.post('/', async (req, res) => {
       algorithm: 'MILP 6-strategy dispatch',
       detail: error.message,
     })
+    res.status(500).json({ error: error.message })
+  }
+})
+
+router.post('/plan', async (req, res) => {
+  try {
+    const {
+      prompt = '次日计划调度',
+      targetDate = getDateOffset(1),
+      H2_target = null,
+      weatherMode = 'forecast',
+      extra_constraints = [],
+      save = false,
+      name,
+    } = req.body ?? {}
+
+    const mergedParams = mergeRealtimeParams({}, { targetDate, weatherMode })
+    if (!mergedParams.price_grid || !mergedParams.EF_grid || !mergedParams.G_profile) {
+      throw new Error(`未找到 ${targetDate} 的预测电价/碳因子/光照数据`)
+    }
+
+    if (typeof H2_target === 'number' && Number.isFinite(H2_target) && H2_target > 0) {
+      mergedParams.H2_target = (H2_target * 1000) / H2_MOLAR_MASS
+    }
+
+    pushServerLog({
+      level: 'info',
+      status: 'progress',
+      scope: 'api',
+      message: '收到次日计划调度请求',
+      targetDate,
+      algorithm: 'MILP next-day dispatch',
+      detail: `weather=${weatherMode} | H2=${typeof H2_target === 'number' ? `${H2_target}kg` : 'default'}`,
+    })
+
+    const result = await runPython({
+      mode: 'all',
+      params: mergedParams,
+      extra_constraints,
+    }, { targetDate })
+
+    result._meta = {
+      datasetType: 'planning',
+      viewDate: targetDate,
+      snapshotAt: formatBeijingDateTime(),
+      isHistorical: false,
+      containsForecast: true,
+      forecastFromHour: 0,
+      datasetName: name || prompt,
+    }
+
+    if (save) {
+      const db = getDb()
+      const dsName = name || `${prompt} ${targetDate}`
+      const stmt = db.prepare('INSERT INTO datasets (name, data) VALUES (?, ?)')
+      const info = stmt.run(dsName, JSON.stringify(result))
+      result._datasetId = info.lastInsertRowid
+      result._meta = { ...result._meta, datasetId: Number(result._datasetId), datasetName: dsName }
+    }
+
+    res.json({
+      data: result,
+      label: name || prompt,
+      meta: {
+        targetDate,
+        weatherMode,
+        H2TargetKg: typeof H2_target === 'number' && Number.isFinite(H2_target) ? H2_target : null,
+        weatherScaleApplied: weatherMode === 'cloudy' ? CLOUDY_WEATHER_SCALE : null,
+      },
+    })
+  } catch (error) {
+    console.error('[optimize/plan]', error)
     res.status(500).json({ error: error.message })
   }
 })

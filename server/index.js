@@ -15,6 +15,7 @@ import config from './config.js'
 import { initDb } from './db/index.js'
 import datasetsRouter from './routes/datasets.js'
 import optimizeRouter from './routes/optimize.js'
+import scenarioRouter from './routes/scenario.js'
 import conversationsRouter from './routes/conversations.js'
 import realtimeRouter from './routes/realtime.js'
 import createEmergencyRouter from './routes/emergency.js'
@@ -32,6 +33,7 @@ app.use(express.json({ limit: '10mb' }))
 
 app.use('/api/datasets', datasetsRouter)
 app.use('/api/optimize', optimizeRouter)
+app.use('/api/scenario', scenarioRouter)
 app.use('/api/conversations', conversationsRouter)
 app.use('/api/realtime', realtimeRouter)
 app.use('/api/investment', investmentRouter)
@@ -132,6 +134,8 @@ const AGENT_SYSTEM_PROMPT = SYSTEM_PROMPT + `
 const TOOL_ROUTING_APPENDIX = `
 When the user asks about PV expansion ROI, payback years, investment return, or how long it takes to recover the investment, prefer run_investment_planning.
 When the user asks about gas turbine / PEM / electrolyzer temperature, pressure, current anomalies, or equipment fault handling, prefer run_device_anomaly_dispatch instead of run_emergency_dispatch.
+When the user asks for tomorrow's production plan, tomorrow's 24h dispatch curves, or says tomorrow will be cloudy and wants a plan, prefer plan_next_day_dispatch.
+When the user asks to continue analyzing the current scenario in more detail, prefer continue_scenario_analysis.
 `
 
 const AGENT_SYSTEM_PROMPT_ENHANCED = AGENT_SYSTEM_PROMPT + TOOL_ROUTING_APPENDIX
@@ -197,6 +201,23 @@ const TOOLS = [
         properties: {
           prompt: { type: 'string', description: '用户描述的应急场景原文' },
           severity: { type: 'string', enum: ['warning', 'critical'], description: '预案严重度，默认 critical' },
+        },
+        required: ['prompt'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'plan_next_day_dispatch',
+      description: '生成次日调度计划。当用户说“明天产量多少，帮我排计划”或“明天阴天，给我每个设备的调度曲线”时使用。返回基于明日 forecast 的 24h 各设备调度曲线。',
+      parameters: {
+        type: 'object',
+        properties: {
+          prompt: { type: 'string', description: '用户原始需求，用于生成展示标题' },
+          target_date: { type: 'string', description: '目标日期 YYYY-MM-DD；默认明天' },
+          H2_target: { type: 'number', description: '次日总产氢目标，单位 kg；不传则沿用默认额定日目标' },
+          weather_mode: { type: 'string', enum: ['forecast', 'cloudy'], description: '天气模式；明天阴天时传 cloudy' },
         },
         required: ['prompt'],
       },
@@ -297,6 +318,20 @@ const TOOLS = [
           },
         },
         required: ['description', 'constraints'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'continue_scenario_analysis',
+      description: '在当前 What-if 或次日计划工作区上继续深入分析。用于点击“继续分析”或用户要求进一步分析时。每次只做一层新的分析或二次优化，并返回新的结论和下一层问题。',
+      parameters: {
+        type: 'object',
+        properties: {
+          question: { type: 'string', description: '本轮要继续分析的问题' },
+        },
+        required: ['question'],
       },
     },
   },

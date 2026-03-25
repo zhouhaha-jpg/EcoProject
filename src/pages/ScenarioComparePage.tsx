@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { useStrategy } from '@/context/StrategyContext'
 import ScenarioCompareChart from '@/components/charts/ScenarioCompareChart'
+import DeviceDispatchPlanChart from '@/components/charts/DeviceDispatchPlanChart'
 import ParetoFrontierChart from '@/components/charts/ParetoFrontierChart'
 import EmergencyDispatchChart from '@/components/charts/EmergencyDispatchChart'
 import EmergencyDeltaChart from '@/components/charts/EmergencyDeltaChart'
@@ -62,6 +63,8 @@ export default function ScenarioComparePage() {
   const [historyLoading, setHistoryLoading] = useState(false)
   const [activePoint, setActivePoint] = useState<EmergencyPointDetail | null>(null)
   const [detailExpanded, setDetailExpanded] = useState(false)
+  const [selectedPlanStrategy, setSelectedPlanStrategy] = useState<StrategyKey>('cicom')
+  const [isSpeaking, setIsSpeaking] = useState(false)
 
   useEffect(() => {
     let disposed = false
@@ -92,6 +95,11 @@ export default function ScenarioComparePage() {
   useEffect(() => {
     setDetailExpanded(false)
   }, [scenarioLabel, paretoLabel, currentEmergency?.id, currentAnomaly?.id])
+
+  useEffect(() => {
+    if (!scenarioInsight?.selectedStrategy) return
+    setSelectedPlanStrategy(scenarioInsight.selectedStrategy)
+  }, [scenarioInsight?.selectedStrategy])
 
   const emergencyHistory = useMemo(() => {
     if (!currentEmergency) return history
@@ -397,18 +405,50 @@ export default function ScenarioComparePage() {
   const trace = scenarioTrace.length > 0 ? scenarioTrace : buildFallbackTrace(insight)
   const topStrategy = insight.comparisonSummary[0]
   const baselineBest = insight.bestStrategyShift.before
-  const quickPrompts = insight.suggestedQuestions.length > 0
-    ? insight.suggestedQuestions
-    : ['为什么最优策略变了？', '哪几个时段购电压力最大？', '如果只允许成本增加不超过3%，还能再降多少碳？']
+  const quickOptions = insight.followupOptions && insight.followupOptions.length > 0
+    ? insight.followupOptions
+    : (insight.suggestedQuestions.length > 0
+      ? insight.suggestedQuestions.map((question, index) => ({
+          id: `fallback-${index}`,
+          label: question,
+          question,
+          kind: 'inspect' as const,
+        }))
+      : [])
+  const displayStrategy = (insight.workspaceMode === 'day_plan'
+    ? selectedPlanStrategy
+    : (insight.selectedStrategy ?? topStrategy?.strategy ?? 'cicom')) as StrategyKey
+
+  const handleSpeak = () => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window) || !insight.broadcastText) return
+    window.speechSynthesis.cancel()
+    const utterance = new SpeechSynthesisUtterance(insight.broadcastText)
+    utterance.lang = 'zh-CN'
+    utterance.rate = 1
+    utterance.onend = () => setIsSpeaking(false)
+    utterance.onerror = () => setIsSpeaking(false)
+    setIsSpeaking(true)
+    window.speechSynthesis.speak(utterance)
+  }
 
   return (
     <div className="h-full min-h-0 overflow-auto" style={{ display: 'grid', gridTemplateRows: 'auto auto auto auto auto auto', gap: 12 }}>
       <div className="panel shrink-0">
         <div className="panel-title-bar flex items-center justify-between">
-          <span>What-if 调度工作台 · {scenarioLabel ?? 'What-If 推演'}</span>
-          <span style={{ color: '#3d6080', fontSize: 10, fontWeight: 400 }}>
-            自然语言调度引擎
-          </span>
+          <span>{insight.workspaceMode === 'day_plan' ? '次日调度工作台' : 'What-if 调度工作台'} · {scenarioLabel ?? 'What-If 推演'}</span>
+          <div className="flex items-center gap-2">
+            <span style={{ color: '#3d6080', fontSize: 10, fontWeight: 400 }}>
+              {insight.workspaceMode === 'day_plan' ? '明日计划调度引擎' : '自然语言调度引擎'}
+            </span>
+            <button
+              type="button"
+              onClick={handleSpeak}
+              disabled={!insight.broadcastText || isSpeaking}
+              className="rounded border border-[#1e3256] bg-[#111b2e] px-3 py-1.5 text-[11px] text-[#8ba9cc] transition-colors hover:border-[#00d4ff]/50 hover:text-[#e8f4ff] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {('speechSynthesis' in window) ? (isSpeaking ? '播报中...' : '播报') : '仅文案'}
+            </button>
+          </div>
         </div>
         <div style={{ padding: 16, display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 14 }}>
           <div className="panel" style={{ padding: 16 }}>
@@ -460,6 +500,49 @@ export default function ScenarioComparePage() {
         </div>
       ) : null}
 
+      {insight.workspaceMode === 'day_plan' ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(320px, 0.6fr)', gap: 12 }}>
+          <div className="panel min-h-0">
+            <div className="panel-title-bar">次日设备调度曲线</div>
+            <div style={{ padding: 16, height: 420 }}>
+              <DeviceDispatchPlanChart dataset={scenarioDataset!} strategy={displayStrategy} />
+            </div>
+          </div>
+          <div className="panel shrink-0">
+            <div className="panel-title-bar">计划说明</div>
+            <div style={{ padding: 16, display: 'grid', gap: 10 }}>
+              <div className="rounded border" style={{ borderColor: '#1e3256', background: 'rgba(13,20,34,0.9)', padding: 12 }}>
+                <div style={{ color: '#5a7a9a', fontSize: 10, letterSpacing: 1.2 }}>当前展示策略</div>
+                <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {STRATEGIES.map((strategy) => (
+                    <button
+                      key={strategy}
+                      type="button"
+                      onClick={() => setSelectedPlanStrategy(strategy)}
+                      className="rounded border px-3 py-1.5 text-[11px] transition-colors"
+                      style={{
+                        borderColor: displayStrategy === strategy ? '#00d4ff' : '#1e3256',
+                        background: displayStrategy === strategy ? 'rgba(0,212,255,0.1)' : 'rgba(17,27,46,0.7)',
+                        color: displayStrategy === strategy ? '#e8f4ff' : '#8ba9cc',
+                      }}
+                    >
+                      {LABELS[strategy]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="rounded border" style={{ borderColor: '#1e3256', background: 'rgba(13,20,34,0.9)', padding: 12 }}>
+                <div style={{ color: '#00d4ff', fontSize: 11, letterSpacing: 1 }}>次日计划摘要</div>
+                <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
+                  <div style={{ color: '#8ba9cc', fontSize: 12, lineHeight: 1.7 }}>{insight.summary}</div>
+                  <div style={{ color: '#5a7a9a', fontSize: 12, lineHeight: 1.7 }}>{insight.driverAnalysis}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 0.8fr)', gap: 12 }}>
         <div className="panel shrink-0">
           <div className="panel-title-bar">策略排名变化区</div>
@@ -502,14 +585,17 @@ export default function ScenarioComparePage() {
             <div className="rounded border" style={{ borderColor: '#1e3256', background: 'rgba(13,20,34,0.9)', padding: 12 }}>
               <div style={{ color: '#5a7a9a', fontSize: 11, letterSpacing: 1 }}>继续分析</div>
               <div style={{ marginTop: 10, display: 'grid', gap: 8 }}>
-                {quickPrompts.map((prompt) => (
+                {quickOptions.map((option) => (
                   <button
-                    key={prompt}
+                    key={option.id}
                     type="button"
-                    onClick={() => window.dispatchEvent(new CustomEvent('agent:ask', { detail: { prompt } }))}
+                    onClick={() => window.dispatchEvent(new CustomEvent('agent:ask', { detail: { prompt: option.question } }))}
                     className="rounded border border-[#1e3256] bg-[#111b2e] px-3 py-2 text-left text-xs text-[#8ba9cc] transition-colors hover:border-[#00d4ff]/50 hover:text-[#e8f4ff]"
                   >
-                    {prompt}
+                    <div>{option.label}</div>
+                    <div style={{ color: '#5a7a9a', fontSize: 10, marginTop: 4 }}>
+                      {option.kind === 'optimize' ? '会触发新的二次求解' : '会基于当前场景继续深挖'}
+                    </div>
                   </button>
                 ))}
               </div>
@@ -747,6 +833,12 @@ function buildFallbackScenarioInsight(
     driverAnalysis: '如需更细的时段归因，可继续触发因果追溯或重新发起带约束的推演。',
     recommendations: ['继续查看关键时段、购电压力与约束边界。'],
     suggestedQuestions: ['为什么最优策略变了？', '哪几个时段购电压力最大？'],
+    workspaceMode: 'whatif',
+    selectedStrategy: currentBest,
+    analysisDepth: 0,
+    analysisHistory: [],
+    followupOptions: [],
+    broadcastText: `${LABELS[currentBest]} 为当前综合最优策略。当前结果由页面根据基准与推演汇总指标自动生成。`,
   }
 }
 
