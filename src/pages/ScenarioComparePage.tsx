@@ -19,6 +19,7 @@ import {
   restoreEmergencyStateApi,
 } from '@/lib/api'
 import { exportEmergencyRunWorkbook } from '@/lib/emergencyExport'
+import { Volume2 } from 'lucide-react'
 import type { EmergencyPointDetail, EmergencyRun, ExecutionTraceStep, ScenarioInsight, StrategyKey } from '@/types'
 
 const STRATEGIES: StrategyKey[] = ['uci', 'cicos', 'cicar', 'cicom', 'pv', 'es']
@@ -418,9 +419,10 @@ export default function ScenarioComparePage() {
   const displayStrategy = (insight.workspaceMode === 'day_plan'
     ? selectedPlanStrategy
     : (insight.selectedStrategy ?? topStrategy?.strategy ?? 'cicom')) as StrategyKey
+  const canSpeak = typeof window !== 'undefined' && 'speechSynthesis' in window
 
   const handleSpeak = () => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window) || !insight.broadcastText) return
+    if (!canSpeak || !insight.broadcastText) return
     window.speechSynthesis.cancel()
     const utterance = new SpeechSynthesisUtterance(insight.broadcastText)
     utterance.lang = 'zh-CN'
@@ -443,10 +445,10 @@ export default function ScenarioComparePage() {
             <button
               type="button"
               onClick={handleSpeak}
-              disabled={!insight.broadcastText || isSpeaking}
+              disabled={!insight.broadcastText || isSpeaking || !canSpeak}
               className="rounded border border-[#1e3256] bg-[#111b2e] px-3 py-1.5 text-[11px] text-[#8ba9cc] transition-colors hover:border-[#00d4ff]/50 hover:text-[#e8f4ff] disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {('speechSynthesis' in window) ? (isSpeaking ? '播报中...' : '播报') : '仅文案'}
+              {canSpeak ? (isSpeaking ? '播报中...' : '语音播报') : '仅文案'}
             </button>
           </div>
         </div>
@@ -461,6 +463,34 @@ export default function ScenarioComparePage() {
             </div>
             <div style={{ color: '#5a7a9a', fontSize: 12, lineHeight: 1.8, marginTop: 10 }}>
               {insight.driverAnalysis}
+            </div>
+            <div
+              className="rounded border"
+              style={{ marginTop: 14, borderColor: '#1e3256', background: 'rgba(17,27,46,0.78)', padding: 12 }}
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div style={{ color: '#00d4ff', fontSize: 11, letterSpacing: 1 }}>语音播报</div>
+                  <div style={{ color: '#5a7a9a', fontSize: 11, marginTop: 6 }}>
+                    {canSpeak ? '点击后将朗读当前结论摘要。' : '当前浏览器不支持语音播报，将仅保留播报文案。'}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSpeak}
+                  disabled={!insight.broadcastText || isSpeaking || !canSpeak}
+                  className="inline-flex items-center gap-2 rounded border border-[#00d4ff]/45 bg-[#00d4ff]/12 px-4 py-2 text-xs font-semibold text-[#cfefff] transition-colors hover:border-[#00d4ff] hover:bg-[#00d4ff]/18 disabled:cursor-not-allowed disabled:border-[#1e3256] disabled:bg-[#111b2e] disabled:text-[#5a7a9a]"
+                  title={canSpeak ? '播报当前结论' : '当前浏览器不支持语音播报'}
+                >
+                  <Volume2 size={14} />
+                  {isSpeaking ? '播报中...' : '播报当前结论'}
+                </button>
+              </div>
+              {insight.broadcastText ? (
+                <div style={{ color: '#8ba9cc', fontSize: 12, lineHeight: 1.7, marginTop: 10 }}>
+                  {insight.broadcastText}
+                </div>
+              ) : null}
             </div>
             <div style={{ marginTop: 12, display: 'flex', flexWrap: 'wrap', gap: 8 }}>
               {(insight.normalizedChanges.length > 0 ? insight.normalizedChanges : ['沿用当前实时参数曲线']).map((item) => (

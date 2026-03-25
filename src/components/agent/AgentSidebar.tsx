@@ -540,6 +540,7 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
                   onClear={handleNewConversation}
                   toolChain={chat.toolChain}
                   serverLogs={realtimeData?.serverLogs ?? []}
+                  onRestoreWorkspace={restoreWorkspaceFromState}
                 />
               )}
             </div>

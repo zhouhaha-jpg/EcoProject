@@ -651,7 +651,7 @@ export async function executeAction(
           return {
             success: true,
             message: `${desc} 求解完成`,
-            data: { dataset: data, insight, trace },
+            data: { dataset: data, label: desc, insight, trace },
             trace,
             toolContent: buildScenarioToolContent(desc, insight, trace),
           }
@@ -695,7 +695,7 @@ export async function executeAction(
         return {
           success: true,
           message: `${result.label} 求解完成`,
-          data: { dataset: result.data, insight, trace },
+          data: { dataset: result.data, label: result.label, insight, trace },
           trace,
           toolContent: buildScenarioToolContent(result.label, insight, trace),
         }
@@ -730,7 +730,7 @@ export async function executeAction(
         return {
           success: true,
           message: `已完成继续分析：${question}`,
-          data: { dataset: result.dataset, insight: result.insight, trace: result.trace },
+          data: { dataset: result.dataset, label: result.label, insight: result.insight, trace: result.trace },
           trace: result.trace,
           toolContent: result.toolContent,
         }

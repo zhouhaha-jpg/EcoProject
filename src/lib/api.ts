@@ -87,6 +87,7 @@ export interface ConversationMessage {
     result: string
     detail?: string
     trace?: ExecutionTraceStep[]
+    workspaceState?: ConversationWorkspaceState
   }[]
   created_at: string
 }
@@ -169,6 +170,7 @@ export async function appendConversationMessage(
       result: string
       detail?: string
       trace?: ExecutionTraceStep[]
+      workspaceState?: ConversationWorkspaceState
     }[]
   }
 ): Promise<void> {

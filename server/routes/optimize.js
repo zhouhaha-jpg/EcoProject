@@ -5,6 +5,7 @@ import { dirname, join } from 'path'
 import { getDb } from '../db/index.js'
 import { getBeijingDate, formatBeijingDateTime } from '../lib/time.js'
 import { pushServerLog } from '../ws.js'
+import { getParkConfig, runFetcherProcess } from '../services/realtimeRefresh.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const PYTHON_SCRIPT = join(__dirname, '..', 'python', 'optimizer.py')
@@ -70,6 +71,67 @@ export function mergeRealtimeParams(userParams, options = {}) {
     }
   }
   return merged
+}
+
+function applyWeatherModeToOverrides(overrides, weatherMode = 'forecast') {
+  if (!overrides || typeof overrides !== 'object') return null
+  if (weatherMode !== 'cloudy') {
+    return {
+      ...overrides,
+      weatherMode,
+      weatherScaleApplied: null,
+    }
+  }
+
+  const baseProfile = Array.isArray(overrides.G_profile) ? overrides.G_profile : []
+  const scaledProfile = baseProfile.map((value) => Number(value || 0) * CLOUDY_WEATHER_SCALE)
+  const maxProfile = Math.max(...scaledProfile, 0)
+  const normalizedProfile = maxProfile > 0
+    ? scaledProfile.map((value) => value / maxProfile)
+    : scaledProfile
+  const baseScale = typeof overrides.G_scale === 'number' ? overrides.G_scale : 0
+
+  return {
+    ...overrides,
+    weatherMode,
+    weatherScaleApplied: CLOUDY_WEATHER_SCALE,
+    G_profile: normalizedProfile,
+    G_scale: baseScale * CLOUDY_WEATHER_SCALE,
+  }
+}
+
+async function getRealtimeOverridesForDate(date = getBeijingDate(), weatherMode = 'forecast') {
+  const cached = getRealtimeOverrides(date, weatherMode)
+  if (cached) return cached
+
+  const config = getParkConfig(getDb())
+  pushServerLog({
+    level: 'warn',
+    status: 'progress',
+    scope: 'fetch',
+    message: '目标日 forecast 快照缺失，开始自动补抓',
+    targetDate: date,
+    range: `${date} 00:00-23:00`,
+    algorithm: 'DataFetcher aggregator',
+    detail: `weather=${weatherMode}`,
+  })
+
+  const fetchResult = await runFetcherProcess([
+    '--once',
+    '--date', date,
+    '--lat', String(config.latitude),
+    '--lon', String(config.longitude),
+  ], { targetDate: date })
+
+  if (!fetchResult?.optimizer_overrides) return null
+
+  return applyWeatherModeToOverrides({
+    targetDate: date,
+    price_grid: fetchResult.optimizer_overrides.price_grid,
+    EF_grid: fetchResult.optimizer_overrides.EF_grid,
+    G_profile: fetchResult.optimizer_overrides.G_profile,
+    G_scale: fetchResult.optimizer_overrides.G_scale,
+  }, weatherMode)
 }
 
 export function runPython(input, context = {}) {
@@ -238,7 +300,10 @@ router.post('/plan', async (req, res) => {
       name,
     } = req.body ?? {}
 
-    const mergedParams = mergeRealtimeParams({}, { targetDate, weatherMode })
+    const realtimeOverrides = await getRealtimeOverridesForDate(targetDate, weatherMode)
+    const mergedParams = realtimeOverrides
+      ? mergeRealtimeParams(realtimeOverrides, { targetDate, weatherMode })
+      : mergeRealtimeParams({}, { targetDate, weatherMode })
     if (!mergedParams.price_grid || !mergedParams.EF_grid || !mergedParams.G_profile) {
       throw new Error(`未找到 ${targetDate} 的预测电价/碳因子/光照数据`)
     }

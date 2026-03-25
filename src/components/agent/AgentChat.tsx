@@ -4,9 +4,10 @@
 
 import { useRef, useEffect, useState } from 'react'
 import type { ChatMessage, ToolChainStep } from '@/hooks/useAgentChat'
+import type { ConversationWorkspaceState } from '@/lib/api'
 import type { ServerLogEntry } from '@/types'
 import AgentModeSwitch from './AgentModeSwitch'
-import { Send, Trash2, User, Bot, ChevronDown, ChevronUp } from 'lucide-react'
+import { Send, Trash2, User, Bot, ChevronDown, ChevronUp, History } from 'lucide-react'
 
 interface AgentChatProps {
   messages: ChatMessage[]
@@ -18,6 +19,7 @@ interface AgentChatProps {
   onClear: () => void
   toolChain?: ToolChainStep[]
   serverLogs?: ServerLogEntry[]
+  onRestoreWorkspace?: (workspaceState: ConversationWorkspaceState) => void
 }
 
 function renderInlineMarkdown(text: string) {
@@ -218,6 +220,7 @@ export default function AgentChat({
   onClear,
   toolChain = [],
   serverLogs = [],
+  onRestoreWorkspace,
 }: AgentChatProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
@@ -343,7 +346,20 @@ export default function AgentChat({
                     <div key={i} className="rounded border border-[#1e3256] bg-[#0d1422] px-2.5 py-2">
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-[10px] uppercase tracking-[0.12em] text-[#00d4ff]">{a.type}</span>
-                        <span className="text-[10px] text-[#3d6080]">{a.result}</span>
+                        <div className="flex items-center gap-2">
+                          {a.workspaceState && onRestoreWorkspace ? (
+                            <button
+                              type="button"
+                              onClick={() => onRestoreWorkspace(a.workspaceState!)}
+                              className="inline-flex items-center gap-1 rounded border border-[#1e3256] bg-[#111b2e] px-2 py-1 text-[10px] text-[#8ba9cc] transition-colors hover:border-[#00d4ff]/50 hover:text-[#e8f4ff]"
+                              title="恢复这一轮分析对应的工作区"
+                            >
+                              <History size={10} />
+                              恢复该轮工作区
+                            </button>
+                          ) : null}
+                          <span className="text-[10px] text-[#3d6080]">{a.result}</span>
+                        </div>
                       </div>
                       {a.trace && a.trace.length > 0 ? (
                         <div className="mt-2 space-y-1.5">

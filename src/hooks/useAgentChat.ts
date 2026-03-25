@@ -11,6 +11,7 @@ import {
   createConversation,
   appendConversationMessage,
   updateConversationTitle,
+  type ConversationWorkspaceState,
 } from '@/lib/api'
 
 /** 开发时为空则走 Vite 代理 /api；生产时需配置 VITE_API_BASE */
@@ -29,6 +30,7 @@ export interface ChatMessage {
     result: string
     trace?: ExecutionTraceStep[]
     detail?: string
+    workspaceState?: ConversationWorkspaceState
   }[]
 }
 
@@ -107,6 +109,7 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
             result: localResult.message,
             trace: localResult.trace,
             detail: localResult.toolContent,
+            workspaceState: buildScenarioWorkspaceStateFromResult(localResult),
           }]
           if (localResult.trace?.length) setToolChain(localResult.trace)
           const displayContent = localResult.toolContent || localResult.message
@@ -287,6 +290,32 @@ function normalizeToolTitle(name: string) {
   }
 }
 
+function buildScenarioWorkspaceStateFromResult(result: { data?: unknown }): ConversationWorkspaceState | undefined {
+  const payload = result?.data
+  if (!payload || typeof payload !== 'object') return undefined
+
+  const scenarioPayload = payload as {
+    dataset?: Record<string, unknown>
+    label?: string
+    insight?: AgentContextData['scenarioInsight']
+    trace?: ExecutionTraceStep[]
+  }
+
+  if (!scenarioPayload.dataset || typeof scenarioPayload.label !== 'string') return undefined
+
+  return {
+    pageType: 'scenario',
+    route: '/scenario',
+    scenarioPayload: {
+      dataset: scenarioPayload.dataset,
+      label: scenarioPayload.label,
+      insight: scenarioPayload.insight ?? null,
+      trace: scenarioPayload.trace ?? [],
+    },
+    savedAt: new Date().toISOString(),
+  }
+}
+
 async function fakeStreamAssistantMessage(
   text: string,
   actions: ChatMessage['actions'],
@@ -405,6 +434,7 @@ async function handleJsonResponse(
       result: result.message,
       trace: result.trace,
       detail: result.toolContent,
+      workspaceState: buildScenarioWorkspaceStateFromResult(result),
     })
 
     if (result.trace?.length) {
