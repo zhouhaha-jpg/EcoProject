@@ -44,6 +44,75 @@ function renderInlineMarkdown(text: string) {
   })
 }
 
+function splitMarkdownTableRow(line: string) {
+  return line
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((cell) => cell.trim())
+}
+
+function isMarkdownTableSeparator(line: string) {
+  const cells = splitMarkdownTableRow(line)
+  return cells.length > 0 && cells.every((cell) => /^:?-{3,}:?$/.test(cell))
+}
+
+function renderMarkdownTable(lines: string[], key: string) {
+  if (lines.length < 2 || !isMarkdownTableSeparator(lines[1])) {
+    return (
+      <pre
+        key={key}
+        className="overflow-x-auto rounded border border-[#1e3256] bg-[#0a1420] px-3 py-2 text-[11px] text-[#8ba9cc]"
+        style={{ fontFamily: "'Share Tech Mono', monospace", whiteSpace: 'pre-wrap' }}
+      >
+        {lines.join('\n')}
+      </pre>
+    )
+  }
+
+  const header = splitMarkdownTableRow(lines[0])
+  const rows = lines.slice(2).map(splitMarkdownTableRow).filter((row) => row.length > 0)
+
+  return (
+    <div key={key} className="overflow-x-auto rounded border border-[#1e3256] bg-[#0a1420]">
+      <table className="min-w-full border-collapse text-xs">
+        <thead>
+          <tr className="border-b border-[#1e3256] bg-[#101a2c]">
+            {header.map((cell, index) => (
+              <th
+                key={`th-${index}`}
+                className="px-3 py-2 text-left font-semibold text-[#e8f4ff]"
+                style={{ whiteSpace: 'nowrap' }}
+              >
+                {renderInlineMarkdown(cell)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row, rowIndex) => (
+            <tr
+              key={`tr-${rowIndex}`}
+              className={rowIndex < rows.length - 1 ? 'border-b border-[#13213b]' : ''}
+            >
+              {header.map((_, cellIndex) => (
+                <td
+                  key={`td-${rowIndex}-${cellIndex}`}
+                  className="px-3 py-2 align-top text-[#8ba9cc]"
+                  style={{ lineHeight: 1.7 }}
+                >
+                  {renderInlineMarkdown(row[cellIndex] ?? '')}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 function renderMarkdownContent(content: string) {
   const elements: JSX.Element[] = []
   const bulletBuffer: string[] = []
@@ -76,15 +145,7 @@ function renderMarkdownContent(content: string) {
 
   const flushTables = () => {
     if (!tableBuffer.length) return
-    elements.push(
-      <pre
-        key={`pre-${elements.length}`}
-        className="overflow-x-auto rounded border border-[#1e3256] bg-[#0a1420] px-3 py-2 text-[11px] text-[#8ba9cc]"
-        style={{ fontFamily: "'Share Tech Mono', monospace", whiteSpace: 'pre-wrap' }}
-      >
-        {tableBuffer.join('\n')}
-      </pre>,
-    )
+    elements.push(renderMarkdownTable([...tableBuffer], `table-${elements.length}`))
     tableBuffer.length = 0
   }
 
@@ -177,6 +238,19 @@ export default function AgentChat({
     window.addEventListener('agent:prefill', handlePrefill as EventListener)
     return () => window.removeEventListener('agent:prefill', handlePrefill as EventListener)
   }, [])
+
+  useEffect(() => {
+    const handleAsk = (event: Event) => {
+      const customEvent = event as CustomEvent<{ prompt?: string }>
+      const prompt = customEvent.detail?.prompt?.trim()
+      if (!prompt || isLoading) return
+      onSend(prompt)
+      if (inputRef.current) inputRef.current.value = ''
+    }
+
+    window.addEventListener('agent:ask', handleAsk as EventListener)
+    return () => window.removeEventListener('agent:ask', handleAsk as EventListener)
+  }, [isLoading, onSend])
 
   const handleSubmit = () => {
     const text = inputRef.current?.value?.trim()

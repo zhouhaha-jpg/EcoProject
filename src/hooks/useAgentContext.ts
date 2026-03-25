@@ -5,7 +5,7 @@
 
 import { useLocation } from 'react-router-dom'
 import { useStrategy } from '@/context/StrategyContext'
-import type { StrategyKey, EcoDataset, DatasetMeta } from '@/types'
+import type { StrategyKey, EcoDataset, DatasetMeta, ExecutionTraceStep, ScenarioInsight } from '@/types'
 
 const ALL: StrategyKey[] = ['uci', 'cicos', 'cicar', 'cicom', 'pv', 'es']
 
@@ -19,6 +19,10 @@ export interface AgentContextData {
   pcaStats: Record<StrategyKey, { min: number; max: number; avg: number; peakHour: number }>
   fullData: EcoDataset
   datasetMeta: DatasetMeta
+  scenarioDataset: EcoDataset | null
+  scenarioLabel: string | null
+  scenarioInsight: ScenarioInsight | null
+  scenarioTrace: ExecutionTraceStep[]
   emergencyRunId: number | null
   anomalyRunId: number | null
 }
@@ -46,7 +50,17 @@ function stats(arr: number[]) {
 
 export function useAgentContext(): AgentContextData {
   const location = useLocation()
-  const { activeStrategy, dataset, strategyMeta, datasetMeta, emergencyActiveRun } = useStrategy()
+  const {
+    activeStrategy,
+    dataset,
+    strategyMeta,
+    datasetMeta,
+    emergencyActiveRun,
+    scenarioDataset,
+    scenarioLabel,
+    scenarioInsight,
+    scenarioTrace,
+  } = useStrategy()
 
   const currentPage = location.pathname || '/'
   const meta = strategyMeta[activeStrategy]
@@ -69,6 +83,10 @@ export function useAgentContext(): AgentContextData {
     ) as Record<StrategyKey, { min: number; max: number; avg: number; peakHour: number }>,
     fullData: dataset,
     datasetMeta,
+    scenarioDataset,
+    scenarioLabel,
+    scenarioInsight,
+    scenarioTrace,
     emergencyRunId: emergencyActiveRun?.id ?? datasetMeta.emergencyRunId ?? null,
     anomalyRunId: datasetMeta.anomalyRunId ?? null,
   }
@@ -100,6 +118,8 @@ export function formatContextForLLM(ctx: AgentContextData): string {
     `- isHistorical=${ctx.datasetMeta.isHistorical}`,
     `- emergencyRunId=${ctx.emergencyRunId ?? 'null'}`,
     `- anomalyRunId=${ctx.anomalyRunId ?? 'null'}`,
+    `- hasScenarioDataset=${ctx.scenarioDataset ? 'true' : 'false'}`,
+    `- scenarioLabel=${ctx.scenarioLabel ?? 'null'}`,
     '',
     `## 电解槽负荷统计 P_CA`,
     ...ALL.map((k) => {
@@ -120,6 +140,17 @@ export function formatContextForLLM(ctx: AgentContextData): string {
     `- H_CH: ${fmtArr(ds.H_CH[ctx.activeStrategy], 4)}`,
     `- H_HS: ${fmtArr(ds.H_HS[ctx.activeStrategy], 4)}`,
   ]
+
+  if (ctx.scenarioInsight) {
+    lines.push(
+      '',
+      '## 当前 What-if 工作区 insight',
+      `- headline=${ctx.scenarioInsight.headline}`,
+      `- summary=${ctx.scenarioInsight.summary}`,
+      `- analysisMode=${ctx.scenarioInsight.analysisMode ?? 'baseline'}`,
+      `- followupQuestion=${ctx.scenarioInsight.followupQuestion ?? 'null'}`,
+    )
+  }
 
   return lines.join('\n')
 }

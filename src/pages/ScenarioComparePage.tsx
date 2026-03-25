@@ -440,6 +440,26 @@ export default function ScenarioComparePage() {
         </div>
       </div>
 
+      {insight.analysisMode === 'followup' && insight.followupQuestion && insight.followupAnswer ? (
+        <div className="panel shrink-0">
+          <div className="panel-title-bar">当前追问分析</div>
+          <div style={{ padding: 16, display: 'grid', gap: 10 }}>
+            <div className="rounded border" style={{ borderColor: '#1e3256', background: 'rgba(13,20,34,0.9)', padding: 12 }}>
+              <div style={{ color: '#5a7a9a', fontSize: 10, letterSpacing: 1.2 }}>追问问题</div>
+              <div style={{ color: '#e8f4ff', fontSize: 16, fontWeight: 700, marginTop: 8 }}>
+                {insight.followupQuestion}
+              </div>
+            </div>
+            <div className="rounded border" style={{ borderColor: '#1e3256', background: 'rgba(13,20,34,0.9)', padding: 12 }}>
+              <div style={{ color: '#00d4ff', fontSize: 10, letterSpacing: 1.2 }}>追问结论</div>
+              <div style={{ color: '#8ba9cc', fontSize: 13, lineHeight: 1.8, marginTop: 8 }}>
+                {insight.followupAnswer}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 0.8fr)', gap: 12 }}>
         <div className="panel shrink-0">
           <div className="panel-title-bar">策略排名变化区</div>
@@ -486,7 +506,7 @@ export default function ScenarioComparePage() {
                   <button
                     key={prompt}
                     type="button"
-                    onClick={() => window.dispatchEvent(new CustomEvent('agent:prefill', { detail: { prompt } }))}
+                    onClick={() => window.dispatchEvent(new CustomEvent('agent:ask', { detail: { prompt } }))}
                     className="rounded border border-[#1e3256] bg-[#111b2e] px-3 py-2 text-left text-xs text-[#8ba9cc] transition-colors hover:border-[#00d4ff]/50 hover:text-[#e8f4ff]"
                   >
                     {prompt}

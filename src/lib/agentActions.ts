@@ -19,6 +19,7 @@ export type AgentActionType =
   | 'navigate'
   | 'switchStrategy'
   | 'run_whatif'
+  | 'analyze_scenario_followup'
   | 'run_emergency_dispatch'
   | 'run_investment_planning'
   | 'run_device_anomaly_dispatch'
@@ -104,6 +105,10 @@ export interface AgentExecutionContext {
   fullData: EcoDataset
   datasetMeta?: DatasetMeta
   activeStrategy?: StrategyKey
+  scenarioDataset?: EcoDataset | null
+  scenarioLabel?: string | null
+  scenarioInsight?: ScenarioInsight | null
+  scenarioTrace?: ExecutionTraceStep[] | null
   emergencyRunId?: number | null
   anomalyRunId?: number | null
 }
@@ -470,6 +475,34 @@ function buildScenarioToolContent(label: string, insight: ScenarioInsight, trace
   ].join('\n')
 }
 
+function matchScenarioFollowupQuestion(question: string) {
+  const normalized = question.replace(/\s+/g, '').toLowerCase()
+  if (normalized.includes('为什么') && normalized.includes('最优策略')) return 'why_strategy_changed'
+  if (normalized.includes('哪几个时段') && (normalized.includes('购电') || normalized.includes('电网')) && normalized.includes('压力最大')) return 'peak_grid_hours'
+  if (normalized.includes('成本增加不超过3%') || (normalized.includes('成本') && normalized.includes('3%') && normalized.includes('还能再降多少碳'))) return 'carbon_under_cost_cap'
+  return null
+}
+
+function buildFollowupMarkdown(question: string, title: string, summary: string, bullets: string[], table?: Array<[string, string, string]>) {
+  const lines = [
+    `## ${title}`,
+    '',
+    summary,
+    '',
+  ]
+  if (bullets.length > 0) {
+    bullets.forEach((item) => lines.push(`- ${item}`))
+    lines.push('')
+  }
+  if (table && table.length > 0) {
+    lines.push('| 项目 | 结果 | 说明 |')
+    lines.push('| --- | --- | --- |')
+    table.forEach((row) => lines.push(`| ${row[0]} | ${row[1]} | ${row[2]} |`))
+    lines.push('')
+  }
+  return lines.join('\n')
+}
+
 export async function executeAction(
   type: string,
   params: Record<string, unknown>,
@@ -530,6 +563,167 @@ export async function executeAction(
           }
         }
         return { success: true, message: `${desc} 求解完成`, data }
+      }
+
+      case 'analyze_scenario_followup': {
+        const question = String(params.question ?? '').trim()
+        const followupType = matchScenarioFollowupQuestion(question)
+        const scenarioDataset = context?.scenarioDataset
+        const scenarioInsight = context?.scenarioInsight
+        const scenarioLabel = context?.scenarioLabel ?? 'What-if 深入分析'
+        if (!question) return { success: false, message: '缺少追问内容' }
+        if (!scenarioDataset || !scenarioInsight) {
+          return { success: false, message: '当前没有可继续分析的 What-if 场景' }
+        }
+
+        const baseDataset = context.fullData
+        const currentTrace = context.scenarioTrace ?? []
+        const baseBest = scenarioInsight.comparisonSummary[0]?.strategy ?? context.activeStrategy ?? 'cicom'
+        let updatedInsight: ScenarioInsight = {
+          ...scenarioInsight,
+          analysisMode: 'followup',
+          followupQuestion: question,
+        }
+        let markdown = `## 深入分析\n\n${question}`
+        let extraTraceDetail = ''
+
+        if (followupType === 'why_strategy_changed') {
+          const topDevice = scenarioInsight.dispatchHighlights[0]
+          const topHours = scenarioInsight.keyHours.slice(0, 3).map((item) => `${item.label}（${item.summary}）`)
+          const changed = scenarioInsight.bestStrategyShift.changed
+          const answer = changed
+            ? `${strategyLabel(scenarioInsight.bestStrategyShift.before)} 到 ${strategyLabel(scenarioInsight.bestStrategyShift.after)} 的切换，核心由 ${topDevice?.label ?? '关键补偿设备'} 和关键时段重调度共同驱动。`
+            : `最优策略没有切换，但 ${strategyLabel(scenarioInsight.bestStrategyShift.after)} 的设备出力结构已经明显变化，说明最优性来自内部重调度而不是策略标签变化。`
+          updatedInsight = {
+            ...updatedInsight,
+            headline: '最优策略变化原因分析',
+            summary: answer,
+            driverAnalysis: `${scenarioInsight.bestStrategyShift.reason} 关键时段集中在 ${topHours.join('、') || '主负荷窗口'}。`,
+            followupAnswer: answer,
+            recommendations: [
+              '优先检查关键时段的购电上限与 PEM/电解槽联动边界。',
+              '若想保持当前最优策略，可继续对关键时段加更细的成本或购电约束。',
+            ],
+          }
+          markdown = buildFollowupMarkdown(
+            question,
+            '最优策略为什么会变化',
+            answer,
+            [
+              `策略变化结论：${scenarioInsight.bestStrategyShift.reason}`,
+              `关键设备：${topDevice?.summary ?? '暂无显著设备差异'}`,
+              `关键时段：${topHours.join('；') || '暂无显著时段'}`,
+            ],
+          )
+          extraTraceDetail = answer
+        } else if (followupType === 'peak_grid_hours') {
+          const bestStrategySeries = scenarioDataset.P_G?.[baseBest] ?? []
+          const rankedHours = bestStrategySeries
+            .map((value, index) => ({ hour: index + 1, value: safeNumber(value) }))
+            .sort((a, b) => b.value - a.value)
+            .slice(0, 3)
+          const answer = rankedHours.length > 0
+            ? `${strategyLabel(baseBest)} 方案下购电压力最大的时段为 ${rankedHours.map((item) => `${item.hour}:00-${item.hour + 1}:00`).join('、')}。`
+            : '当前场景未识别出明显的购电高压时段。'
+          updatedInsight = {
+            ...updatedInsight,
+            headline: '购电压力峰值时段分析',
+            summary: answer,
+            driverAnalysis: rankedHours.map((item) => `${item.hour}:00-${item.hour + 1}:00 购电 ${item.value.toFixed(0)} kW`).join('；') || scenarioInsight.driverAnalysis,
+            followupAnswer: answer,
+            followupQuestion: question,
+          }
+          markdown = buildFollowupMarkdown(
+            question,
+            '购电压力最大的时段',
+            answer,
+            rankedHours.map((item) => `${item.hour}:00-${item.hour + 1}:00 购电 ${item.value.toFixed(0)} kW`),
+            rankedHours.map((item, index) => [
+              `TOP ${index + 1}`,
+              `${item.hour}:00-${item.hour + 1}:00`,
+              `${item.value.toFixed(0)} kW`,
+            ]),
+          )
+          extraTraceDetail = answer
+        } else if (followupType === 'carbon_under_cost_cap') {
+          const feasible = scenarioInsight.comparisonSummary
+            .filter((item) => item.deltaCostPct <= 3)
+            .sort((a, b) => a.carbon - b.carbon)
+          const best = feasible[0]
+          const answer = best
+            ? `在“成本增加不超过3%”约束下，可选策略中碳排最低的是 ${strategyLabel(best.strategy)}，相对基准碳排变化 ${formatSigned(best.deltaCarbonPct, 1)}%，成本变化 ${formatSigned(best.deltaCostPct, 1)}%。`
+            : '当前 6 套策略中，没有方案同时满足成本增加不超过 3% 且进一步显著降碳。'
+          updatedInsight = {
+            ...updatedInsight,
+            headline: '成本边界下的降碳空间分析',
+            summary: answer,
+            driverAnalysis: best
+              ? `${strategyLabel(best.strategy)} 是当前成本边界内的最低碳选择，可作为下一轮约束求解的目标策略。`
+              : '建议进一步发起带成本边界的约束求解，而不是只看当前策略排序。',
+            followupAnswer: answer,
+            followupQuestion: question,
+            recommendations: best
+              ? [
+                  `可继续切换到 ${strategyLabel(best.strategy)} 作为参考策略，叠加购电上限或碳排目标约束。`,
+                  '如果要严谨验证该边界，建议直接发起新的约束求解而不是仅做静态比较。',
+                ]
+              : [
+                  '当前静态比较不足以证明有额外降碳空间，建议立刻追加成本边界约束重新求解。',
+                ],
+          }
+          markdown = buildFollowupMarkdown(
+            question,
+            '成本不超过 3% 时还能降多少碳',
+            answer,
+            best ? [
+              `候选策略：${strategyLabel(best.strategy)}`,
+              `成本变化：${formatSigned(best.deltaCostPct, 1)}%`,
+              `碳排变化：${formatSigned(best.deltaCarbonPct, 1)}%`,
+            ] : ['建议改为新的约束求解任务进行验证。'],
+            feasible.slice(0, 4).map((item) => [
+              strategyLabel(item.strategy),
+              `${formatSigned(item.deltaCostPct, 1)}%`,
+              `${formatSigned(item.deltaCarbonPct, 1)}%`,
+            ]),
+          )
+          extraTraceDetail = answer
+        } else {
+          const answer = `已围绕当前 What-if 场景对问题“${question}”做进一步聚焦分析。`
+          updatedInsight = {
+            ...updatedInsight,
+            followupAnswer: answer,
+            followupQuestion: question,
+            analysisMode: 'followup',
+          }
+          markdown = buildFollowupMarkdown(question, '深入分析', answer, [scenarioInsight.driverAnalysis])
+          extraTraceDetail = answer
+        }
+
+        const trace: ExecutionTraceStep[] = [
+          ...currentTrace.filter((step) => step.id !== 'followup-analysis'),
+          {
+            id: 'followup-analysis',
+            title: '继续分析',
+            status: 'done',
+            kind: 'analysis',
+            detail: question,
+            outcome: extraTraceDetail,
+          },
+        ]
+
+        requireHandlers(type).loadScenarioDataset(
+          scenarioDataset as unknown as Record<string, unknown>,
+          scenarioLabel,
+          { insight: updatedInsight, trace },
+        )
+        requireHandlers(type).navigate('/scenario')
+        return {
+          success: true,
+          message: `已完成继续分析：${question}`,
+          data: { insight: updatedInsight, trace },
+          trace,
+          toolContent: markdown,
+        }
       }
 
       case 'run_emergency_dispatch': {

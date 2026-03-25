@@ -97,6 +97,9 @@ export interface ScenarioInsight {
   driverAnalysis: string
   recommendations: string[]
   suggestedQuestions: string[]
+  followupQuestion?: string
+  followupAnswer?: string
+  analysisMode?: 'baseline' | 'followup'
 }
 
 export interface ScenarioWorkspacePayload {

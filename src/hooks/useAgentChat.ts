@@ -85,6 +85,57 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
       }
 
       const contextText = formatContextForLLM(ctx)
+      const agentCtx = {
+        fullData: ctx.fullData,
+        datasetMeta: ctx.datasetMeta,
+        activeStrategy: ctx.activeStrategy,
+        scenarioDataset: ctx.scenarioDataset,
+        scenarioLabel: ctx.scenarioLabel,
+        scenarioInsight: ctx.scenarioInsight,
+        scenarioTrace: ctx.scenarioTrace,
+        emergencyRunId: ctx.emergencyRunId,
+        anomalyRunId: ctx.anomalyRunId,
+      }
+
+      if (mode === 'agent' && ctx.currentPage === '/scenario' && ctx.scenarioDataset && isScenarioFollowupQuestion(content.trim())) {
+        try {
+          const localResult = await executeAction('analyze_scenario_followup', { question: content.trim() }, agentCtx)
+          const actionPayload = [{
+            type: 'analyze_scenario_followup',
+            params: { question: content.trim() },
+            result: localResult.message,
+            trace: localResult.trace,
+            detail: localResult.toolContent,
+          }]
+          if (localResult.trace?.length) setToolChain(localResult.trace)
+          const displayContent = localResult.toolContent || localResult.message
+          await fakeStreamAssistantMessage(displayContent, actionPayload, setMessages)
+          if (cid != null) {
+            await appendConversationMessage(cid, {
+              role: 'assistant',
+              content: displayContent,
+              actions: actionPayload,
+            })
+            onConversationListChange?.()
+          }
+          return
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e)
+          setError(msg)
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: 'assistant',
+              content: `抱歉，继续分析失败：${msg}`,
+            },
+          ])
+          return
+        } finally {
+          setIsLoading(false)
+          setToolChain([])
+        }
+      }
 
       try {
         /** 开发时为空走 Vite 代理 /api；生产部署时需在 .env 配置 VITE_API_BASE */
@@ -257,6 +308,17 @@ async function fakeStreamAssistantMessage(
   }
 }
 
+function isScenarioFollowupQuestion(content: string) {
+  const normalized = content.replace(/\s+/g, '').toLowerCase()
+  const asksWhyStrategy = normalized.includes('为什么') && normalized.includes('最优策略')
+  const asksPeakGridHours = normalized.includes('哪几个时段') && (normalized.includes('购电') || normalized.includes('电网')) && normalized.includes('压力最大')
+  const asksCarbonUnderCostCap =
+    normalized.includes('成本增加不超过3%')
+    || (normalized.includes('成本') && normalized.includes('3%') && normalized.includes('还能再降多少碳'))
+
+  return asksWhyStrategy || asksPeakGridHours || asksCarbonUnderCostCap
+}
+
 interface JsonResponseContext {
   url: string
   initialMessages: ChatMessage[]
@@ -319,6 +381,10 @@ async function handleJsonResponse(
           fullData: extra.ctx.fullData,
           datasetMeta: extra.ctx.datasetMeta,
           activeStrategy: extra.ctx.activeStrategy,
+          scenarioDataset: extra.ctx.scenarioDataset,
+          scenarioLabel: extra.ctx.scenarioLabel,
+          scenarioInsight: extra.ctx.scenarioInsight,
+          scenarioTrace: extra.ctx.scenarioTrace,
           emergencyRunId: extra.ctx.emergencyRunId,
           anomalyRunId: extra.ctx.anomalyRunId,
         }
