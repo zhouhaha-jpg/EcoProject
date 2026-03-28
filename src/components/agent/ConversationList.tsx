@@ -16,7 +16,9 @@ interface ConversationListProps {
 
 function formatTime(iso: string): string {
   try {
-    const d = new Date(iso)
+    const normalized = iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z'
+    const d = new Date(normalized)
+    if (Number.isNaN(d.getTime())) return ''
     const now = new Date()
     const diff = now.getTime() - d.getTime()
     if (diff < 60000) return '刚刚'

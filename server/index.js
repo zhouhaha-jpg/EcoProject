@@ -11,6 +11,7 @@ import express from 'express'
 import cors from 'cors'
 import { createServer } from 'http'
 import OpenAI from 'openai'
+import * as llm from './lib/llmAdapter.js'
 import config from './config.js'
 import { initDb } from './db/index.js'
 import datasetsRouter from './routes/datasets.js'
@@ -21,9 +22,11 @@ import realtimeRouter from './routes/realtime.js'
 import createEmergencyRouter from './routes/emergency.js'
 import investmentRouter from './routes/investment.js'
 import anomalyRouter from './routes/anomaly.js'
+import llmConfigRouter from './routes/llmConfig.js'
 import { mountWebSocket, pushServerLog } from './ws.js'
 import { refreshRealtimeCycle } from './services/realtimeRefresh.js'
 import { createEmergencyDispatch } from './services/emergencyDispatch.js'
+import { getActiveLLMProvider } from './db/index.js'
 
 initDb()
 
@@ -38,14 +41,40 @@ app.use('/api/conversations', conversationsRouter)
 app.use('/api/realtime', realtimeRouter)
 app.use('/api/investment', investmentRouter)
 app.use('/api/anomaly', anomalyRouter)
+app.use('/api/llm/providers', llmConfigRouter)
 
-const apiKey = config.apiKey
-const baseURL = process.env.API_BASE_URL || config.apiBaseUrl
-const model = process.env.OPENAI_MODEL || config.model
+let apiKey = config.apiKey
+let baseURL = process.env.API_BASE_URL || config.apiBaseUrl
+let model = process.env.OPENAI_MODEL || config.model
 
-const openai = apiKey
+let openai = apiKey
   ? new OpenAI({ apiKey, baseURL })
   : null
+
+function reloadLLMClient() {
+  const provider = getActiveLLMProvider()
+  if (provider) {
+    apiKey = provider.api_key
+    baseURL = provider.base_url
+    model = provider.model || 'gpt-4'
+    const apiFormat = provider.api_format || 'openai'
+    const authHeader = provider.auth_header || 'Authorization'
+    openai = apiFormat === 'openai' ? new OpenAI({ apiKey, baseURL }) : null
+    llm.configure({ openai, apiKey, baseURL, model, apiFormat, authHeader })
+    console.log(`[LLM] 已切换到供应商: ${provider.name} | 模型: ${model} | 格式: ${apiFormat} | API: ${baseURL}`)
+  } else {
+    apiKey = config.apiKey
+    baseURL = process.env.API_BASE_URL || config.apiBaseUrl
+    model = process.env.OPENAI_MODEL || config.model
+    openai = apiKey ? new OpenAI({ apiKey, baseURL }) : null
+    llm.configure({ openai, apiKey, baseURL, model, apiFormat: 'openai', authHeader: 'Authorization' })
+    console.log(`[LLM] 回退到环境变量配置 | 模型: ${model} | API: ${baseURL}`)
+  }
+}
+
+globalThis.__reloadLLMClient = reloadLLMClient
+
+reloadLLMClient()
 
 const SYSTEM_PROMPT = `你是智慧园区节能减排调度平台的 AI 助手。该平台基于混合整数线性规划（MILP）优化，对比 6 种优化调度方案（UCI/CICOS/CICAR/CICOM/PV/ES）在 24 小时时序下的功率、制氢量、碳排放等指标。
 
@@ -428,10 +457,10 @@ const TOOLS = [
 ]
 
 async function generateEmergencyOutline({ spec, prompt, baselineSummary, activeStrategy, baselineWindow, feedbackIssues = [], attempt = 0 }) {
-  if (!openai) {
+  if (!llm.isAvailable()) {
     throw new Error('LLM unavailable')
   }
-  const completion = await openai.chat.completions.create({
+  const completion = await llm.complete({
     model,
     messages: [
       {
@@ -473,10 +502,10 @@ async function generateEmergencyOutline({ spec, prompt, baselineSummary, activeS
 }
 
 async function generateEmergencyIntent({ spec, prompt, baselineSummary, activeStrategy, baselineWindow, contextPackage, feedbackIssues = [], attempt = 0 }) {
-  if (!openai) {
+  if (!llm.isAvailable()) {
     throw new Error('LLM unavailable')
   }
-  const completion = await openai.chat.completions.create({
+  const completion = await llm.complete({
     model,
     messages: [
       {
@@ -524,8 +553,8 @@ async function generateEmergencyIntent({ spec, prompt, baselineSummary, activeSt
 app.use('/api/emergency', createEmergencyRouter({ planner: generateEmergencyIntent }))
 
 app.post('/api/chat', async (req, res) => {
-  if (!openai) {
-    return res.status(503).json({ error: '未配置 ZHIPU_API_KEY 或 OPENAI_API_KEY' })
+  if (!llm.isAvailable()) {
+    return res.status(503).json({ error: '未配置 LLM 供应商或 API Key' })
   }
 
   const { messages = [], mode = 'ask', context = '', stream: wantStream = false } = req.body
@@ -554,13 +583,12 @@ app.post('/api/chat', async (req, res) => {
       const shouldStream = isContinuation
 
       if (shouldStream) {
-        const stream = await openai.chat.completions.create({
+        const stream = await llm.createStream({
           model,
           messages: apiMessages,
           tools: TOOLS,
           tool_choice: 'auto',
           max_tokens: 4096,
-          stream: true,
         })
         res.setHeader('Content-Type', 'text/event-stream')
         res.setHeader('Cache-Control', 'no-cache')
@@ -577,7 +605,7 @@ app.post('/api/chat', async (req, res) => {
         return
       }
 
-      const completion = await openai.chat.completions.create({
+      const completion = await llm.complete({
         model,
         messages: apiMessages,
         tools: TOOLS,
@@ -591,10 +619,9 @@ app.post('/api/chat', async (req, res) => {
     }
 
     // Ask 模式：流式返回
-    const stream = await openai.chat.completions.create({
+    const stream = await llm.createStream({
       model,
       messages: apiMessages,
-      stream: true,
       max_tokens: 4096,
     })
 
@@ -843,7 +870,7 @@ async function triggerAutoOptimization(fetchResult) {
  */
 async function generateAlertText(fetchResult, optResult) {
   // 尝试 LLM 生成
-  if (openai) {
+  if (llm.isAvailable()) {
     try {
       const alertSummary = (fetchResult.alerts || []).map(a => `${a.severity}: ${a.title}`).join('\n')
       const esSummary = optResult.summary?.es
@@ -858,7 +885,7 @@ ${alertSummary}
 
 请给出：1. 异动概述 2. 建议操作（一句话）`
 
-      const completion = await openai.chat.completions.create({
+      const completion = await llm.complete({
         model,
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 300,

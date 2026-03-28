@@ -12,7 +12,8 @@ import { useAgentChat } from '@/hooks/useAgentChat'
 import AgentChat from './AgentChat'
 import ConversationList from './ConversationList'
 import ProactiveAlert from './ProactiveAlert'
-import { MessageSquare, ChevronRight, History } from 'lucide-react'
+import { MessageSquare, ChevronRight, History, Settings } from 'lucide-react'
+import LLMProviderSettings from './LLMProviderSettings'
 import {
   fetchConversationsList,
   fetchConversation,
@@ -159,6 +160,7 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
     return Number.isFinite(parsed) ? parsed : null
   })
   const [showHistory, setShowHistory] = useState(false)
+  const [showLLMSettings, setShowLLMSettings] = useState(false)
   const [listLoading, setListLoading] = useState(false)
   const hasBootstrappedRef = useRef(false)
   const restoringWorkspaceRef = useRef(false)
@@ -472,6 +474,14 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
               <div className="flex items-center gap-1">
                 <button
                   type="button"
+                  onClick={() => setShowLLMSettings(true)}
+                  className="p-1.5 rounded transition-colors text-[#3d6080] hover:text-[#8ba9cc]"
+                  title="LLM 供应商设置"
+                >
+                  <Settings size={14} />
+                </button>
+                <button
+                  type="button"
                   onClick={() => setShowHistory((v) => !v)}
                   className={`p-1.5 rounded transition-colors ${showHistory ? 'text-[#00d4ff] bg-[#00d4ff]/10' : 'text-[#3d6080] hover:text-[#8ba9cc]'}`}
                   title="历史对话"
@@ -547,6 +557,7 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
           </>
         )}
       </div>
+      <LLMProviderSettings open={showLLMSettings} onClose={() => setShowLLMSettings(false)} />
     </>
   )
 }

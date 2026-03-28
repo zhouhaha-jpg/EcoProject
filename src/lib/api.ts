@@ -410,3 +410,81 @@ export async function restoreAnomalyStateApi(runId?: number | null): Promise<{
   if (!res.ok) throw new Error(await res.text())
   return res.json()
 }
+
+// ── LLM Provider 管理 ──────────────────────────────────────
+
+export interface LLMProvider {
+  id: number
+  name: string
+  base_url: string
+  api_key?: string
+  api_key_masked: string
+  model: string
+  api_format: string
+  auth_header: string
+  model_mapping: Record<string, string> | null
+  notes: string
+  is_active: number
+  created_at: string
+  updated_at: string
+}
+
+export async function fetchLLMProviders(): Promise<LLMProvider[]> {
+  const res = await fetch(`${API_BASE}/llm/providers`)
+  if (!res.ok) throw new Error(await res.text())
+  const json = await res.json()
+  return json.data
+}
+
+export async function createLLMProvider(data: {
+  name: string
+  base_url: string
+  api_key: string
+  model?: string
+  api_format?: string
+  auth_header?: string
+  model_mapping?: Record<string, string> | null
+  notes?: string
+}): Promise<{ id: number }> {
+  const res = await fetch(`${API_BASE}/llm/providers`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error(await res.text())
+  return res.json()
+}
+
+export async function updateLLMProvider(
+  id: number,
+  data: Partial<{
+    name: string
+    base_url: string
+    api_key: string
+    model: string
+    api_format: string
+    auth_header: string
+    model_mapping: Record<string, string> | null
+    notes: string
+  }>,
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/llm/providers/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error(await res.text())
+}
+
+export async function deleteLLMProvider(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/llm/providers/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(await res.text())
+}
+
+export async function activateLLMProvider(id: number): Promise<void> {
+  const res = await fetch(`${API_BASE}/llm/providers/${id}/activate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+  })
+  if (!res.ok) throw new Error(await res.text())
+}

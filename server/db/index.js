@@ -319,7 +319,7 @@ export function listConversations() {
     SELECT c.id, c.title, c.mode, c.created_at, c.updated_at,
       (SELECT COUNT(*) FROM conversation_messages WHERE conversation_id = c.id) as message_count
     FROM conversations c
-    ORDER BY c.updated_at DESC
+    ORDER BY c.updated_at DESC, c.id DESC
   `).all()
 }
 
@@ -349,7 +349,7 @@ export function updateConversation(id, { title, mode, workspaceState }) {
     database.prepare('UPDATE conversations SET mode = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(mode, id)
   }
   if (workspaceState !== undefined) {
-    database.prepare('UPDATE conversations SET workspace_state = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(
+    database.prepare('UPDATE conversations SET workspace_state = ? WHERE id = ?').run(
       workspaceState == null ? null : JSON.stringify(workspaceState),
       id,
     )
@@ -366,4 +366,56 @@ export function appendMessage(conversationId, { role, content, actions }) {
 
 export function deleteConversation(id) {
   getDb().prepare('DELETE FROM conversations WHERE id = ?').run(id)
+}
+
+// ── LLM Provider CRUD ──────────────────────────────────────
+
+export function listLLMProviders() {
+  return getDb().prepare('SELECT * FROM llm_providers ORDER BY is_active DESC, updated_at DESC').all()
+}
+
+export function getLLMProvider(id) {
+  return getDb().prepare('SELECT * FROM llm_providers WHERE id = ?').get(id)
+}
+
+export function getActiveLLMProvider() {
+  return getDb().prepare('SELECT * FROM llm_providers WHERE is_active = 1').get() || null
+}
+
+export function createLLMProvider({ name, base_url, api_key, model, api_format, auth_header, model_mapping, notes }) {
+  const info = getDb().prepare(
+    `INSERT INTO llm_providers (name, base_url, api_key, model, api_format, auth_header, model_mapping, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(
+    name, base_url, api_key,
+    model || 'gpt-4',
+    api_format || 'openai',
+    auth_header || 'Authorization',
+    model_mapping ? JSON.stringify(model_mapping) : null,
+    notes || '',
+  )
+  return Number(info.lastInsertRowid)
+}
+
+export function updateLLMProvider(id, fields) {
+  const db = getDb()
+  const allowed = ['name', 'base_url', 'api_key', 'model', 'api_format', 'auth_header', 'model_mapping', 'notes']
+  for (const key of allowed) {
+    if (fields[key] !== undefined) {
+      const value = key === 'model_mapping' && typeof fields[key] === 'object'
+        ? JSON.stringify(fields[key])
+        : fields[key]
+      db.prepare(`UPDATE llm_providers SET ${key} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(value, id)
+    }
+  }
+}
+
+export function deleteLLMProvider(id) {
+  getDb().prepare('DELETE FROM llm_providers WHERE id = ?').run(id)
+}
+
+export function activateLLMProvider(id) {
+  const db = getDb()
+  db.prepare('UPDATE llm_providers SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE is_active = 1').run()
+  db.prepare('UPDATE llm_providers SET is_active = 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(id)
 }

@@ -1,5 +1,4 @@
-import OpenAI from 'openai'
-import config from '../config.js'
+import * as llm from '../lib/llmAdapter.js'
 import {
   createInvestmentRun,
   getDatasetById,
@@ -22,13 +21,6 @@ const DEFAULT_ASSUMPTIONS = {
 }
 
 const STRATEGY_PRIORITY = ['es', 'cicom', 'cicar', 'cicos', 'pv', 'uci']
-
-const openai = config.apiKey
-  ? new OpenAI({
-      apiKey: config.apiKey,
-      baseURL: process.env.API_BASE_URL || config.apiBaseUrl,
-    })
-  : null
 
 function round(value, digits = 2) {
   const factor = 10 ** digits
@@ -201,11 +193,11 @@ function buildDetailedFallbackReport({ prompt, assumptions, summary, beforeAfter
 
 async function generateDetailedInvestmentReport(payload) {
   const fallback = buildDetailedFallbackReport(payload)
-  if (!openai) return fallback
+  if (!llm.isAvailable()) return fallback
 
   try {
-    const completion = await openai.chat.completions.create({
-      model: process.env.OPENAI_MODEL || config.model,
+    const completion = await llm.complete({
+      model: llm.getModel(),
       temperature: 0.35,
       max_tokens: 1100,
       messages: [
@@ -393,7 +385,7 @@ export async function createInvestmentPlan(payload = {}) {
     scope: 'investment',
     message: '投资建设规划已生成',
     targetDate: viewDate,
-    algorithm: openai ? 'PV ROI Planner + LLM Report' : 'PV ROI Planner',
+    algorithm: llm.isAvailable() ? 'PV ROI Planner + LLM Report' : 'PV ROI Planner',
     detail: `${currentModules}->${targetModules} | payback ${paybackYears ?? 'N/A'}y`,
   })
 

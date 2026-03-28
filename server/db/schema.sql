@@ -137,3 +137,20 @@ INSERT OR IGNORE INTO park_config (key, value) VALUES ('park_name', '杭州示�
 INSERT OR IGNORE INTO data_source_health (source_name, status) VALUES ('solar', 'ok');
 INSERT OR IGNORE INTO data_source_health (source_name, status) VALUES ('price', 'ok');
 INSERT OR IGNORE INTO data_source_health (source_name, status) VALUES ('carbon', 'ok');
+
+CREATE TABLE IF NOT EXISTS llm_providers (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  base_url TEXT NOT NULL,
+  api_key TEXT NOT NULL,
+  model TEXT NOT NULL DEFAULT 'gpt-4',
+  api_format TEXT NOT NULL DEFAULT 'openai',
+  auth_header TEXT NOT NULL DEFAULT 'Authorization',
+  model_mapping TEXT,
+  notes TEXT DEFAULT '',
+  is_active INTEGER NOT NULL DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_providers_active ON llm_providers(is_active);
