@@ -544,14 +544,25 @@ export default function ScenarioComparePage() {
           <div className="panel min-h-0">
             <div className="panel-title-bar flex items-center justify-between">
               <span>次日设备调度曲线</span>
-              <button
-                type="button"
-                onClick={() => exportScenarioWorkbook(dataset, scenarioDataset!, scenarioLabel ?? undefined)}
-                className="inline-flex items-center gap-1 rounded border border-[#1e3256] bg-[#111b2e] px-3 py-1.5 text-[11px] text-[#8ba9cc] transition-colors hover:border-[#00d4ff]/50 hover:text-[#e8f4ff]"
-              >
-                <Download size={12} />
-                导出 Excel
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => exportScenarioWorkbook(dataset, scenarioDataset!, scenarioLabel ?? undefined)}
+                  className="inline-flex items-center gap-1 rounded border border-[#1e3256] bg-[#111b2e] px-3 py-1.5 text-[11px] text-[#8ba9cc] transition-colors hover:border-[#00d4ff]/50 hover:text-[#e8f4ff]"
+                >
+                  <Download size={12} />
+                  导出 Excel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSpeak}
+                  disabled={!insight.broadcastText || isSpeaking || !canSpeak}
+                  className="inline-flex items-center gap-1 rounded border border-[#1e3256] bg-[#111b2e] px-3 py-1.5 text-[11px] text-[#8ba9cc] transition-colors hover:border-[#00d4ff]/50 hover:text-[#e8f4ff] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <Volume2 size={12} />
+                  {isSpeaking ? '播报中...' : '语音播报'}
+                </button>
+              </div>
             </div>
             <div style={{ padding: 16, height: 420 }}>
               <DeviceDispatchPlanChart dataset={scenarioDataset!} strategy={displayStrategy} />
@@ -596,14 +607,25 @@ export default function ScenarioComparePage() {
         <div className="panel shrink-0">
           <div className="panel-title-bar flex items-center justify-between">
             <span>策略排名变化区</span>
-            <button
-              type="button"
-              onClick={() => exportScenarioWorkbook(dataset, scenarioDataset!, scenarioLabel ?? undefined)}
-              className="inline-flex items-center gap-1 rounded border border-[#1e3256] bg-[#111b2e] px-3 py-1.5 text-[11px] text-[#8ba9cc] transition-colors hover:border-[#00d4ff]/50 hover:text-[#e8f4ff]"
-            >
-              <Download size={12} />
-              导出 Excel
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => exportScenarioWorkbook(dataset, scenarioDataset!, scenarioLabel ?? undefined)}
+                className="inline-flex items-center gap-1 rounded border border-[#1e3256] bg-[#111b2e] px-3 py-1.5 text-[11px] text-[#8ba9cc] transition-colors hover:border-[#00d4ff]/50 hover:text-[#e8f4ff]"
+              >
+                <Download size={12} />
+                导出 Excel
+              </button>
+              <button
+                type="button"
+                onClick={handleSpeak}
+                disabled={!insight.broadcastText || isSpeaking || !canSpeak}
+                className="inline-flex items-center gap-1 rounded border border-[#1e3256] bg-[#111b2e] px-3 py-1.5 text-[11px] text-[#8ba9cc] transition-colors hover:border-[#00d4ff]/50 hover:text-[#e8f4ff] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Volume2 size={12} />
+                {isSpeaking ? '播报中...' : '语音播报'}
+              </button>
+            </div>
           </div>
           <div style={{ padding: 16, display: 'grid', gap: 8, maxHeight: 420, overflowY: 'auto', paddingRight: 10 }}>
             {insight.comparisonSummary.map((item) => (
