@@ -19,7 +19,8 @@ import {
   restoreEmergencyStateApi,
 } from '@/lib/api'
 import { exportEmergencyRunWorkbook } from '@/lib/emergencyExport'
-import { Volume2 } from 'lucide-react'
+import { exportScenarioWorkbook } from '@/lib/scenarioExport'
+import { Download, Volume2 } from 'lucide-react'
 import type { EmergencyPointDetail, EmergencyRun, ExecutionTraceStep, ScenarioInsight, StrategyKey } from '@/types'
 
 const STRATEGIES: StrategyKey[] = ['uci', 'cicos', 'cicar', 'cicom', 'pv', 'es']
@@ -444,6 +445,14 @@ export default function ScenarioComparePage() {
             </span>
             <button
               type="button"
+              onClick={() => exportScenarioWorkbook(dataset, scenarioDataset!, scenarioLabel ?? undefined)}
+              className="inline-flex items-center gap-1 rounded border border-[#1e3256] bg-[#111b2e] px-3 py-1.5 text-[11px] text-[#8ba9cc] transition-colors hover:border-[#00d4ff]/50 hover:text-[#e8f4ff]"
+            >
+              <Download size={12} />
+              导出 Excel
+            </button>
+            <button
+              type="button"
               onClick={handleSpeak}
               disabled={!insight.broadcastText || isSpeaking || !canSpeak}
               className="rounded border border-[#1e3256] bg-[#111b2e] px-3 py-1.5 text-[11px] text-[#8ba9cc] transition-colors hover:border-[#00d4ff]/50 hover:text-[#e8f4ff] disabled:cursor-not-allowed disabled:opacity-50"
@@ -533,7 +542,17 @@ export default function ScenarioComparePage() {
       {insight.workspaceMode === 'day_plan' ? (
         <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(320px, 0.6fr)', gap: 12 }}>
           <div className="panel min-h-0">
-            <div className="panel-title-bar">次日设备调度曲线</div>
+            <div className="panel-title-bar flex items-center justify-between">
+              <span>次日设备调度曲线</span>
+              <button
+                type="button"
+                onClick={() => exportScenarioWorkbook(dataset, scenarioDataset!, scenarioLabel ?? undefined)}
+                className="inline-flex items-center gap-1 rounded border border-[#1e3256] bg-[#111b2e] px-3 py-1.5 text-[11px] text-[#8ba9cc] transition-colors hover:border-[#00d4ff]/50 hover:text-[#e8f4ff]"
+              >
+                <Download size={12} />
+                导出 Excel
+              </button>
+            </div>
             <div style={{ padding: 16, height: 420 }}>
               <DeviceDispatchPlanChart dataset={scenarioDataset!} strategy={displayStrategy} />
             </div>
@@ -575,7 +594,17 @@ export default function ScenarioComparePage() {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.2fr) minmax(0, 0.8fr)', gap: 12 }}>
         <div className="panel shrink-0">
-          <div className="panel-title-bar">策略排名变化区</div>
+          <div className="panel-title-bar flex items-center justify-between">
+            <span>策略排名变化区</span>
+            <button
+              type="button"
+              onClick={() => exportScenarioWorkbook(dataset, scenarioDataset!, scenarioLabel ?? undefined)}
+              className="inline-flex items-center gap-1 rounded border border-[#1e3256] bg-[#111b2e] px-3 py-1.5 text-[11px] text-[#8ba9cc] transition-colors hover:border-[#00d4ff]/50 hover:text-[#e8f4ff]"
+            >
+              <Download size={12} />
+              导出 Excel
+            </button>
+          </div>
           <div style={{ padding: 16, display: 'grid', gap: 8, maxHeight: 420, overflowY: 'auto', paddingRight: 10 }}>
             {insight.comparisonSummary.map((item) => (
               <div key={item.strategy} className="rounded border" style={{ borderColor: '#1e3256', background: 'rgba(13,20,34,0.9)', padding: 12 }}>
