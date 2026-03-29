@@ -549,7 +549,8 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
                   onSend={chat.sendMessage}
                   onClear={handleNewConversation}
                   toolChain={chat.toolChain}
-                  serverLogs={realtimeData?.serverLogs ?? []}
+                  thinkingText={chat.thinkingText}
+                  thinkingDuration={chat.thinkingDuration}
                   onRestoreWorkspace={restoreWorkspaceFromState}
                 />
               )}

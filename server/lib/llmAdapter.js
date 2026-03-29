@@ -1,7 +1,12 @@
 /**
  * LLM API 适配器
  * 根据 api_format 自动切换 OpenAI SDK / Anthropic HTTP 调用
- * 所有方法接受 OpenAI 风格参数，返回 OpenAI 兼容响应
+ *
+ * 统一流式 chunk 格式:
+ *   { type: 'thinking', text }        - 思考过程
+ *   { type: 'content',  text }        - 正文内容
+ *   { type: 'tool_call_delta', index, tool_call: { id, name, arguments_delta } }
+ *   { type: 'message_done', stop_reason }
  */
 
 let _openai = null
@@ -41,12 +46,46 @@ export async function complete(params) {
 }
 
 /**
- * 流式调用，返回可 for-await-of 的异步迭代器
- * 每个 chunk 格式: { choices: [{ delta: { content: string } }] }
+ * 流式调用，返回可 for-await-of 的统一 chunk 迭代器
  */
 export async function createStream(params) {
   if (_apiFormat === 'anthropic') return _anthropicStream(params)
-  return _openai.chat.completions.create({ ...params, stream: true })
+  return _openaiStream(params)
+}
+
+// ── OpenAI 流式包装 ─────────────────────────────────────────
+
+async function* _openaiStream(params) {
+  const raw = await _openai.chat.completions.create({ ...params, stream: true })
+  for await (const chunk of raw) {
+    const delta = chunk.choices?.[0]?.delta
+    if (!delta) continue
+
+    if (delta.reasoning_content) {
+      yield { type: 'thinking', text: delta.reasoning_content }
+    }
+    if (delta.content) {
+      yield { type: 'content', text: delta.content }
+    }
+    if (delta.tool_calls) {
+      for (const tc of delta.tool_calls) {
+        yield {
+          type: 'tool_call_delta',
+          index: tc.index ?? 0,
+          tool_call: {
+            id: tc.id || undefined,
+            name: tc.function?.name || undefined,
+            arguments_delta: tc.function?.arguments || '',
+          },
+        }
+      }
+    }
+
+    const finish = chunk.choices?.[0]?.finish_reason
+    if (finish) {
+      yield { type: 'message_done', stop_reason: finish }
+    }
+  }
 }
 
 // ── OpenAI → Anthropic 请求转换 ──────────────────────────────
@@ -128,6 +167,44 @@ function _buildURL() {
   return url + '/messages'
 }
 
+function _shouldEnableThinking(params) {
+  if (params.response_format?.type === 'json_object') return false
+  const m = (params.model || _model).toLowerCase()
+  return m.includes('claude')
+}
+
+function _buildAnthropicBody(params, { stream = false } = {}) {
+  const { system, messages } = _convertMessages(params.messages || [])
+
+  const body = {
+    model: params.model || _model,
+    max_tokens: params.max_tokens || 16000,
+    messages,
+  }
+  if (stream) body.stream = true
+  if (system) body.system = system
+  if (params.temperature != null) body.temperature = params.temperature
+
+  if (params.tools?.length) {
+    body.tools = params.tools.map((t) => ({
+      name: t.function.name,
+      description: t.function.description || '',
+      input_schema: t.function.parameters,
+    }))
+  }
+
+  if (_shouldEnableThinking(params)) {
+    body.thinking = { type: 'enabled', budget_tokens: 8000 }
+    delete body.temperature
+  }
+
+  if (params.response_format?.type === 'json_object') {
+    body.system = (body.system || '') + '\n\nIMPORTANT: You MUST respond with valid JSON only. No markdown code fences.'
+  }
+
+  return body
+}
+
 // ── Anthropic → OpenAI 响应转换 ──────────────────────────────
 
 function _toOpenAIResponse(data) {
@@ -166,26 +243,7 @@ function _toOpenAIResponse(data) {
 // ── Anthropic 非流式调用 ─────────────────────────────────────
 
 async function _anthropicComplete(params) {
-  const { system, messages } = _convertMessages(params.messages || [])
-
-  const body = {
-    model: params.model || _model,
-    max_tokens: params.max_tokens || 4096,
-    messages,
-  }
-  if (system) body.system = system
-  if (params.temperature != null) body.temperature = params.temperature
-
-  if (params.tools?.length) {
-    body.tools = params.tools.map((t) => ({
-      name: t.function.name,
-      description: t.function.description || '',
-      input_schema: t.function.parameters,
-    }))
-  }
-  if (params.response_format?.type === 'json_object') {
-    body.system = (body.system || '') + '\n\nIMPORTANT: You MUST respond with valid JSON only. No markdown code fences.'
-  }
+  const body = _buildAnthropicBody(params)
 
   const res = await fetch(_buildURL(), {
     method: 'POST',
@@ -209,27 +267,10 @@ async function _anthropicComplete(params) {
   return _toOpenAIResponse(await res.json())
 }
 
-// ── Anthropic 流式调用 ───────────────────────────────────────
+// ── Anthropic 流式调用 (统一 chunk 格式) ─────────────────────
 
 async function* _anthropicStream(params) {
-  const { system, messages } = _convertMessages(params.messages || [])
-
-  const body = {
-    model: params.model || _model,
-    max_tokens: params.max_tokens || 4096,
-    messages,
-    stream: true,
-  }
-  if (system) body.system = system
-  if (params.temperature != null) body.temperature = params.temperature
-
-  if (params.tools?.length) {
-    body.tools = params.tools.map((t) => ({
-      name: t.function.name,
-      description: t.function.description || '',
-      input_schema: t.function.parameters,
-    }))
-  }
+  const body = _buildAnthropicBody(params, { stream: true })
 
   const res = await fetch(_buildURL(), {
     method: 'POST',
@@ -245,6 +286,8 @@ async function* _anthropicStream(params) {
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
+
+  const toolBlocks = {}
 
   try {
     while (true) {
@@ -262,8 +305,35 @@ async function* _anthropicStream(params) {
 
         try {
           const ev = JSON.parse(json)
-          if (ev.type === 'content_block_delta' && ev.delta?.type === 'text_delta') {
-            yield { choices: [{ delta: { content: ev.delta.text } }] }
+
+          if (ev.type === 'content_block_start' && ev.content_block?.type === 'tool_use') {
+            const idx = ev.index ?? 0
+            toolBlocks[idx] = { id: ev.content_block.id, name: ev.content_block.name, args: '' }
+            yield {
+              type: 'tool_call_delta',
+              index: idx,
+              tool_call: { id: ev.content_block.id, name: ev.content_block.name, arguments_delta: '' },
+            }
+          }
+
+          if (ev.type === 'content_block_delta') {
+            if (ev.delta?.type === 'thinking_delta') {
+              yield { type: 'thinking', text: ev.delta.thinking }
+            } else if (ev.delta?.type === 'text_delta') {
+              yield { type: 'content', text: ev.delta.text }
+            } else if (ev.delta?.type === 'input_json_delta') {
+              const idx = ev.index ?? 0
+              if (toolBlocks[idx]) toolBlocks[idx].args += ev.delta.partial_json
+              yield {
+                type: 'tool_call_delta',
+                index: idx,
+                tool_call: { arguments_delta: ev.delta.partial_json },
+              }
+            }
+          }
+
+          if (ev.type === 'message_delta') {
+            yield { type: 'message_done', stop_reason: ev.delta?.stop_reason || 'end_turn' }
           }
         } catch { /* skip unparseable SSE lines */ }
       }

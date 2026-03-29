@@ -557,7 +557,7 @@ app.post('/api/chat', async (req, res) => {
     return res.status(503).json({ error: '未配置 LLM 供应商或 API Key' })
   }
 
-  const { messages = [], mode = 'ask', context = '', stream: wantStream = false } = req.body
+  const { messages = [], mode = 'ask', context = '' } = req.body
 
   const contextBlock = context
     ? `\n\n## 当前上下文\n${context}\n`
@@ -577,75 +577,67 @@ app.post('/api/chat', async (req, res) => {
     ...messages.map(mapMessage),
   ]
 
+  res.setHeader('Content-Type', 'text/event-stream')
+  res.setHeader('Cache-Control', 'no-cache')
+  res.setHeader('Connection', 'keep-alive')
+  res.flushHeaders()
+
+  const sseSend = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`)
+
   try {
-    if (mode === 'agent') {
-      const isContinuation = apiMessages.some((m) => m.role === 'tool')
-      const shouldStream = isContinuation
-
-      if (shouldStream) {
-        const stream = await llm.createStream({
-          model,
-          messages: apiMessages,
-          tools: TOOLS,
-          tool_choice: 'auto',
-          max_tokens: 4096,
-        })
-        res.setHeader('Content-Type', 'text/event-stream')
-        res.setHeader('Cache-Control', 'no-cache')
-        res.setHeader('Connection', 'keep-alive')
-        res.flushHeaders()
-        for await (const chunk of stream) {
-          const delta = chunk.choices[0]?.delta?.content
-          if (delta) {
-            res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: delta } }] })}\n\n`)
-          }
-        }
-        res.write('data: [DONE]\n\n')
-        res.end()
-        return
-      }
-
-      const completion = await llm.complete({
-        model,
-        messages: apiMessages,
-        tools: TOOLS,
-        tool_choice: 'auto',
-        max_tokens: 4096,
-      })
-      const msg = completion.choices[0]?.message
-      return res.json({
-        choices: [{ message: msg }],
-      })
-    }
-
-    // Ask 模式：流式返回
-    const stream = await llm.createStream({
+    const streamParams = {
       model,
       messages: apiMessages,
       max_tokens: 4096,
-    })
+    }
+    if (mode === 'agent') {
+      streamParams.tools = TOOLS
+      streamParams.tool_choice = 'auto'
+    }
 
-    res.setHeader('Content-Type', 'text/event-stream')
-    res.setHeader('Cache-Control', 'no-cache')
-    res.setHeader('Connection', 'keep-alive')
-    res.flushHeaders()
+    const stream = await llm.createStream(streamParams)
+
+    const accToolCalls = {}
+    let contentText = ''
 
     for await (const chunk of stream) {
-      const delta = chunk.choices[0]?.delta?.content
-      if (delta) {
-        res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: delta } }] })}\n\n`)
+      if (chunk.type === 'thinking') {
+        sseSend({ type: 'thinking', text: chunk.text })
+      } else if (chunk.type === 'content') {
+        contentText += chunk.text
+        sseSend({ type: 'content', text: chunk.text })
+      } else if (chunk.type === 'tool_call_delta') {
+        const idx = chunk.index ?? 0
+        if (!accToolCalls[idx]) accToolCalls[idx] = { id: '', name: '', arguments: '' }
+        const acc = accToolCalls[idx]
+        if (chunk.tool_call.id) acc.id = chunk.tool_call.id
+        if (chunk.tool_call.name) acc.name = chunk.tool_call.name
+        if (chunk.tool_call.arguments_delta) acc.arguments += chunk.tool_call.arguments_delta
+      } else if (chunk.type === 'message_done') {
+        /* handled after loop */
       }
     }
+
+    const toolCallList = Object.values(accToolCalls).filter((tc) => tc.id && tc.name)
+    if (toolCallList.length > 0) {
+      sseSend({
+        type: 'tool_calls',
+        tool_calls: toolCallList.map((tc) => ({
+          id: tc.id,
+          type: 'function',
+          function: { name: tc.name, arguments: tc.arguments },
+        })),
+        content: contentText || null,
+      })
+    }
+
     res.write('data: [DONE]\n\n')
     res.end()
   } catch (err) {
     console.error('[Agent API Error]', err)
-    const status = err?.status ?? 500
     const msg = err?.error?.message ?? err?.message ?? String(err)
-    if (!res.headersSent) {
-      res.status(status).json({ error: msg })
-    } else if (!res.writableEnded) {
-      res.write(`data: ${JSON.stringify({ error: msg })}\n\n`)
+    if (!res.writableEnded) {
+      sseSend({ type: 'error', error: msg })
       res.end()
     }
   }

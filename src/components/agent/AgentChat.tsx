@@ -1,13 +1,12 @@
 /**
- * Agent 聊天：消息列表 + 输入框 + 工具链展示
+ * Agent 聊天：消息列表 + 思考过程面板 + 工具链展示 + 输入框
  */
 
 import { useRef, useEffect, useState } from 'react'
 import type { ChatMessage, ToolChainStep } from '@/hooks/useAgentChat'
 import type { ConversationWorkspaceState } from '@/lib/api'
-import type { ServerLogEntry } from '@/types'
 import AgentModeSwitch from './AgentModeSwitch'
-import { Send, Trash2, User, Bot, ChevronDown, ChevronUp, History } from 'lucide-react'
+import { Send, Trash2, User, Bot, ChevronDown, ChevronUp, History, Brain } from 'lucide-react'
 
 interface AgentChatProps {
   messages: ChatMessage[]
@@ -18,9 +17,19 @@ interface AgentChatProps {
   onSend: (content: string) => void
   onClear: () => void
   toolChain?: ToolChainStep[]
-  serverLogs?: ServerLogEntry[]
+  thinkingText?: string
+  thinkingDuration?: number
   onRestoreWorkspace?: (workspaceState: ConversationWorkspaceState) => void
 }
+
+const STATUS_LABEL: Record<string, string> = {
+  pending: '等待中',
+  running: '执行中',
+  done: '完成',
+  error: '失败',
+}
+
+// ── Markdown 渲染 ─────────────────────────────────────────────
 
 function renderInlineMarkdown(text: string) {
   const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*)/g).filter(Boolean)
@@ -47,12 +56,7 @@ function renderInlineMarkdown(text: string) {
 }
 
 function splitMarkdownTableRow(line: string) {
-  return line
-    .trim()
-    .replace(/^\|/, '')
-    .replace(/\|$/, '')
-    .split('|')
-    .map((cell) => cell.trim())
+  return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim())
 }
 
 function isMarkdownTableSeparator(line: string) {
@@ -82,11 +86,7 @@ function renderMarkdownTable(lines: string[], key: string) {
         <thead>
           <tr className="border-b border-[#1e3256] bg-[#101a2c]">
             {header.map((cell, index) => (
-              <th
-                key={`th-${index}`}
-                className="px-3 py-2 text-left font-semibold text-[#e8f4ff]"
-                style={{ whiteSpace: 'nowrap' }}
-              >
+              <th key={`th-${index}`} className="px-3 py-2 text-left font-semibold text-[#e8f4ff]" style={{ whiteSpace: 'nowrap' }}>
                 {renderInlineMarkdown(cell)}
               </th>
             ))}
@@ -94,16 +94,9 @@ function renderMarkdownTable(lines: string[], key: string) {
         </thead>
         <tbody>
           {rows.map((row, rowIndex) => (
-            <tr
-              key={`tr-${rowIndex}`}
-              className={rowIndex < rows.length - 1 ? 'border-b border-[#13213b]' : ''}
-            >
+            <tr key={`tr-${rowIndex}`} className={rowIndex < rows.length - 1 ? 'border-b border-[#13213b]' : ''}>
               {header.map((_, cellIndex) => (
-                <td
-                  key={`td-${rowIndex}-${cellIndex}`}
-                  className="px-3 py-2 align-top text-[#8ba9cc]"
-                  style={{ lineHeight: 1.7 }}
-                >
+                <td key={`td-${rowIndex}-${cellIndex}`} className="px-3 py-2 align-top text-[#8ba9cc]" style={{ lineHeight: 1.7 }}>
                   {renderInlineMarkdown(row[cellIndex] ?? '')}
                 </td>
               ))}
@@ -125,9 +118,7 @@ function renderMarkdownContent(content: string) {
     if (!bulletBuffer.length) return
     elements.push(
       <ul key={`ul-${elements.length}`} className="space-y-1 pl-4 text-[#8ba9cc]" style={{ listStyleType: 'disc' }}>
-        {bulletBuffer.map((item, index) => (
-          <li key={`${item}-${index}`}>{renderInlineMarkdown(item)}</li>
-        ))}
+        {bulletBuffer.map((item, index) => <li key={`${item}-${index}`}>{renderInlineMarkdown(item)}</li>)}
       </ul>,
     )
     bulletBuffer.length = 0
@@ -137,9 +128,7 @@ function renderMarkdownContent(content: string) {
     if (!orderedBuffer.length) return
     elements.push(
       <ol key={`ol-${elements.length}`} className="space-y-1 pl-4 text-[#8ba9cc]" style={{ listStyleType: 'decimal' }}>
-        {orderedBuffer.map((item, index) => (
-          <li key={`${item}-${index}`}>{renderInlineMarkdown(item)}</li>
-        ))}
+        {orderedBuffer.map((item, index) => <li key={`${item}-${index}`}>{renderInlineMarkdown(item)}</li>)}
       </ol>,
     )
     orderedBuffer.length = 0
@@ -151,25 +140,13 @@ function renderMarkdownContent(content: string) {
     tableBuffer.length = 0
   }
 
-  const flushAll = () => {
-    flushBullets()
-    flushOrdered()
-    flushTables()
-  }
+  const flushAll = () => { flushBullets(); flushOrdered(); flushTables() }
 
   content.split('\n').forEach((line, index) => {
     const trimmed = line.trim()
-    if (!trimmed) {
-      flushAll()
-      return
-    }
+    if (!trimmed) { flushAll(); return }
 
-    if (/^\|.*\|$/.test(trimmed)) {
-      flushBullets()
-      flushOrdered()
-      tableBuffer.push(trimmed)
-      return
-    }
+    if (/^\|.*\|$/.test(trimmed)) { flushBullets(); flushOrdered(); tableBuffer.push(trimmed); return }
 
     const headingMatch = trimmed.match(/^(#{1,4})\s+(.*)$/)
     if (headingMatch) {
@@ -184,19 +161,8 @@ function renderMarkdownContent(content: string) {
       return
     }
 
-    if (/^[-*]\s+/.test(trimmed)) {
-      flushOrdered()
-      flushTables()
-      bulletBuffer.push(trimmed.replace(/^[-*]\s+/, ''))
-      return
-    }
-
-    if (/^\d+\.\s+/.test(trimmed)) {
-      flushBullets()
-      flushTables()
-      orderedBuffer.push(trimmed.replace(/^\d+\.\s+/, ''))
-      return
-    }
+    if (/^[-*]\s+/.test(trimmed)) { flushOrdered(); flushTables(); bulletBuffer.push(trimmed.replace(/^[-*]\s+/, '')); return }
+    if (/^\d+\.\s+/.test(trimmed)) { flushBullets(); flushTables(); orderedBuffer.push(trimmed.replace(/^\d+\.\s+/, '')); return }
 
     flushAll()
     elements.push(
@@ -210,6 +176,113 @@ function renderMarkdownContent(content: string) {
   return <div className="space-y-2">{elements}</div>
 }
 
+// ── 思考过程面板 ──────────────────────────────────────────────
+
+function ThinkingPanel({ text, duration, isStreaming }: { text: string; duration: number; isStreaming: boolean }) {
+  const [expanded, setExpanded] = useState(isStreaming)
+  const panelRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (expanded && panelRef.current) {
+      panelRef.current.scrollTop = panelRef.current.scrollHeight
+    }
+  }, [text, expanded])
+
+  const durationStr = duration > 0 ? `${duration.toFixed(1)}秒` : ''
+
+  return (
+    <div className="rounded border border-[#1e3256]/60 bg-[#0d1422] mb-2" style={{ fontFamily: "'Noto Sans SC', sans-serif" }}>
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-[#5a7a9a] hover:text-[#8ba9cc] transition-colors"
+      >
+        <Brain size={12} className={isStreaming ? 'text-[#00d4ff] animate-pulse' : 'text-[#00d4ff]/60'} />
+        <span className="font-medium">
+          {isStreaming ? '思考中...' : '思考过程'}
+        </span>
+        {durationStr && <span className="text-[10px] text-[#3d6080]">{durationStr}</span>}
+        <span className="ml-auto">
+          {expanded ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+        </span>
+      </button>
+      {expanded && (
+        <div
+          ref={panelRef}
+          className="px-3 pb-2.5 max-h-[200px] overflow-y-auto"
+        >
+          <div
+            className="text-[11px] text-[#4a6a8a] leading-relaxed whitespace-pre-wrap break-words"
+            style={{ fontFamily: "'Noto Sans SC', sans-serif" }}
+          >
+            {text}
+            {isStreaming && <span className="inline-block w-1 h-3 bg-[#00d4ff]/60 animate-pulse ml-0.5 align-text-bottom" />}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── 工具调用链面板 (Cursor 风格) ──────────────────────────────
+
+function ToolChainPanel({ steps }: { steps: ToolChainStep[] }) {
+  const [expanded, setExpanded] = useState(true)
+
+  return (
+    <div className="rounded border border-[#1e3256]/60 bg-[#0d1422]/95 backdrop-blur-sm mb-2" style={{ fontFamily: "'Noto Sans SC', sans-serif" }}>
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-[11px] text-[#5a7a9a] hover:text-[#8ba9cc] transition-colors"
+      >
+        <span className="font-medium text-[#8ba9cc]">工具调用</span>
+        <span className="text-[10px] text-[#3d6080]">{steps.length} 步</span>
+        <span className="ml-auto">
+          {expanded ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
+        </span>
+      </button>
+      {expanded && (
+        <div className="px-3 pb-2 space-y-1">
+          {steps.map((step) => (
+            <div key={step.id} className="flex items-start gap-2 py-1 text-[11px]">
+              <span
+                className={`shrink-0 mt-[5px] w-1.5 h-1.5 rounded-full ${
+                  step.status === 'running'
+                    ? 'bg-[#00d4ff] animate-pulse'
+                    : step.status === 'error'
+                      ? 'bg-[#ff7043]'
+                      : step.status === 'done'
+                        ? 'bg-[#69f0ae]'
+                        : 'bg-[#3d6080]'
+                }`}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[#8ba9cc]">{step.title}</span>
+                  <span className={`text-[10px] shrink-0 ${
+                    step.status === 'running' ? 'text-[#00d4ff]'
+                      : step.status === 'error' ? 'text-[#ff7043]'
+                        : step.status === 'done' ? 'text-[#69f0ae]'
+                          : 'text-[#3d6080]'
+                  }`}>
+                    {STATUS_LABEL[step.status] || step.status}
+                  </span>
+                </div>
+                {step.detail && (
+                  <p className="mt-0.5 text-[10px] text-[#4a6a8a] truncate">{step.detail}</p>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── 主组件 ────────────────────────────────────────────────────
+
 export default function AgentChat({
   messages,
   isLoading,
@@ -219,16 +292,16 @@ export default function AgentChat({
   onSend,
   onClear,
   toolChain = [],
-  serverLogs = [],
+  thinkingText = '',
+  thinkingDuration = 0,
   onRestoreWorkspace,
 }: AgentChatProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
-  const [thinkingExpanded, setThinkingExpanded] = useState(false)
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' })
-  }, [messages])
+  }, [messages, thinkingText, toolChain])
 
   useEffect(() => {
     const handlePrefill = (event: Event) => {
@@ -237,7 +310,6 @@ export default function AgentChat({
       inputRef.current.value = customEvent.detail.prompt
       inputRef.current.focus()
     }
-
     window.addEventListener('agent:prefill', handlePrefill as EventListener)
     return () => window.removeEventListener('agent:prefill', handlePrefill as EventListener)
   }, [])
@@ -250,7 +322,6 @@ export default function AgentChat({
       onSend(prompt)
       if (inputRef.current) inputRef.current.value = ''
     }
-
     window.addEventListener('agent:ask', handleAsk as EventListener)
     return () => window.removeEventListener('agent:ask', handleAsk as EventListener)
   }, [isLoading, onSend])
@@ -269,13 +340,13 @@ export default function AgentChat({
     }
   }
 
-  const progressLogs = serverLogs
-    .filter((log) => (log.scope === 'optimize' || log.scope === 'api') && (log.status === 'start' || log.status === 'progress' || log.status === 'done' || log.status === 'error'))
-    .slice(0, 4)
+  const showThinkingPanel = isLoading && thinkingText.length > 0
+  const showToolChain = isLoading && toolChain.length > 0
+  const showTypingIndicator = isLoading && !showThinkingPanel && !showToolChain
+    && !messages.some((m) => m.role === 'assistant' && m.content.length > 0 && m.id === messages[messages.length - 1]?.id)
 
   return (
     <div className="flex flex-col h-full">
-      {/* 头部：模式切换 + 清空 */}
       <div className="shrink-0 flex items-center justify-between px-3 py-2 border-b border-[#1e3256]">
         <AgentModeSwitch mode={mode} onChange={onModeChange} disabled={isLoading} />
         <button
@@ -288,7 +359,6 @@ export default function AgentChat({
         </button>
       </div>
 
-      {/* 消息列表 */}
       <div
         ref={listRef}
         className="flex-1 overflow-y-auto p-3 space-y-4 min-h-0 relative"
@@ -296,9 +366,7 @@ export default function AgentChat({
         {messages.length === 0 && (
           <div className="text-center py-8 text-[#3d6080] text-xs">
             <p className="mb-2">
-              {mode === 'ask'
-                ? '基于当前数据提问，例如：'
-                : '直接下达指令，例如：'}
+              {mode === 'ask' ? '基于当前数据提问，例如：' : '直接下达指令，例如：'}
             </p>
             <ul className="text-left max-w-[260px] mx-auto space-y-1">
               {mode === 'ask' ? (
@@ -319,169 +387,119 @@ export default function AgentChat({
             </ul>
           </div>
         )}
+
         {messages.map((m) => (
-          <div
-            key={m.id}
-            className={`flex gap-2 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}
-          >
-            {m.role === 'assistant' && (
-              <div className="shrink-0 w-6 h-6 rounded bg-[#00d4ff]/20 flex items-center justify-center">
-                <Bot size={12} className="text-[#00d4ff]" />
-              </div>
-            )}
-            <div
-              className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
-                m.role === 'user'
-                  ? 'bg-[#172240] text-[#e8f4ff]'
-                  : 'bg-[#111b2e] text-[#8ba9cc] border border-[#1e3256]'
-              }`}
-              style={{ fontFamily: "'Noto Sans SC', sans-serif" }}
-            >
-              {m.role === 'assistant'
-                ? <div className="break-words">{renderMarkdownContent(m.content)}</div>
-                : <div className="whitespace-pre-wrap break-words">{m.content}</div>}
-              {m.actions && m.actions.length > 0 && (
-                <div className="mt-2 pt-2 border-t border-[#1e3256] space-y-2">
-                  {m.actions.map((a, i) => (
-                    <div key={i} className="rounded border border-[#1e3256] bg-[#0d1422] px-2.5 py-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[10px] uppercase tracking-[0.12em] text-[#00d4ff]">{a.type}</span>
-                        <div className="flex items-center gap-2">
-                          {a.workspaceState && onRestoreWorkspace ? (
-                            <button
-                              type="button"
-                              onClick={() => onRestoreWorkspace(a.workspaceState!)}
-                              className="inline-flex items-center gap-1 rounded border border-[#1e3256] bg-[#111b2e] px-2 py-1 text-[10px] text-[#8ba9cc] transition-colors hover:border-[#00d4ff]/50 hover:text-[#e8f4ff]"
-                              title="恢复这一轮分析对应的工作区"
-                            >
-                              <History size={10} />
-                              恢复该轮工作区
-                            </button>
-                          ) : null}
-                          <span className="text-[10px] text-[#3d6080]">{a.result}</span>
+          <div key={m.id}>
+            <div className={`flex gap-2 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              {m.role === 'assistant' && (
+                <div className="shrink-0 w-6 h-6 rounded bg-[#00d4ff]/20 flex items-center justify-center">
+                  <Bot size={12} className="text-[#00d4ff]" />
+                </div>
+              )}
+              <div
+                className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
+                  m.role === 'user'
+                    ? 'bg-[#172240] text-[#e8f4ff]'
+                    : 'bg-[#111b2e] text-[#8ba9cc] border border-[#1e3256]'
+                }`}
+                style={{ fontFamily: "'Noto Sans SC', sans-serif" }}
+              >
+                {m.role === 'assistant'
+                  ? <div className="break-words">{renderMarkdownContent(m.content)}</div>
+                  : <div className="whitespace-pre-wrap break-words">{m.content}</div>}
+                {m.actions && m.actions.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-[#1e3256] space-y-2">
+                    {m.actions.map((a, i) => (
+                      <div key={i} className="rounded border border-[#1e3256] bg-[#0d1422] px-2.5 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] uppercase tracking-[0.12em] text-[#00d4ff]">{a.type}</span>
+                          <div className="flex items-center gap-2">
+                            {a.workspaceState && onRestoreWorkspace ? (
+                              <button
+                                type="button"
+                                onClick={() => onRestoreWorkspace(a.workspaceState!)}
+                                className="inline-flex items-center gap-1 rounded border border-[#1e3256] bg-[#111b2e] px-2 py-1 text-[10px] text-[#8ba9cc] transition-colors hover:border-[#00d4ff]/50 hover:text-[#e8f4ff]"
+                                title="恢复这一轮分析对应的工作区"
+                              >
+                                <History size={10} />
+                                恢复该轮工作区
+                              </button>
+                            ) : null}
+                            <span className="text-[10px] text-[#3d6080]">{a.result}</span>
+                          </div>
                         </div>
-                      </div>
-                      {a.trace && a.trace.length > 0 ? (
-                        <div className="mt-2 space-y-1.5">
-                          {a.trace.map((step) => (
-                            <div key={step.id} className="rounded border border-[#1e3256]/60 bg-[#111b2e]/70 px-2 py-1.5">
-                              <div className="flex items-center justify-between gap-2">
-                                <span className="text-[10px] text-[#8ba9cc]">{step.title}</span>
-                                <span className="text-[10px] text-[#3d6080]">{step.status}</span>
+                        {a.trace && a.trace.length > 0 ? (
+                          <div className="mt-2 space-y-1.5">
+                            {a.trace.map((step) => (
+                              <div key={step.id} className="rounded border border-[#1e3256]/60 bg-[#111b2e]/70 px-2 py-1.5">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[10px] text-[#8ba9cc]">{step.title}</span>
+                                  <span className="text-[10px] text-[#3d6080]">{step.status}</span>
+                                </div>
+                                {step.detail ? <div className="mt-1 text-[10px] text-[#5a7a9a]">{step.detail}</div> : null}
+                                {step.outcome ? <div className="mt-1 text-[10px] text-[#69f0ae]">{step.outcome}</div> : null}
                               </div>
-                              {step.detail ? <div className="mt-1 text-[10px] text-[#5a7a9a]">{step.detail}</div> : null}
-                              {step.outcome ? <div className="mt-1 text-[10px] text-[#69f0ae]">{step.outcome}</div> : null}
-                            </div>
-                          ))}
-                        </div>
-                      ) : a.detail ? (
-                        <div className="mt-1.5 whitespace-pre-wrap text-[10px] text-[#5a7a9a]">{a.detail}</div>
-                      ) : null}
-                    </div>
-                  ))}
+                            ))}
+                          </div>
+                        ) : a.detail ? (
+                          <div className="mt-1.5 whitespace-pre-wrap text-[10px] text-[#5a7a9a]">{a.detail}</div>
+                        ) : null}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {m.role === 'user' && (
+                <div className="shrink-0 w-6 h-6 rounded bg-[#1e3256] flex items-center justify-center">
+                  <User size={12} className="text-[#8ba9cc]" />
                 </div>
               )}
             </div>
-            {m.role === 'user' && (
-              <div className="shrink-0 w-6 h-6 rounded bg-[#1e3256] flex items-center justify-center">
-                <User size={12} className="text-[#8ba9cc]" />
+
+            {/* 助手消息的思考过程（完成后持久化显示，位于气泡下方） */}
+            {m.role === 'assistant' && m.thinking && !isLoading && (
+              <div className="mt-1 ml-8">
+                <ThinkingPanel text={m.thinking} duration={0} isStreaming={false} />
               </div>
             )}
           </div>
         ))}
-        {/* 工具链：直接显示在背景上，非气泡，类似 Cursor */}
-        {isLoading && toolChain.length > 0 && (
-          <div className="sticky bottom-0 left-0 right-0 pt-2">
-            <div
-              className="rounded border border-[#1e3256]/60 bg-[#0d1422]/95 backdrop-blur-sm"
-              style={{ fontFamily: "'Noto Sans SC', sans-serif" }}
-            >
-              <div className="px-3 py-2 space-y-1.5">
-                {toolChain.map((step) => (
-                  <div
-                    key={step.id}
-                    className="rounded border border-[#1e3256]/50 bg-[#101a2c]/80 px-2.5 py-2 text-[11px] text-[#5a7a9a]"
-                  >
-                    <div className="flex items-start gap-2 w-full">
-                      <span
-                        className={`shrink-0 mt-1.5 w-1.5 h-1.5 rounded-full ${
-                          step.status === 'running'
-                            ? 'bg-[#00d4ff] animate-pulse'
-                            : step.status === 'error'
-                              ? 'bg-[#ff7043]'
-                              : 'bg-[#00d4ff]/60'
-                        }`}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-medium text-[#8ba9cc]">{step.title}</span>
-                          <span className="text-[10px] uppercase tracking-[0.08em] text-[#3d6080]">{step.status}</span>
-                        </div>
-                        {step.detail ? (
-                          <p className="mt-1 text-[10px] text-[#5a7a9a]">
-                            {step.detail}
-                          </p>
-                        ) : null}
-                        {thinkingExpanded && step.outcome ? (
-                          <p className="mt-1 text-[10px] text-[#69f0ae]">
-                            {step.outcome}
-                          </p>
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-                {progressLogs.length > 0 && (
-                  <div className="rounded border border-[#1e3256]/50 bg-[#0b1320] px-2.5 py-2">
-                    <div className="text-[10px] uppercase tracking-[0.12em] text-[#3d6080]">求解日志</div>
-                    <div className="mt-1.5 space-y-1">
-                      {progressLogs.map((log) => (
-                        <div key={log.id} className="text-[10px] text-[#5a7a9a]">
-                          <span className="text-[#8ba9cc]">{log.time}</span> {log.message}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={() => setThinkingExpanded((v) => !v)}
-                className="w-full flex items-center justify-center gap-1.5 py-1.5 text-[#3d6080] hover:text-[#8ba9cc] border-t border-[#1e3256]/40 text-[10px] transition-colors"
-              >
-                {thinkingExpanded ? (
-                  <>
-                    <ChevronUp size={10} /> 收起
-                  </>
-                ) : (
-                  <>
-                    <ChevronDown size={10} /> 展开思考过程
-                  </>
-                )}
-              </button>
-            </div>
+
+        {/* 流式思考面板（加载中） */}
+        {showThinkingPanel && (
+          <div className="ml-8">
+            <ThinkingPanel text={thinkingText} duration={thinkingDuration} isStreaming />
           </div>
         )}
-        {isLoading && toolChain.length === 0 && (
+
+        {/* 工具调用链面板（加载中） */}
+        {showToolChain && (
+          <div className="ml-8">
+            <ToolChainPanel steps={toolChain} />
+          </div>
+        )}
+
+        {/* 简单打字指示器 */}
+        {showTypingIndicator && (
           <div className="flex gap-2">
             <div className="shrink-0 w-6 h-6 rounded bg-[#00d4ff]/20 flex items-center justify-center">
               <Bot size={12} className="text-[#00d4ff]" />
             </div>
-            <div className="bg-[#111b2e] border border-[#1e3256] rounded-lg px-3 py-2 text-[#3d6080] text-xs">
-              <span className="animate-pulse">思考中...</span>
+            <div className="bg-[#111b2e] border border-[#1e3256] rounded-lg px-3 py-2 text-[#5a7a9a] text-xs flex items-center gap-1.5">
+              <span className="w-1 h-1 rounded-full bg-[#00d4ff] animate-pulse" />
+              <span className="w-1 h-1 rounded-full bg-[#00d4ff] animate-pulse" style={{ animationDelay: '0.2s' }} />
+              <span className="w-1 h-1 rounded-full bg-[#00d4ff] animate-pulse" style={{ animationDelay: '0.4s' }} />
             </div>
           </div>
         )}
       </div>
 
-      {/* 错误提示 */}
       {error && (
         <div className="shrink-0 px-3 py-1.5 bg-[#ff5252]/15 text-[#ff5252] text-xs border-t border-[#1e3256]">
           {error}
         </div>
       )}
 
-      {/* 输入框 */}
       <div className="shrink-0 p-3 border-t border-[#1e3256]">
         <div className="flex gap-2 items-end">
           <textarea
