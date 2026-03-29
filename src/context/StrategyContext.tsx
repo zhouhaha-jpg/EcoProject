@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import type {
   AnomalyRun,
   DatasetMeta,
@@ -111,18 +111,25 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
     setDatasetMeta(meta ?? nextDataset._meta ?? FALLBACK_META)
   }, [])
 
+  const initialLoadDone = useRef(false)
+
   const loadLatestDataset = useCallback(async () => {
-    setDatasetLoading(true)
+    if (!initialLoadDone.current) {
+      setDatasetLoading(true)
+    }
     try {
       const { data, meta } = await fetchDisplayDataset()
       applyDisplayDataset(data, meta)
       setDatasetError(null)
     } catch (err) {
       console.warn('[StrategyContext] display dataset unavailable, using seed:', err instanceof Error ? err.message : err)
-      setDataset(DATASET)
-      setDatasetMeta(FALLBACK_META)
+      if (!initialLoadDone.current) {
+        setDataset(DATASET)
+        setDatasetMeta(FALLBACK_META)
+      }
       setDatasetError(err instanceof Error ? err.message : String(err))
     } finally {
+      initialLoadDone.current = true
       setDatasetLoading(false)
     }
   }, [applyDisplayDataset])
@@ -303,29 +310,23 @@ export function StrategyProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (datasetMeta.isHistorical || datasetMeta.emergencyActive || datasetMeta.anomalyActive) return
 
-    const refresh = () => {
-      void loadLatestDataset().catch(() => {
-        // keep last visible dataset on transient failures
-      })
-    }
+    const interval = setInterval(() => {
+      void loadLatestDataset().catch(() => {})
+    }, 10 * 60 * 1000)
 
-    const interval = setInterval(refresh, 2 * 60 * 1000)
-    const handleVisibility = () => {
-      if (document.visibilityState === 'visible') refresh()
-    }
-
-    window.addEventListener('focus', refresh)
-    document.addEventListener('visibilitychange', handleVisibility)
-
-    return () => {
-      clearInterval(interval)
-      window.removeEventListener('focus', refresh)
-      document.removeEventListener('visibilitychange', handleVisibility)
-    }
+    return () => clearInterval(interval)
   }, [datasetMeta.anomalyActive, datasetMeta.emergencyActive, datasetMeta.isHistorical, loadLatestDataset])
 
   useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000)
+    const timer = setInterval(() => {
+      const now = new Date()
+      setCurrentTime((prev) => {
+        if (prev.getHours() !== now.getHours() || prev.getMinutes() !== now.getMinutes()) {
+          return now
+        }
+        return prev
+      })
+    }, 10_000)
     return () => clearInterval(timer)
   }, [])
 

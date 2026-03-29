@@ -1,6 +1,6 @@
 import { Canvas as FiberCanvas, useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls as DreiOrbitControls } from '@react-three/drei'
-import { useEffect, useRef, useState, type ComponentType } from 'react'
+import { memo, useEffect, useRef, useState, type ComponentType } from 'react'
 import { MOUSE, Vector3 } from 'three'
 import type { ParkDeviceConfig, ParkDeviceDetail } from './parkDeviceConfig'
 import { DEFAULT_CAMERA_POSITION, DEFAULT_CAMERA_TARGET, TWIN_COLORS } from './digitalTwin/config'
@@ -471,7 +471,7 @@ function SceneOverlay({
   )
 }
 
-export default function Park3DScene(props: Park3DSceneProps) {
+const Park3DScene = memo(function Park3DScene(props: Park3DSceneProps) {
   const activeDetail = props.deviceDetails[props.activeDeviceId]
 
   return (
@@ -492,4 +492,6 @@ export default function Park3DScene(props: Park3DSceneProps) {
       <SceneOverlay snapshot={props.snapshot} activeDetail={activeDetail} />
     </div>
   )
-}
+})
+
+export default Park3DScene

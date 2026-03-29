@@ -1,7 +1,7 @@
 /**
  * 总览页：左侧趋势缩略图 + 中央 3D 园区主视图 + 右侧信息面板
  */
-import { Suspense, lazy, useMemo, useState } from 'react'
+import { Suspense, lazy, useCallback, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowRight, Activity, BatteryCharging, Factory, Gauge, Leaf, TriangleAlert } from 'lucide-react'
 import { useStrategy } from '@/context/StrategyContext'
@@ -131,21 +131,21 @@ export default function OverviewPage() {
   })
   const hourIndex = currentTime.getHours() % 24
 
-  const handleSelectDevice = (id: string) => {
+  const handleSelectDevice = useCallback((id: string) => {
     setActiveDeviceId(id)
     setActiveFlowId(null)
     setCameraFocus((current) => ({ type: 'device', id, version: current.version + 1 }))
-  }
+  }, [])
 
-  const handleSelectFlow = (id: string) => {
+  const handleSelectFlow = useCallback((id: string) => {
     setActiveFlowId(id)
     setCameraFocus((current) => ({ type: 'flow', id, version: current.version + 1 }))
-  }
+  }, [])
 
-  const handleResetView = () => {
+  const handleResetView = useCallback(() => {
     setActiveFlowId(null)
     setCameraFocus((current) => ({ type: 'default', id: null, version: current.version + 1 }))
-  }
+  }, [])
 
   const activeDetail = useMemo(
     () => buildDeviceDetail(activeDeviceId, dataset, activeStrategy, hourIndex),
