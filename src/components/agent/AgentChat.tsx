@@ -388,96 +388,122 @@ export default function AgentChat({
           </div>
         )}
 
-        {messages.map((m) => (
-          <div key={m.id}>
-            <div className={`flex gap-2 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              {m.role === 'assistant' && (
-                <div className="shrink-0 w-6 h-6 rounded bg-[#00d4ff]/20 flex items-center justify-center">
-                  <Bot size={12} className="text-[#00d4ff]" />
+        {messages.map((m, idx) => {
+          const isStreamingMsg = isLoading && m.role === 'assistant' && idx === messages.length - 1
+
+          if (isStreamingMsg) {
+            return (
+              <div key={m.id}>
+                {/* Bot 图标 */}
+                <div className="flex gap-2 justify-start">
+                  <div className="shrink-0 w-6 h-6 rounded bg-[#00d4ff]/20 flex items-center justify-center">
+                    <Bot size={12} className="text-[#00d4ff]" />
+                  </div>
                 </div>
-              )}
-              <div
-                className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
-                  m.role === 'user'
-                    ? 'bg-[#172240] text-[#e8f4ff]'
-                    : 'bg-[#111b2e] text-[#8ba9cc] border border-[#1e3256]'
-                }`}
-                style={{ fontFamily: "'Noto Sans SC', sans-serif" }}
-              >
-                {m.role === 'assistant'
-                  ? <div className="break-words">{renderMarkdownContent(m.content)}</div>
-                  : <div className="whitespace-pre-wrap break-words">{m.content}</div>}
-                {m.actions && m.actions.length > 0 && (
-                  <div className="mt-2 pt-2 border-t border-[#1e3256] space-y-2">
-                    {m.actions.map((a, i) => (
-                      <div key={i} className="rounded border border-[#1e3256] bg-[#0d1422] px-2.5 py-2">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-[10px] uppercase tracking-[0.12em] text-[#00d4ff]">{a.type}</span>
-                          <div className="flex items-center gap-2">
-                            {a.workspaceState && onRestoreWorkspace ? (
-                              <button
-                                type="button"
-                                onClick={() => onRestoreWorkspace(a.workspaceState!)}
-                                className="inline-flex items-center gap-1 rounded border border-[#1e3256] bg-[#111b2e] px-2 py-1 text-[10px] text-[#8ba9cc] transition-colors hover:border-[#00d4ff]/50 hover:text-[#e8f4ff]"
-                                title="恢复这一轮分析对应的工作区"
-                              >
-                                <History size={10} />
-                                恢复该轮工作区
-                              </button>
-                            ) : null}
-                            <span className="text-[10px] text-[#3d6080]">{a.result}</span>
-                          </div>
-                        </div>
-                        {a.trace && a.trace.length > 0 ? (
-                          <div className="mt-2 space-y-1.5">
-                            {a.trace.map((step) => (
-                              <div key={step.id} className="rounded border border-[#1e3256]/60 bg-[#111b2e]/70 px-2 py-1.5">
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="text-[10px] text-[#8ba9cc]">{step.title}</span>
-                                  <span className="text-[10px] text-[#3d6080]">{step.status}</span>
-                                </div>
-                                {step.detail ? <div className="mt-1 text-[10px] text-[#5a7a9a]">{step.detail}</div> : null}
-                                {step.outcome ? <div className="mt-1 text-[10px] text-[#69f0ae]">{step.outcome}</div> : null}
-                              </div>
-                            ))}
-                          </div>
-                        ) : a.detail ? (
-                          <div className="mt-1.5 whitespace-pre-wrap text-[10px] text-[#5a7a9a]">{a.detail}</div>
-                        ) : null}
-                      </div>
-                    ))}
+
+                {/* 思考面板 → 工具链 → 内容气泡：从上到下依次出现 */}
+                {showThinkingPanel && (
+                  <div className="mt-2 ml-8">
+                    <ThinkingPanel text={thinkingText} duration={thinkingDuration} isStreaming />
+                  </div>
+                )}
+                {showToolChain && (
+                  <div className="mt-2 ml-8">
+                    <ToolChainPanel steps={toolChain} />
+                  </div>
+                )}
+                {m.content && (
+                  <div className="mt-2 flex gap-2 justify-start">
+                    <div className="shrink-0 w-6 h-6" />
+                    <div
+                      className="max-w-[85%] rounded-lg px-3 py-2 text-sm bg-[#111b2e] text-[#8ba9cc] border border-[#1e3256]"
+                      style={{ fontFamily: "'Noto Sans SC', sans-serif" }}
+                    >
+                      <div className="break-words">{renderMarkdownContent(m.content)}</div>
+                    </div>
                   </div>
                 )}
               </div>
-              {m.role === 'user' && (
-                <div className="shrink-0 w-6 h-6 rounded bg-[#1e3256] flex items-center justify-center">
-                  <User size={12} className="text-[#8ba9cc]" />
+            )
+          }
+
+          return (
+            <div key={m.id}>
+              <div className={`flex gap-2 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                {m.role === 'assistant' && (
+                  <div className="shrink-0 w-6 h-6 rounded bg-[#00d4ff]/20 flex items-center justify-center">
+                    <Bot size={12} className="text-[#00d4ff]" />
+                  </div>
+                )}
+                <div
+                  className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
+                    m.role === 'user'
+                      ? 'bg-[#172240] text-[#e8f4ff]'
+                      : 'bg-[#111b2e] text-[#8ba9cc] border border-[#1e3256]'
+                  }`}
+                  style={{ fontFamily: "'Noto Sans SC', sans-serif" }}
+                >
+                  {m.role === 'assistant'
+                    ? <div className="break-words">{renderMarkdownContent(m.content)}</div>
+                    : <div className="whitespace-pre-wrap break-words">{m.content}</div>}
+                  {m.actions && m.actions.length > 0 && (
+                    <div className="mt-2 pt-2 border-t border-[#1e3256] space-y-2">
+                      {m.actions.map((a, i) => (
+                        <div key={i} className="rounded border border-[#1e3256] bg-[#0d1422] px-2.5 py-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[10px] uppercase tracking-[0.12em] text-[#00d4ff]">{a.type}</span>
+                            <div className="flex items-center gap-2">
+                              {a.workspaceState && onRestoreWorkspace ? (
+                                <button
+                                  type="button"
+                                  onClick={() => onRestoreWorkspace(a.workspaceState!)}
+                                  className="inline-flex items-center gap-1 rounded border border-[#1e3256] bg-[#111b2e] px-2 py-1 text-[10px] text-[#8ba9cc] transition-colors hover:border-[#00d4ff]/50 hover:text-[#e8f4ff]"
+                                  title="恢复这一轮分析对应的工作区"
+                                >
+                                  <History size={10} />
+                                  恢复该轮工作区
+                                </button>
+                              ) : null}
+                              <span className="text-[10px] text-[#3d6080]">{a.result}</span>
+                            </div>
+                          </div>
+                          {a.trace && a.trace.length > 0 ? (
+                            <div className="mt-2 space-y-1.5">
+                              {a.trace.map((step) => (
+                                <div key={step.id} className="rounded border border-[#1e3256]/60 bg-[#111b2e]/70 px-2 py-1.5">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <span className="text-[10px] text-[#8ba9cc]">{step.title}</span>
+                                    <span className="text-[10px] text-[#3d6080]">{step.status}</span>
+                                  </div>
+                                  {step.detail ? <div className="mt-1 text-[10px] text-[#5a7a9a]">{step.detail}</div> : null}
+                                  {step.outcome ? <div className="mt-1 text-[10px] text-[#69f0ae]">{step.outcome}</div> : null}
+                                </div>
+                              ))}
+                            </div>
+                          ) : a.detail ? (
+                            <div className="mt-1.5 whitespace-pre-wrap text-[10px] text-[#5a7a9a]">{a.detail}</div>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {m.role === 'user' && (
+                  <div className="shrink-0 w-6 h-6 rounded bg-[#1e3256] flex items-center justify-center">
+                    <User size={12} className="text-[#8ba9cc]" />
+                  </div>
+                )}
+              </div>
+
+              {/* 完成后的思考过程（气泡下方） */}
+              {m.role === 'assistant' && m.thinking && (
+                <div className="mt-1 ml-8">
+                  <ThinkingPanel text={m.thinking} duration={0} isStreaming={false} />
                 </div>
               )}
             </div>
-
-            {/* 助手消息的思考过程（完成后持久化显示，位于气泡下方） */}
-            {m.role === 'assistant' && m.thinking && !isLoading && (
-              <div className="mt-1 ml-8">
-                <ThinkingPanel text={m.thinking} duration={0} isStreaming={false} />
-              </div>
-            )}
-          </div>
-        ))}
-
-        {/* 流式思考面板（加载中） */}
-        {showThinkingPanel && (
-          <div className="ml-8">
-            <ThinkingPanel text={thinkingText} duration={thinkingDuration} isStreaming />
-          </div>
-        )}
-
-        {/* 工具调用链面板（加载中） */}
-        {showToolChain && (
-          <div className="ml-8">
-            <ToolChainPanel steps={toolChain} />
-          </div>
-        )}
+          )
+        })}
 
         {/* 简单打字指示器 */}
         {showTypingIndicator && (
