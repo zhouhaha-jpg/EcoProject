@@ -15,20 +15,23 @@ let _baseURL = ''
 let _model = ''
 let _apiFormat = 'openai'
 let _authHeader = 'Authorization'
+let _modelMapping = null
 
 /**
- * @param {{ openai: object|null, apiKey: string, baseURL: string, model: string, apiFormat?: string, authHeader?: string }} opts
+ * @param {{ openai: object|null, apiKey: string, baseURL: string, model: string, apiFormat?: string, authHeader?: string, modelMapping?: Record<string, string>|null }} opts
  */
-export function configure({ openai, apiKey, baseURL, model, apiFormat, authHeader }) {
+export function configure({ openai, apiKey, baseURL, model, apiFormat, authHeader, modelMapping }) {
   _openai = openai
   _apiKey = apiKey || ''
   _baseURL = baseURL || ''
   _model = model || 'gpt-4'
   _apiFormat = (apiFormat || 'openai').toLowerCase()
   _authHeader = authHeader || 'Authorization'
+  _modelMapping = _normalizeModelMapping(modelMapping)
 }
 
 export function getModel() { return _model }
+export function getModelMapping() { return _modelMapping }
 
 export function isAvailable() {
   if (_apiFormat === 'anthropic') return !!_apiKey && !!_baseURL
@@ -36,6 +39,27 @@ export function isAvailable() {
 }
 
 export function getApiFormat() { return _apiFormat }
+
+export function resolveModel(target = 'default', explicitModel = '') {
+  const requested = (explicitModel || '').trim()
+  const alias = _normalizeModelAlias(requested || target)
+
+  if (!requested) {
+    if (alias === 'reasoning_model') return _modelMapping?.reasoning_model || _resolvePrimaryModel()
+    if (alias === 'haiku_model') return _modelMapping?.haiku_model || _modelMapping?.sonnet_model || _resolvePrimaryModel()
+    if (alias === 'sonnet_model') return _modelMapping?.sonnet_model || _resolvePrimaryModel()
+    if (alias === 'opus_model') return _modelMapping?.opus_model || _modelMapping?.reasoning_model || _resolvePrimaryModel()
+    return _resolvePrimaryModel()
+  }
+
+  if (alias === 'default') return _resolvePrimaryModel()
+  if (alias === 'reasoning_model') return _modelMapping?.reasoning_model || _resolvePrimaryModel()
+  if (alias === 'haiku_model') return _modelMapping?.haiku_model || _modelMapping?.sonnet_model || _resolvePrimaryModel()
+  if (alias === 'sonnet_model') return _modelMapping?.sonnet_model || _resolvePrimaryModel()
+  if (alias === 'opus_model') return _modelMapping?.opus_model || _modelMapping?.reasoning_model || _resolvePrimaryModel()
+
+  return requested
+}
 
 /**
  * 非流式调用，返回 OpenAI 兼容响应
@@ -51,6 +75,37 @@ export async function complete(params) {
 export async function createStream(params) {
   if (_apiFormat === 'anthropic') return _anthropicStream(params)
   return _openaiStream(params)
+}
+
+function _normalizeModelMapping(mapping) {
+  if (!mapping || typeof mapping !== 'object' || Array.isArray(mapping)) return null
+  const next = {}
+  for (const [key, value] of Object.entries(mapping)) {
+    if (typeof value !== 'string') continue
+    const trimmed = value.trim()
+    if (trimmed) next[key] = trimmed
+  }
+  return Object.keys(next).length > 0 ? next : null
+}
+
+function _normalizeModelAlias(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  if (!normalized) return 'default'
+  if (['default', 'main', 'primary', 'primary_model', 'main_model', 'model'].includes(normalized)) return 'default'
+  if (['thinking', 'reasoning', 'reasoning_model', 'thinking_model'].includes(normalized)) return 'reasoning_model'
+  if (['haiku', 'haiku_model'].includes(normalized)) return 'haiku_model'
+  if (['sonnet', 'sonnet_model'].includes(normalized)) return 'sonnet_model'
+  if (['opus', 'opus_model'].includes(normalized)) return 'opus_model'
+  return null
+}
+
+function _resolvePrimaryModel() {
+  const alias = _normalizeModelAlias(_model)
+  if (alias === 'reasoning_model') return _modelMapping?.reasoning_model || _model
+  if (alias === 'haiku_model') return _modelMapping?.haiku_model || _modelMapping?.sonnet_model || _model
+  if (alias === 'sonnet_model') return _modelMapping?.sonnet_model || _model
+  if (alias === 'opus_model') return _modelMapping?.opus_model || _modelMapping?.reasoning_model || _model
+  return _model
 }
 
 // ── OpenAI 流式包装 ─────────────────────────────────────────

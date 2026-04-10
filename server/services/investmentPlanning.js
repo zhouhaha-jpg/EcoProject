@@ -197,7 +197,7 @@ async function generateDetailedInvestmentReport(payload) {
 
   try {
     const completion = await llm.complete({
-      model: llm.getModel(),
+      model: llm.resolveModel('reasoning'),
       temperature: 0.35,
       max_tokens: 1100,
       messages: [

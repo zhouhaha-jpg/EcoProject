@@ -76,6 +76,9 @@ router.put('/:id', (req, res) => {
     const existing = getLLMProvider(id)
     if (!existing) return res.status(404).json({ error: '供应商不存在' })
     updateLLMProvider(id, req.body)
+    if (existing.is_active === 1 && typeof globalThis.__reloadLLMClient === 'function') {
+      globalThis.__reloadLLMClient()
+    }
     res.json({ ok: true })
   } catch (err) {
     console.error('[llm/providers update]', err)
@@ -87,7 +90,11 @@ router.delete('/:id', (req, res) => {
   try {
     const id = parseInt(req.params.id, 10)
     if (isNaN(id)) return res.status(400).json({ error: '无效 ID' })
+    const existing = getLLMProvider(id)
     deleteLLMProvider(id)
+    if (existing?.is_active === 1 && typeof globalThis.__reloadLLMClient === 'function') {
+      globalThis.__reloadLLMClient()
+    }
     res.json({ ok: true })
   } catch (err) {
     console.error('[llm/providers delete]', err)

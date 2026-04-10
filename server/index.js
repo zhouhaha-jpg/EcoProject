@@ -51,6 +51,15 @@ let openai = apiKey
   ? new OpenAI({ apiKey, baseURL })
   : null
 
+function safeParseJson(text, fallback = null) {
+  if (text == null || text === '') return fallback
+  try {
+    return JSON.parse(text)
+  } catch {
+    return fallback
+  }
+}
+
 function reloadLLMClient() {
   const provider = getActiveLLMProvider()
   if (provider) {
@@ -59,15 +68,16 @@ function reloadLLMClient() {
     model = provider.model || 'gpt-4'
     const apiFormat = provider.api_format || 'openai'
     const authHeader = provider.auth_header || 'Authorization'
+    const modelMapping = safeParseJson(provider.model_mapping, null)
     openai = apiFormat === 'openai' ? new OpenAI({ apiKey, baseURL }) : null
-    llm.configure({ openai, apiKey, baseURL, model, apiFormat, authHeader })
+    llm.configure({ openai, apiKey, baseURL, model, apiFormat, authHeader, modelMapping })
     console.log(`[LLM] 已切换到供应商: ${provider.name} | 模型: ${model} | 格式: ${apiFormat} | API: ${baseURL}`)
   } else {
     apiKey = config.apiKey
     baseURL = process.env.API_BASE_URL || config.apiBaseUrl
     model = process.env.OPENAI_MODEL || config.model
     openai = apiKey ? new OpenAI({ apiKey, baseURL }) : null
-    llm.configure({ openai, apiKey, baseURL, model, apiFormat: 'openai', authHeader: 'Authorization' })
+    llm.configure({ openai, apiKey, baseURL, model, apiFormat: 'openai', authHeader: 'Authorization', modelMapping: null })
     console.log(`[LLM] 回退到环境变量配置 | 模型: ${model} | API: ${baseURL}`)
   }
 }
@@ -485,7 +495,7 @@ async function generateEmergencyOutline({ spec, prompt, baselineSummary, activeS
     throw new Error('LLM unavailable')
   }
   const completion = await llm.complete({
-    model,
+    model: llm.resolveModel('reasoning'),
     messages: [
       {
         role: 'system',
@@ -530,7 +540,7 @@ async function generateEmergencyIntent({ spec, prompt, baselineSummary, activeSt
     throw new Error('LLM unavailable')
   }
   const completion = await llm.complete({
-    model,
+    model: llm.resolveModel('reasoning'),
     messages: [
       {
         role: 'system',
@@ -610,7 +620,7 @@ app.post('/api/chat', async (req, res) => {
 
   try {
     const streamParams = {
-      model,
+      model: llm.resolveModel(mode === 'agent' ? 'reasoning' : 'default'),
       messages: apiMessages,
       max_tokens: 4096,
     }
@@ -902,7 +912,7 @@ ${alertSummary}
 请给出：1. 异动概述 2. 建议操作（一句话）`
 
       const completion = await llm.complete({
-        model,
+        model: llm.resolveModel('default'),
         messages: [{ role: 'user', content: prompt }],
         max_tokens: 300,
         temperature: 0.7,
