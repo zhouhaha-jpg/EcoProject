@@ -6,7 +6,7 @@ import { useRef, useEffect, useState } from 'react'
 import type { ChatMessage, ToolChainStep } from '@/hooks/useAgentChat'
 import type { ConversationWorkspaceState } from '@/lib/api'
 import AgentModeSwitch from './AgentModeSwitch'
-import { Send, Trash2, User, Bot, ChevronDown, ChevronUp, History, Brain } from 'lucide-react'
+import { Send, Square, Trash2, User, Bot, ChevronDown, ChevronUp, History, Brain } from 'lucide-react'
 
 interface AgentChatProps {
   messages: ChatMessage[]
@@ -15,6 +15,7 @@ interface AgentChatProps {
   mode: 'ask' | 'agent'
   onModeChange: (mode: 'ask' | 'agent') => void
   onSend: (content: string) => void
+  onStop: () => void
   onClear: () => void
   toolChain?: ToolChainStep[]
   thinkingText?: string
@@ -290,6 +291,7 @@ export default function AgentChat({
   mode,
   onModeChange,
   onSend,
+  onStop,
   onClear,
   toolChain = [],
   thinkingText = '',
@@ -331,6 +333,14 @@ export default function AgentChat({
     if (!text || isLoading) return
     onSend(text)
     if (inputRef.current) inputRef.current.value = ''
+  }
+
+  const handleActionButton = () => {
+    if (isLoading) {
+      onStop()
+      return
+    }
+    handleSubmit()
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -539,11 +549,15 @@ export default function AgentChat({
           />
           <button
             type="button"
-            onClick={handleSubmit}
-            disabled={isLoading}
-            className="shrink-0 p-2 rounded bg-[#00d4ff]/20 border border-[#00d4ff]/40 text-[#00d4ff] hover:bg-[#00d4ff]/30 disabled:opacity-50 transition-colors"
+            onClick={handleActionButton}
+            className={`shrink-0 rounded border p-2 transition-colors ${
+              isLoading
+                ? 'border-[#ffb36b]/50 bg-[#ffb36b]/15 text-[#ffb36b] hover:bg-[#ffb36b]/25'
+                : 'border-[#00d4ff]/40 bg-[#00d4ff]/20 text-[#00d4ff] hover:bg-[#00d4ff]/30'
+            }`}
+            title={isLoading ? '停止当前回答' : '发送'}
           >
-            <Send size={16} />
+            {isLoading ? <Square size={16} fill="currentColor" /> : <Send size={16} />}
           </button>
         </div>
       </div>

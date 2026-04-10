@@ -547,6 +547,7 @@ export default function AgentSidebar({ realtimeData }: AgentSidebarProps) {
                   mode={chat.mode}
                   onModeChange={chat.setMode}
                   onSend={chat.sendMessage}
+                  onStop={chat.stopMessage}
                   onClear={handleNewConversation}
                   toolChain={chat.toolChain}
                   thinkingText={chat.thinkingText}

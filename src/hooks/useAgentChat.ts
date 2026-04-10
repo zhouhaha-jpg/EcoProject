@@ -209,6 +209,9 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
   const [thinkingDuration, setThinkingDuration] = useState(0)
   const thinkingTimerRef = useRef<number | null>(null)
   const thinkingStartRef = useRef<number>(0)
+  const abortControllerRef = useRef<AbortController | null>(null)
+  const activeRunRef = useRef<{ id: number; stopped: boolean }>({ id: 0, stopped: true })
+  const activeAssistantIdRef = useRef<string | null>(null)
 
   const startThinkingTimer = useCallback(() => {
     if (thinkingTimerRef.current != null) return
@@ -230,9 +233,56 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
     }
   }, [])
 
+  const isAbortError = (value: unknown) =>
+    value instanceof Error && value.name === 'AbortError'
+
+  const isRunActive = useCallback((runId: number) => {
+    return activeRunRef.current.id === runId && !activeRunRef.current.stopped
+  }, [])
+
+  const removeEmptyStreamingMessage = useCallback((assistantId: string | null) => {
+    if (!assistantId) return
+    setMessages((prev) =>
+      prev.filter((message) =>
+        !(message.id === assistantId && message.role === 'assistant' && !message.content && !(message.actions?.length)),
+      ),
+    )
+  }, [])
+
+  const finalizeRun = useCallback((runId: number) => {
+    if (activeRunRef.current.id !== runId) return
+    activeRunRef.current = { id: runId, stopped: true }
+    abortControllerRef.current = null
+    activeAssistantIdRef.current = null
+    setIsLoading(false)
+    setToolChain([])
+    stopThinkingTimer()
+  }, [stopThinkingTimer])
+
+  const stopMessage = useCallback(() => {
+    const active = activeRunRef.current
+    if (!active.id || active.stopped) return
+
+    activeRunRef.current = { ...active, stopped: true }
+    abortControllerRef.current?.abort()
+    abortControllerRef.current = null
+    removeEmptyStreamingMessage(activeAssistantIdRef.current)
+    activeAssistantIdRef.current = null
+    setIsLoading(false)
+    setToolChain([])
+    setError(null)
+    stopThinkingTimer()
+  }, [removeEmptyStreamingMessage, stopThinkingTimer])
+
   const sendMessage = useCallback(
     async (content: string) => {
       if (!content.trim() || isLoading) return
+
+      const runId = activeRunRef.current.id + 1
+      activeRunRef.current = { id: runId, stopped: false }
+      abortControllerRef.current?.abort()
+      abortControllerRef.current = null
+      activeAssistantIdRef.current = null
 
       const userMsg: ChatMessage = {
         id: crypto.randomUUID(),
@@ -259,6 +309,7 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
           updateConversationTitle(cid!, title || '新对话').catch(() => {})
         }
       } catch (e) {
+        if (isAbortError(e) || !isRunActive(runId)) return
         console.warn('[persist]', e)
       }
 
@@ -279,6 +330,7 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
       if (mode === 'agent' && ctx.currentPage === '/scenario' && ctx.scenarioDataset && (matchedFollowupOption || isScenarioFollowupQuestion(content.trim()))) {
         try {
           const localResult = await executeAction('continue_scenario_analysis', { question: content.trim() }, agentCtx)
+          if (!isRunActive(runId)) return
           const actionPayload = [{
             type: 'continue_scenario_analysis',
             params: { question: content.trim() },
@@ -289,8 +341,8 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
           }]
           if (localResult.trace?.length) setToolChain(localResult.trace)
           const displayContent = localResult.toolContent || localResult.message
-          await fakeStreamAssistantMessage(displayContent, actionPayload, setMessages)
-          if (cid != null) {
+          await fakeStreamAssistantMessage(displayContent, actionPayload, setMessages, () => isRunActive(runId), activeAssistantIdRef)
+          if (cid != null && isRunActive(runId)) {
             await appendConversationMessage(cid, {
               role: 'assistant',
               content: displayContent,
@@ -300,27 +352,31 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
           }
           return
         } catch (e) {
+          if (isAbortError(e) || !isRunActive(runId)) return
           const msg = e instanceof Error ? e.message : String(e)
           setError(msg)
           setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: `抱歉，继续分析失败：${msg}` }])
           return
         } finally {
-          setIsLoading(false)
-          setToolChain([])
+          finalizeRun(runId)
         }
       }
 
       try {
         const url = API_BASE ? `${API_BASE}/api/chat` : '/api/chat'
+        const controller = new AbortController()
+        abortControllerRef.current = controller
         const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          signal: controller.signal,
           body: JSON.stringify({
             messages: [...messages, userMsg].map((m) => ({ role: m.role, content: m.content })),
             mode,
             context: contextText,
           }),
         })
+        if (!isRunActive(runId)) return
 
         if (!res.ok && !res.headers.get('content-type')?.includes('text/event-stream')) {
           const errText = await res.text()
@@ -328,11 +384,13 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
         }
 
         const assistantId = crypto.randomUUID()
+        activeAssistantIdRef.current = assistantId
         setMessages((prev) => [...prev, { id: assistantId, role: 'assistant', content: '' }])
 
         let thinkingStarted = false
         const sseResult = await readSSE(res, {
           onThinking: (chunk) => {
+            if (!isRunActive(runId)) return
             if (!thinkingStarted) {
               thinkingStarted = true
               startThinkingTimer()
@@ -340,6 +398,7 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
             setThinkingText((prev) => prev + chunk)
           },
           onContent: (chunk) => {
+            if (!isRunActive(runId)) return
             setMessages((prev) => {
               const last = prev.find((m) => m.id === assistantId)
               const cur = (last?.content ?? '') + chunk
@@ -347,9 +406,11 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
             })
           },
           onError: (msg) => {
+            if (!isRunActive(runId)) return
             setError(msg)
           },
         })
+        if (!isRunActive(runId)) return
 
         let allThinking = sseResult.thinking
 
@@ -361,6 +422,7 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
           const toolResults: { id: string; content: string }[] = []
 
           for (const tc of toolCalls) {
+            if (!isRunActive(runId)) return
             let params: Record<string, unknown> = {}
             try { params = JSON.parse(tc.function.arguments || '{}') } catch { params = {} }
 
@@ -375,6 +437,7 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
             let stageIdx = 0
             const stageTimer = stages.length > 0
               ? setInterval(() => {
+                  if (!isRunActive(runId)) return
                   if (stageIdx < stages.length) {
                     const stage = stages[stageIdx]
                     setToolChain((prev) => {
@@ -390,6 +453,7 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
 
             const result = await executeAction(tc.function.name, params, agentCtx)
             if (stageTimer) clearInterval(stageTimer)
+            if (!isRunActive(runId)) return
 
             setToolChain((prev) => {
               let updated = prev.map((s) =>
@@ -443,19 +507,25 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
             ]
 
             try {
+              const followupController = new AbortController()
+              abortControllerRef.current = followupController
               const res2 = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
+                signal: followupController.signal,
                 body: JSON.stringify({ messages: apiMessages, mode, context: contextText }),
               })
+              if (!isRunActive(runId)) return
 
               if (res2.ok) {
                 const followup = await readSSE(res2, {
                   onThinking: (chunk) => {
+                    if (!isRunActive(runId)) return
                     allThinking += chunk
                     setThinkingText((prev) => prev + chunk)
                   },
                   onContent: (chunk) => {
+                    if (!isRunActive(runId)) return
                     setMessages((prev) => {
                       const last = prev.find((m) => m.id === assistantId)
                       const cur = (last?.content ?? '') + chunk
@@ -463,6 +533,7 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
                     })
                   },
                 })
+                if (!isRunActive(runId)) return
 
                 setToolChain((prev) =>
                   prev.map((s) => s.id === 't-cont' ? { ...s, status: 'done' as const } : s),
@@ -476,7 +547,8 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
                   appendConversationMessage(cid, { role: 'assistant', content: displayContent, actions }).then(() => onConversationListChange?.()).catch(() => {})
                 }
               }
-            } catch {
+            } catch (e) {
+              if (isAbortError(e) || !isRunActive(runId)) return
               setToolChain((prev) =>
                 prev.map((s) => s.id === 't-cont' ? { ...s, status: 'error' as const, outcome: '结论回灌失败' } : s),
               )
@@ -507,24 +579,24 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
           }
         }
       } catch (e) {
+        if (isAbortError(e) || !isRunActive(runId)) return
         const msg = e instanceof Error ? e.message : String(e)
         setError(msg)
         setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: `抱歉，请求失败：${msg}` }])
       } finally {
-        setIsLoading(false)
-        setToolChain([])
-        stopThinkingTimer()
+        finalizeRun(runId)
       }
     },
-    [messages, mode, ctx, conversationId, onConversationCreated, onConversationListChange, isLoading, startThinkingTimer, stopThinkingTimer],
+    [messages, mode, ctx, conversationId, onConversationCreated, onConversationListChange, isLoading, startThinkingTimer, isRunActive, finalizeRun],
   )
 
   const clearMessages = useCallback(() => {
+    stopMessage()
     setMessages([])
     setError(null)
     setThinkingText('')
     setThinkingDuration(0)
-  }, [])
+  }, [stopMessage])
 
   const loadMessages = useCallback((msgs: ChatMessage[]) => {
     setMessages(msgs)
@@ -538,6 +610,7 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
     mode,
     setMode,
     sendMessage,
+    stopMessage,
     clearMessages,
     loadMessages,
     toolChain,
@@ -584,8 +657,11 @@ async function fakeStreamAssistantMessage(
   text: string,
   actions: ChatMessage['actions'],
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>,
+  shouldContinue?: () => boolean,
+  assistantIdRef?: React.MutableRefObject<string | null>,
 ) {
   const assistantId = crypto.randomUUID()
+  if (assistantIdRef) assistantIdRef.current = assistantId
   if (!text) {
     setMessages((prev) => [...prev, { id: assistantId, role: 'assistant', content: '', ...(actions ? { actions } : {}) }])
     return
@@ -596,6 +672,7 @@ async function fakeStreamAssistantMessage(
   const chunkSize = Math.max(16, Math.ceil(text.length / 55))
   let current = ''
   for (let i = 0; i < text.length; i += chunkSize) {
+    if (shouldContinue && !shouldContinue()) return
     current += text.slice(i, i + chunkSize)
     setMessages((prev) =>
       prev.map((message) =>

@@ -4,7 +4,7 @@
  * - scenarioDataset: What-If 推演对比
  * - paretoData: Pareto 前沿分析
  */
-import { useEffect, useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useStrategy } from '@/context/StrategyContext'
 import ScenarioCompareChart from '@/components/charts/ScenarioCompareChart'
 import DeviceDispatchPlanChart from '@/components/charts/DeviceDispatchPlanChart'
@@ -20,7 +20,7 @@ import {
 } from '@/lib/api'
 import { exportEmergencyRunWorkbook } from '@/lib/emergencyExport'
 import { exportScenarioWorkbook } from '@/lib/scenarioExport'
-import { Download, Volume2 } from 'lucide-react'
+import { CheckCircle2, Download, Send, Volume2 } from 'lucide-react'
 import type { EmergencyPointDetail, EmergencyRun, ExecutionTraceStep, ScenarioInsight, StrategyKey } from '@/types'
 
 const STRATEGIES: StrategyKey[] = ['uci', 'cicos', 'cicar', 'cicom', 'pv', 'es']
@@ -67,6 +67,16 @@ export default function ScenarioComparePage() {
   const [detailExpanded, setDetailExpanded] = useState(false)
   const [selectedPlanStrategy, setSelectedPlanStrategy] = useState<StrategyKey>('cicom')
   const [isSpeaking, setIsSpeaking] = useState(false)
+  const [dispatchSent, setDispatchSent] = useState(false)
+  const dispatchResetTimerRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    return () => {
+      if (dispatchResetTimerRef.current != null) {
+        window.clearTimeout(dispatchResetTimerRef.current)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     let disposed = false
@@ -434,6 +444,17 @@ export default function ScenarioComparePage() {
     window.speechSynthesis.speak(utterance)
   }
 
+  const handleDispatchStrategy = () => {
+    setDispatchSent(true)
+    if (dispatchResetTimerRef.current != null) {
+      window.clearTimeout(dispatchResetTimerRef.current)
+    }
+    dispatchResetTimerRef.current = window.setTimeout(() => {
+      setDispatchSent(false)
+      dispatchResetTimerRef.current = null
+    }, 2200)
+  }
+
   return (
     <div className="h-full min-h-0 overflow-auto" style={{ display: 'grid', gridTemplateRows: 'auto auto auto auto auto auto', gap: 12 }}>
       <div className="panel shrink-0">
@@ -608,6 +629,18 @@ export default function ScenarioComparePage() {
           <div className="panel-title-bar flex items-center justify-between">
             <span>策略排名变化区</span>
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleDispatchStrategy}
+                className={`inline-flex items-center gap-1 rounded border px-3 py-1.5 text-[11px] transition-colors ${
+                  dispatchSent
+                    ? 'border-[#69f0ae]/50 bg-[#69f0ae]/12 text-[#69f0ae]'
+                    : 'border-[#1e3256] bg-[#111b2e] text-[#8ba9cc] hover:border-[#69f0ae]/50 hover:text-[#e8f4ff]'
+                }`}
+              >
+                {dispatchSent ? <CheckCircle2 size={12} /> : <Send size={12} />}
+                {dispatchSent ? '策略已下发' : '策略下发'}
+              </button>
               <button
                 type="button"
                 onClick={() => exportScenarioWorkbook(dataset, scenarioDataset!, scenarioLabel ?? undefined)}
