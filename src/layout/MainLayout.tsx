@@ -159,7 +159,7 @@ export default function MainLayout() {
 
   return (
     <div className="scanlines flex h-screen w-full flex-col overflow-hidden" style={{ background: '#070c14' }}>
-      <header className="hud-header relative z-[260] flex shrink-0 items-center gap-5 px-8 py-4">
+      <header className="hud-header relative z-[360] flex shrink-0 items-center gap-5 px-8 py-4">
         <div
           className="flex h-9 w-9 items-center justify-center rounded-full border border-[#00d4ff55] bg-[#00d4ff12] shadow-[0_0_22px_rgba(0,212,255,0.18)]"
           style={{ color: '#7df9ff' }}
@@ -172,7 +172,7 @@ export default function MainLayout() {
           <span style={{ color: '#00d4ff', fontWeight: 700, marginLeft: 2 }}>Verse</span>
         </h1>
 
-        <div className="ml-auto flex items-center gap-3">
+        <div className="relative z-[370] ml-auto flex items-center gap-3">
           <DataSourceHealth
             sources={realtime.sources}
             health={realtime.health}

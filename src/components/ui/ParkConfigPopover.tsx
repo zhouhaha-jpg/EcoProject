@@ -1,10 +1,6 @@
-/**
- * 园区坐标配置弹窗
- * 用于前端设置/修改园区经纬度，影响 Open-Meteo 气象查询和碳因子建模
- */
-
-import { useState, useEffect, useRef } from 'react'
-import { Settings, Save, X, MapPin } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { MapPin, Save, Settings, X } from 'lucide-react'
 
 interface ParkConfig {
   lat: string
@@ -18,125 +14,158 @@ export default function ParkConfigPopover() {
   const [open, setOpen] = useState(false)
   const [config, setConfig] = useState<ParkConfig>({ lat: '30.26', lon: '120.19', park_name: '杭州示范园区' })
   const [saving, setSaving] = useState(false)
-  const [msg, setMsg] = useState('')
-  const ref = useRef<HTMLDivElement>(null)
+  const [message, setMessage] = useState('')
+  const containerRef = useRef<HTMLDivElement>(null)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
     fetch(`${API_BASE}/api/realtime/config`)
-      .then(r => r.json())
-      .then(data => {
-        if (data.lat) setConfig({ lat: data.lat, lon: data.lon, park_name: data.park_name || '' })
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(await response.text() || `HTTP ${response.status}`)
+        }
+        return response.json()
       })
-      .catch(() => {})
+      .then((data) => {
+        if (data?.lat != null && data?.lon != null) {
+          setConfig({
+            lat: String(data.lat),
+            lon: String(data.lon),
+            park_name: data.park_name || '',
+          })
+        }
+      })
+      .catch((error) => {
+        setMessage(error instanceof Error ? error.message : String(error))
+      })
   }, [open])
 
-  // 点击外部关闭
   useEffect(() => {
     if (!open) return
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node
+      if (buttonRef.current?.contains(target)) return
+      if (panelRef.current?.contains(target)) return
+      setOpen(false)
     }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleEscape)
+    }
   }, [open])
 
   const handleSave = async () => {
     const lat = parseFloat(config.lat)
     const lon = parseFloat(config.lon)
-    if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
-      setMsg('坐标无效')
+    if (Number.isNaN(lat) || Number.isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+      setMessage('坐标无效')
       return
     }
+
     setSaving(true)
-    setMsg('')
+    setMessage('')
     try {
-      const res = await fetch(`${API_BASE}/api/realtime/config`, {
+      const response = await fetch(`${API_BASE}/api/realtime/config`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config),
       })
-      if (!res.ok) throw new Error(await res.text())
-      setMsg('✓ 已保存')
-      setTimeout(() => setOpen(false), 800)
-    } catch (e) {
-      setMsg(`保存失败: ${e instanceof Error ? e.message : String(e)}`)
+      if (!response.ok) {
+        throw new Error(await response.text() || `HTTP ${response.status}`)
+      }
+      setMessage('策略已保存')
+      window.setTimeout(() => setOpen(false), 800)
+    } catch (error) {
+      setMessage(`保存失败: ${error instanceof Error ? error.message : String(error)}`)
     } finally {
       setSaving(false)
     }
   }
 
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        onClick={() => setOpen(v => !v)}
-        className="p-1.5 rounded transition-colors text-[#3d6080] hover:text-[#00d4ff] hover:bg-[#00d4ff]/10"
-        title="园区坐标配置"
-      >
-        <Settings size={14} />
-      </button>
-
-      {open && (
+  const panel = open && typeof document !== 'undefined'
+    ? createPortal(
         <div
-          className="absolute right-0 top-8 z-50 rounded-lg p-4 w-64 shadow-lg"
+          ref={panelRef}
+          className="rounded-lg p-4 shadow-lg"
           style={{
+            position: 'fixed',
+            zIndex: 99998,
+            top: (buttonRef.current?.getBoundingClientRect().bottom ?? 56) + 12,
+            right: Math.max(16, window.innerWidth - (buttonRef.current?.getBoundingClientRect().right ?? window.innerWidth)),
+            width: 320,
             background: '#111b2a',
             border: '1px solid #1e3256',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+            boxShadow: '0 18px 56px rgba(0,0,0,0.72), 0 0 28px rgba(0,212,255,0.12)',
           }}
         >
-          <div className="flex items-center justify-between mb-3">
+          <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-1.5 text-xs font-semibold" style={{ color: '#8ba9cc' }}>
               <MapPin size={13} className="text-[#00d4ff]" />
-              园区坐标配置
+              地理位置设置
             </div>
-            <button onClick={() => setOpen(false)} className="text-[#3d6080] hover:text-[#8ba9cc]">
+            <button type="button" onClick={() => setOpen(false)} className="text-[#3d6080] hover:text-[#8ba9cc]">
               <X size={13} />
             </button>
           </div>
 
           <div className="space-y-2.5">
             <div>
-              <label className="block text-[10px] mb-1" style={{ color: '#5a7a9a' }}>园区名称</label>
+              <label className="mb-1 block text-[10px]" style={{ color: '#5a7a9a' }}>园区名称</label>
               <input
                 type="text"
                 value={config.park_name}
-                onChange={e => setConfig(c => ({ ...c, park_name: e.target.value }))}
+                onChange={(event) => setConfig((current) => ({ ...current, park_name: event.target.value }))}
                 className="w-full rounded px-2 py-1.5 text-xs outline-none"
                 style={{ background: '#0a1420', border: '1px solid #1e3256', color: '#e8f4ff' }}
               />
             </div>
+
             <div className="flex gap-2">
               <div className="flex-1">
-                <label className="block text-[10px] mb-1" style={{ color: '#5a7a9a' }}>纬度 (°N)</label>
+                <label className="mb-1 block text-[10px]" style={{ color: '#5a7a9a' }}>纬度</label>
                 <input
                   type="text"
                   value={config.lat}
-                  onChange={e => setConfig(c => ({ ...c, lat: e.target.value }))}
+                  onChange={(event) => setConfig((current) => ({ ...current, lat: event.target.value }))}
                   className="w-full rounded px-2 py-1.5 text-xs outline-none"
                   style={{ background: '#0a1420', border: '1px solid #1e3256', color: '#e8f4ff' }}
                   placeholder="30.26"
                 />
               </div>
               <div className="flex-1">
-                <label className="block text-[10px] mb-1" style={{ color: '#5a7a9a' }}>经度 (°E)</label>
+                <label className="mb-1 block text-[10px]" style={{ color: '#5a7a9a' }}>经度</label>
                 <input
                   type="text"
                   value={config.lon}
-                  onChange={e => setConfig(c => ({ ...c, lon: e.target.value }))}
+                  onChange={(event) => setConfig((current) => ({ ...current, lon: event.target.value }))}
                   className="w-full rounded px-2 py-1.5 text-xs outline-none"
                   style={{ background: '#0a1420', border: '1px solid #1e3256', color: '#e8f4ff' }}
                   placeholder="120.19"
                 />
               </div>
             </div>
-            {msg && (
-              <p className="text-[10px]" style={{ color: msg.startsWith('✓') ? '#00ff88' : '#ff6b6b' }}>{msg}</p>
+
+            {message && (
+              <p className="text-[10px]" style={{ color: message.includes('失败') || message.includes('无效') ? '#ff6b6b' : '#00ff88' }}>
+                {message}
+              </p>
             )}
+
             <button
+              type="button"
               onClick={handleSave}
               disabled={saving}
-              className="w-full flex items-center justify-center gap-1.5 text-xs py-1.5 rounded font-medium transition-colors disabled:opacity-50"
+              className="flex w-full items-center justify-center gap-1.5 rounded py-1.5 text-xs font-medium transition-colors disabled:opacity-50"
               style={{
                 background: 'rgba(0, 212, 255, 0.12)',
                 border: '1px solid #00d4ff',
@@ -147,8 +176,23 @@ export default function ParkConfigPopover() {
               {saving ? '保存中...' : '保存坐标'}
             </button>
           </div>
-        </div>
-      )}
+        </div>,
+        document.body,
+      )
+    : null
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="rounded p-1.5 text-[#3d6080] transition-colors hover:bg-[#00d4ff]/10 hover:text-[#00d4ff]"
+        title="地理位置设置"
+      >
+        <Settings size={14} />
+      </button>
+      {panel}
     </div>
   )
 }

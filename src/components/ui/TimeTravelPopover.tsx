@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { CalendarDays, Loader2, RotateCcw, X } from 'lucide-react'
 import { useStrategy } from '@/context/StrategyContext'
 
@@ -12,7 +13,9 @@ export default function TimeTravelPopover() {
   const [loadingDates, setLoadingDates] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [message, setMessage] = useState('')
-  const ref = useRef<HTMLDivElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     setSelectedDate(datasetMeta.viewDate || '')
@@ -41,17 +44,28 @@ export default function TimeTravelPopover() {
         setMessage(err instanceof Error ? err.message : String(err))
       })
       .finally(() => setLoadingDates(false))
-  }, [open])
+  }, [open, selectedDate])
 
   useEffect(() => {
     if (!open) return
-    const handler = (event: MouseEvent) => {
-      if (ref.current && !ref.current.contains(event.target as Node)) {
-        setOpen(false)
-      }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node
+      if (buttonRef.current?.contains(target)) return
+      if (panelRef.current?.contains(target)) return
+      setOpen(false)
     }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleEscape)
+    }
   }, [open])
 
   const handleApply = async () => {
@@ -81,32 +95,28 @@ export default function TimeTravelPopover() {
     }
   }
 
-  return (
-    <div className="relative" ref={ref}>
-      <button
-        type="button"
-        onClick={() => setOpen((value) => !value)}
-        className="p-1.5 rounded transition-colors text-[#3d6080] hover:text-[#00d4ff] hover:bg-[#00d4ff]/10"
-        title="时光回溯"
-      >
-        <CalendarDays size={14} />
-      </button>
-
-      {open && (
+  const panel = open && typeof document !== 'undefined'
+    ? createPortal(
         <div
-          className="absolute right-0 top-8 z-50 rounded-lg p-4 w-72 shadow-lg"
+          ref={panelRef}
+          className="rounded-lg p-4 shadow-lg"
           style={{
+            position: 'fixed',
+            zIndex: 99998,
+            top: (buttonRef.current?.getBoundingClientRect().bottom ?? 56) + 12,
+            right: Math.max(16, window.innerWidth - (buttonRef.current?.getBoundingClientRect().right ?? window.innerWidth)),
+            width: 288,
             background: '#111b2a',
             border: '1px solid #1e3256',
-            boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+            boxShadow: '0 18px 56px rgba(0,0,0,0.72), 0 0 28px rgba(0,212,255,0.12)',
           }}
         >
-          <div className="flex items-center justify-between mb-3">
+          <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-2 text-xs font-semibold" style={{ color: '#8ba9cc' }}>
               <CalendarDays size={13} className="text-[#00d4ff]" />
               时光回溯
             </div>
-            <button onClick={() => setOpen(false)} className="text-[#3d6080] hover:text-[#8ba9cc]">
+            <button type="button" onClick={() => setOpen(false)} className="text-[#3d6080] hover:text-[#8ba9cc]">
               <X size={13} />
             </button>
           </div>
@@ -118,7 +128,7 @@ export default function TimeTravelPopover() {
             </div>
 
             <div>
-              <label className="block text-[10px] mb-1" style={{ color: '#5a7a9a' }}>选择展示日期</label>
+              <label className="mb-1 block text-[10px]" style={{ color: '#5a7a9a' }}>选择展示日期</label>
               <select
                 value={selectedDate}
                 onChange={(event) => setSelectedDate(event.target.value)}
@@ -142,7 +152,7 @@ export default function TimeTravelPopover() {
                 type="button"
                 onClick={handleApply}
                 disabled={!selectedDate || submitting || loadingDates}
-                className="flex-1 flex items-center justify-center gap-1.5 text-xs py-2 rounded font-medium transition-colors disabled:opacity-50"
+                className="flex flex-1 items-center justify-center gap-1.5 rounded py-2 text-xs font-medium transition-colors disabled:opacity-50"
                 style={{
                   background: 'rgba(0, 212, 255, 0.12)',
                   border: '1px solid #00d4ff',
@@ -156,7 +166,7 @@ export default function TimeTravelPopover() {
                 type="button"
                 onClick={handleBackToLatest}
                 disabled={submitting}
-                className="flex items-center justify-center gap-1.5 px-3 text-xs py-2 rounded transition-colors disabled:opacity-50"
+                className="flex items-center justify-center gap-1.5 rounded px-3 py-2 text-xs transition-colors disabled:opacity-50"
                 style={{
                   background: 'rgba(255,255,255,0.05)',
                   border: '1px solid #334',
@@ -168,8 +178,23 @@ export default function TimeTravelPopover() {
               </button>
             </div>
           </div>
-        </div>
-      )}
+        </div>,
+        document.body,
+      )
+    : null
+
+  return (
+    <div className="relative" ref={containerRef}>
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="rounded p-1.5 text-[#3d6080] transition-colors hover:bg-[#00d4ff]/10 hover:text-[#00d4ff]"
+        title="时光回溯"
+      >
+        <CalendarDays size={14} />
+      </button>
+      {panel}
     </div>
   )
 }
