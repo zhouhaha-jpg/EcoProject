@@ -1,8 +1,8 @@
 /**
- * Agent 聊天 Hook：发送消息、流式接收 thinking/content/tool_calls
+ * Agent 聊天 Hook：发送消息、统一展示 thinking、统一假流式输出最终回答
  */
 
-import { useState, useCallback, useRef } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import type { AgentContextData } from './useAgentContext'
 import { formatContextForLLM } from './useAgentContext'
 import { executeAction } from '@/lib/agentActions'
@@ -47,10 +47,8 @@ export interface UseAgentChatOptions {
   onConversationListChange?: () => void
 }
 
-// ── 工具名称中文映射 ──────────────────────────────────────────
-
 function normalizeToolTitle(name: string) {
-  const MAP: Record<string, string> = {
+  const map: Record<string, string> = {
     navigate: '页面导航',
     switchStrategy: '切换策略',
     run_whatif: 'What-If 推演',
@@ -70,10 +68,8 @@ function normalizeToolTitle(name: string) {
     get_alerts: '获取预警事件',
     carbon_electricity_analysis: '碳电协同分析',
   }
-  return MAP[name] || name
+  return map[name] || name
 }
-
-// ── 工具执行中间阶段 ──────────────────────────────────────────
 
 const TOOL_STAGES: Record<string, Array<{ title: string; detail: string }>> = {
   plan_next_day_dispatch: [
@@ -94,7 +90,7 @@ const TOOL_STAGES: Record<string, Array<{ title: string; detail: string }>> = {
   ],
   pareto_scan: [
     { title: '参数空间划分', detail: '离散化扫描区间' },
-    { title: 'Pareto 前沿计算', detail: '遍历参数点计算成本-碳排权衡' },
+    { title: 'Pareto 前沿计算', detail: '遍历参数点计算成本与碳排权衡' },
   ],
   trace_causality: [
     { title: '数据溯源', detail: '回溯设备状态与调度决策' },
@@ -118,8 +114,6 @@ const TOOL_STAGES: Record<string, Array<{ title: string; detail: string }>> = {
   ],
 }
 
-// ── SSE 流解析 ────────────────────────────────────────────────
-
 interface ToolCallAccum {
   id: string
   function: { name: string; arguments: string }
@@ -131,6 +125,80 @@ interface SSEResult {
   toolCalls: ToolCallAccum[]
 }
 
+function extractToolCalls(payload: unknown): ToolCallAccum[] {
+  const candidates = (
+    (payload as { tool_calls?: unknown[] })?.tool_calls
+    ?? (payload as { choices?: Array<{ message?: { tool_calls?: unknown[] } }> })?.choices?.[0]?.message?.tool_calls
+    ?? []
+  ) as Array<{
+    id?: string
+    function?: { name?: string; arguments?: string }
+  }>
+
+  return candidates
+    .filter((item) => item?.id && item?.function?.name)
+    .map((item) => ({
+      id: item.id || crypto.randomUUID(),
+      function: {
+        name: item.function?.name || '',
+        arguments: item.function?.arguments || '',
+      },
+    }))
+}
+
+async function readOneShot(
+  res: Response,
+  callbacks: {
+    onThinking?: (chunk: string) => void
+    onContent?: (chunk: string) => void
+  },
+): Promise<SSEResult> {
+  const raw = await res.text()
+  if (!raw) return { content: '', thinking: '', toolCalls: [] }
+
+  let content = raw
+  let thinking = ''
+  let toolCalls: ToolCallAccum[] = []
+
+  try {
+    const parsed = JSON.parse(raw) as {
+      content?: string
+      message?: string
+      thinking?: string
+      reasoning?: string
+      choices?: Array<{
+        message?: {
+          content?: string
+          reasoning_content?: string
+          tool_calls?: unknown[]
+        }
+      }>
+      tool_calls?: unknown[]
+    }
+
+    content =
+      parsed.content
+      ?? parsed.message
+      ?? parsed.choices?.[0]?.message?.content
+      ?? raw
+
+    thinking =
+      parsed.thinking
+      ?? parsed.reasoning
+      ?? parsed.choices?.[0]?.message?.reasoning_content
+      ?? ''
+
+    toolCalls = extractToolCalls(parsed)
+  } catch {
+    content = raw
+  }
+
+  if (thinking) callbacks.onThinking?.(thinking)
+  if (content) callbacks.onContent?.(content)
+
+  return { content, thinking, toolCalls }
+}
+
 async function readSSE(
   res: Response,
   callbacks: {
@@ -139,6 +207,10 @@ async function readSSE(
     onError?: (msg: string) => void
   },
 ): Promise<SSEResult> {
+  if (!res.headers.get('content-type')?.includes('text/event-stream')) {
+    return readOneShot(res, callbacks)
+  }
+
   const reader = res.body?.getReader()
   const decoder = new TextDecoder()
   if (!reader) throw new Error('No response body')
@@ -173,7 +245,11 @@ async function readSSE(
           } else if (ev.type === 'tool_calls') {
             for (const tc of (ev.tool_calls || [])) {
               const idx = Object.keys(accToolCalls).length
-              accToolCalls[idx] = { id: tc.id, name: tc.function?.name || '', args: tc.function?.arguments || '' }
+              accToolCalls[idx] = {
+                id: tc.id,
+                name: tc.function?.name || '',
+                args: tc.function?.arguments || '',
+              }
             }
           } else if (ev.type === 'error') {
             callbacks.onError?.(ev.error || 'Unknown error')
@@ -181,8 +257,14 @@ async function readSSE(
             const delta = ev.choices[0].delta.content
             content += delta
             callbacks.onContent?.(delta)
+          } else if (ev.choices?.[0]?.delta?.reasoning_content) {
+            const delta = ev.choices[0].delta.reasoning_content
+            thinking += delta
+            callbacks.onThinking?.(delta)
           }
-        } catch { /* partial JSON, skip */ }
+        } catch {
+          // partial JSON, skip
+        }
       }
     }
   } finally {
@@ -195,8 +277,6 @@ async function readSSE(
 
   return { content, thinking, toolCalls }
 }
-
-// ── Hook ──────────────────────────────────────────────────────
 
 export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOptions) {
   const { conversationId, onConversationCreated, onConversationListChange } = options ?? {}
@@ -289,12 +369,38 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
         role: 'user',
         content: content.trim(),
       }
-      setMessages((prev) => [...prev, userMsg])
+      const assistantId = crypto.randomUUID()
+      let allThinking = ''
+
+      const pushThinking = (chunk: string) => {
+        if (!chunk) return
+        allThinking += chunk
+        startThinkingTimer()
+        setThinkingText((prev) => prev + chunk)
+      }
+
+      const streamFinalAssistant = async (
+        finalContent: string,
+        actions?: NonNullable<ChatMessage['actions']>,
+      ) => {
+        await fakeStreamIntoAssistantMessage(
+          assistantId,
+          finalContent,
+          actions,
+          allThinking || undefined,
+          setMessages,
+          () => isRunActive(runId),
+        )
+      }
+
+      activeAssistantIdRef.current = assistantId
+      setMessages((prev) => [...prev, userMsg, { id: assistantId, role: 'assistant', content: '' }])
       setIsLoading(true)
       setError(null)
       setToolChain([])
       setThinkingText('')
       setThinkingDuration(0)
+      pushThinking('正在解析你的问题与当前工作区上下文...\n正在判断是否需要调用调度工具...\n')
 
       let cid = conversationId ?? null
       try {
@@ -305,7 +411,7 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
         }
         await appendConversationMessage(cid!, { role: 'user', content: userMsg.content })
         if (messages.length === 0) {
-          const title = content.trim().length > 24 ? content.trim().slice(0, 24) + '…' : content.trim()
+          const title = content.trim().length > 24 ? `${content.trim().slice(0, 24)}…` : content.trim()
           updateConversationTitle(cid!, title || '新对话').catch(() => {})
         }
       } catch (e) {
@@ -326,11 +432,26 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
         anomalyRunId: ctx.anomalyRunId,
       }
 
+      const persistAssistant = async (
+        finalContent: string,
+        actions?: NonNullable<ChatMessage['actions']>,
+      ) => {
+        if (cid == null || !isRunActive(runId)) return
+        await appendConversationMessage(cid, {
+          role: 'assistant',
+          content: finalContent,
+          ...(actions ? { actions } : {}),
+        })
+        onConversationListChange?.()
+      }
+
       const matchedFollowupOption = findScenarioFollowupOption(content.trim(), ctx.scenarioInsight?.followupOptions)
       if (mode === 'agent' && ctx.currentPage === '/scenario' && ctx.scenarioDataset && (matchedFollowupOption || isScenarioFollowupQuestion(content.trim()))) {
         try {
+          pushThinking('已识别为当前场景的继续分析请求，正在基于现有结果补充回答...\n')
           const localResult = await executeAction('continue_scenario_analysis', { question: content.trim() }, agentCtx)
           if (!isRunActive(runId)) return
+
           const actionPayload = [{
             type: 'continue_scenario_analysis',
             params: { question: content.trim() },
@@ -339,23 +460,19 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
             detail: localResult.toolContent,
             workspaceState: buildScenarioWorkspaceStateFromResult(localResult),
           }]
+
           if (localResult.trace?.length) setToolChain(localResult.trace)
+          pushThinking('分析完成，正在组织最终回答...\n')
+
           const displayContent = localResult.toolContent || localResult.message
-          await fakeStreamAssistantMessage(displayContent, actionPayload, setMessages, () => isRunActive(runId), activeAssistantIdRef)
-          if (cid != null && isRunActive(runId)) {
-            await appendConversationMessage(cid, {
-              role: 'assistant',
-              content: displayContent,
-              actions: actionPayload,
-            })
-            onConversationListChange?.()
-          }
+          await streamFinalAssistant(displayContent, actionPayload)
+          await persistAssistant(displayContent, actionPayload)
           return
         } catch (e) {
           if (isAbortError(e) || !isRunActive(runId)) return
           const msg = e instanceof Error ? e.message : String(e)
           setError(msg)
-          setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: `抱歉，继续分析失败：${msg}` }])
+          await streamFinalAssistant(`抱歉，继续分析失败：${msg}`)
           return
         } finally {
           finalizeRun(runId)
@@ -366,6 +483,7 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
         const url = API_BASE ? `${API_BASE}/api/chat` : '/api/chat'
         const controller = new AbortController()
         abortControllerRef.current = controller
+
         const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -383,28 +501,12 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
           throw new Error(errText || `HTTP ${res.status}`)
         }
 
-        const assistantId = crypto.randomUUID()
-        activeAssistantIdRef.current = assistantId
-        setMessages((prev) => [...prev, { id: assistantId, role: 'assistant', content: '' }])
-
-        let thinkingStarted = false
-        const sseResult = await readSSE(res, {
+        const firstPass = await readSSE(res, {
           onThinking: (chunk) => {
             if (!isRunActive(runId)) return
-            if (!thinkingStarted) {
-              thinkingStarted = true
-              startThinkingTimer()
-            }
-            setThinkingText((prev) => prev + chunk)
+            pushThinking(chunk)
           },
-          onContent: (chunk) => {
-            if (!isRunActive(runId)) return
-            setMessages((prev) => {
-              const last = prev.find((m) => m.id === assistantId)
-              const cur = (last?.content ?? '') + chunk
-              return prev.map((m) => m.id === assistantId ? { ...m, content: cur } : m)
-            })
-          },
+          onContent: () => {},
           onError: (msg) => {
             if (!isRunActive(runId)) return
             setError(msg)
@@ -412,26 +514,41 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
         })
         if (!isRunActive(runId)) return
 
-        let allThinking = sseResult.thinking
+        if (firstPass.toolCalls.length > 0) {
+          pushThinking('已确定需要调用工具，开始执行调度与约束计算...\n')
 
-        if (sseResult.toolCalls.length > 0) {
-          const toolCalls = sseResult.toolCalls
-
-          const NEED_FOLLOWUP_TOOLS = ['run_whatif', 'add_constraint', 'pareto_scan', 'trace_causality', 'plan_next_day_dispatch', 'continue_scenario_analysis']
+          const toolCalls = firstPass.toolCalls
+          const needFollowupTools = ['run_whatif', 'add_constraint', 'pareto_scan', 'trace_causality', 'plan_next_day_dispatch', 'continue_scenario_analysis']
           const actions: NonNullable<ChatMessage['actions']> = []
           const toolResults: { id: string; content: string }[] = []
 
           for (const tc of toolCalls) {
             if (!isRunActive(runId)) return
+
             let params: Record<string, unknown> = {}
-            try { params = JSON.parse(tc.function.arguments || '{}') } catch { params = {} }
+            try {
+              params = JSON.parse(tc.function.arguments || '{}')
+            } catch {
+              params = {}
+            }
 
             const paramDesc = Object.entries(params).map(([k, v]) => `${k}: ${v}`).join('；').slice(0, 80) || tc.function.arguments.slice(0, 60)
 
             setToolChain([
-              { id: 'step-intent', title: '意图解析', status: 'done' as const, detail: sseResult.content?.slice(0, 60) || `调用 ${normalizeToolTitle(tc.function.name)}` },
-              { id: 'step-params', title: '参数映射', status: 'done' as const, detail: paramDesc },
+              {
+                id: 'step-intent',
+                title: '意图解析',
+                status: 'done',
+                detail: firstPass.content?.slice(0, 60) || `调用 ${normalizeToolTitle(tc.function.name)}`,
+              },
+              {
+                id: 'step-params',
+                title: '参数映射',
+                status: 'done',
+                detail: paramDesc,
+              },
             ])
+            pushThinking(`正在执行 ${normalizeToolTitle(tc.function.name)}，准备参数并等待结果...\n`)
 
             const stages = TOOL_STAGES[tc.function.name] || []
             let stageIdx = 0
@@ -441,12 +558,12 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
                   if (stageIdx < stages.length) {
                     const stage = stages[stageIdx]
                     setToolChain((prev) => {
-                      const updated = prev.map((s) =>
-                        s.id.startsWith('stage-') && s.status === 'running' ? { ...s, status: 'done' as const } : s,
+                      const updated = prev.map((step) =>
+                        step.id.startsWith('stage-') && step.status === 'running' ? { ...step, status: 'done' as const } : step,
                       )
-                      return [...updated, { id: `stage-${stageIdx}`, title: stage.title, status: 'running' as const, detail: stage.detail }]
+                      return [...updated, { id: `stage-${stageIdx}`, title: stage.title, status: 'running', detail: stage.detail }]
                     })
-                    stageIdx++
+                    stageIdx += 1
                   }
                 }, 1800)
               : null
@@ -456,14 +573,14 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
             if (!isRunActive(runId)) return
 
             setToolChain((prev) => {
-              let updated = prev.map((s) =>
-                s.status === 'running' ? { ...s, status: 'done' as const } : s,
+              let updated = prev.map((step) =>
+                step.status === 'running' ? { ...step, status: 'done' as const } : step,
               )
               if (result.trace?.length) {
-                const shown = new Set(updated.map((s) => s.title))
+                const shown = new Set(updated.map((step) => step.title))
                 const extra = result.trace
-                  .filter((s) => !shown.has(s.title))
-                  .map((s) => ({ ...s, status: 'done' as ToolChainStep['status'] }))
+                  .filter((step) => !shown.has(step.title))
+                  .map((step) => ({ ...step, status: 'done' as ToolChainStep['status'] }))
                 updated = [...updated, ...extra]
               }
               return updated
@@ -484,26 +601,28 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
                 : tc.function.name === 'trace_causality' && result.data && typeof result.data === 'object' && 'deviceState' in result.data
                   ? String((result.data as { deviceState?: string }).deviceState ?? result.message)
                   : result.message
+
             toolResults.push({ id: tc.id, content: toolContent })
           }
 
-          const hasFollowup = toolCalls.some((tc) => NEED_FOLLOWUP_TOOLS.includes(tc.function.name))
+          const hasFollowup = toolCalls.some((tc) => needFollowupTools.includes(tc.function.name))
 
           if (hasFollowup && toolResults.length > 0) {
+            pushThinking('工具执行完成，正在汇总结果并生成最终回答...\n')
             setToolChain((prev) => [...prev, { id: 't-cont', title: '结论生成', status: 'running', detail: '基于工具结果生成分析结论' }])
 
             const apiMessages = [
               ...[...messages, userMsg].map((m) => ({ role: m.role, content: m.content })),
               {
                 role: 'assistant',
-                content: sseResult.content || '',
+                content: firstPass.content || '',
                 tool_calls: toolCalls.map((tc) => ({
                   id: tc.id,
                   type: 'function' as const,
                   function: { name: tc.function.name, arguments: tc.function.arguments },
                 })),
               },
-              ...toolResults.map((tr) => ({ role: 'tool' as const, tool_call_id: tr.id, content: tr.content })),
+              ...toolResults.map((item) => ({ role: 'tool' as const, tool_call_id: item.id, content: item.content })),
             ]
 
             try {
@@ -521,68 +640,47 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
                 const followup = await readSSE(res2, {
                   onThinking: (chunk) => {
                     if (!isRunActive(runId)) return
-                    allThinking += chunk
-                    setThinkingText((prev) => prev + chunk)
+                    pushThinking(chunk)
                   },
-                  onContent: (chunk) => {
-                    if (!isRunActive(runId)) return
-                    setMessages((prev) => {
-                      const last = prev.find((m) => m.id === assistantId)
-                      const cur = (last?.content ?? '') + chunk
-                      return prev.map((m) => m.id === assistantId ? { ...m, content: cur } : m)
-                    })
-                  },
+                  onContent: () => {},
                 })
                 if (!isRunActive(runId)) return
 
                 setToolChain((prev) =>
-                  prev.map((s) => s.id === 't-cont' ? { ...s, status: 'done' as const } : s),
+                  prev.map((step) => (step.id === 't-cont' ? { ...step, status: 'done' as const } : step)),
                 )
 
-                const displayContent = followup.content || sseResult.content || buildActionFallbackContent(actions)
-                setMessages((prev) =>
-                  prev.map((m) => m.id === assistantId ? { ...m, content: displayContent, actions, thinking: allThinking || undefined } : m),
-                )
-                if (cid != null) {
-                  appendConversationMessage(cid, { role: 'assistant', content: displayContent, actions }).then(() => onConversationListChange?.()).catch(() => {})
-                }
+                const displayContent = followup.content || firstPass.content || buildActionFallbackContent(actions)
+                await streamFinalAssistant(displayContent, actions)
+                await persistAssistant(displayContent, actions)
               }
             } catch (e) {
               if (isAbortError(e) || !isRunActive(runId)) return
               setToolChain((prev) =>
-                prev.map((s) => s.id === 't-cont' ? { ...s, status: 'error' as const, outcome: '结论回灌失败' } : s),
+                prev.map((step) => (step.id === 't-cont' ? { ...step, status: 'error' as const, outcome: '结论回灌失败' } : step)),
               )
-              const fallback = sseResult.content || buildActionFallbackContent(actions)
-              setMessages((prev) =>
-                prev.map((m) => m.id === assistantId ? { ...m, content: fallback, actions, thinking: allThinking || undefined } : m),
-              )
-              if (cid != null) {
-                appendConversationMessage(cid, { role: 'assistant', content: fallback, actions }).catch(() => {})
-              }
+              pushThinking('最终结论回灌失败，正在使用工具结果生成兜底回答...\n')
+              const fallback = firstPass.content || buildActionFallbackContent(actions)
+              await streamFinalAssistant(fallback, actions)
+              await persistAssistant(fallback, actions)
             }
           } else {
-            const displayContent = sseResult.content || buildActionFallbackContent(actions)
-            setMessages((prev) =>
-              prev.map((m) => m.id === assistantId ? { ...m, content: displayContent, actions, thinking: allThinking || undefined } : m),
-            )
-            if (cid != null) {
-              appendConversationMessage(cid, { role: 'assistant', content: displayContent, actions: actions.length > 0 ? actions : undefined }).then(() => onConversationListChange?.()).catch(() => {})
-            }
+            pushThinking('工具执行完成，正在输出调度结论...\n')
+            const displayContent = firstPass.content || buildActionFallbackContent(actions)
+            await streamFinalAssistant(displayContent, actions)
+            await persistAssistant(displayContent, actions.length > 0 ? actions : undefined)
           }
         } else {
-          const finalContent = sseResult.content || '已处理您的请求。'
-          setMessages((prev) =>
-            prev.map((m) => m.id === assistantId ? { ...m, content: finalContent, thinking: allThinking || undefined } : m),
-          )
-          if (cid != null) {
-            appendConversationMessage(cid, { role: 'assistant', content: finalContent }).then(() => onConversationListChange?.()).catch(() => {})
-          }
+          pushThinking('无需额外工具，正在直接生成最终回答...\n')
+          const finalContent = firstPass.content || '已处理您的请求。'
+          await streamFinalAssistant(finalContent)
+          await persistAssistant(finalContent)
         }
       } catch (e) {
         if (isAbortError(e) || !isRunActive(runId)) return
         const msg = e instanceof Error ? e.message : String(e)
         setError(msg)
-        setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'assistant', content: `抱歉，请求失败：${msg}` }])
+        await streamFinalAssistant(`抱歉，请求失败：${msg}`)
       } finally {
         finalizeRun(runId)
       }
@@ -619,11 +717,9 @@ export function useAgentChat(ctx: AgentContextData, options?: UseAgentChatOption
   }
 }
 
-// ── 辅助函数 ──────────────────────────────────────────────────
-
 function buildActionFallbackContent(actions: NonNullable<ChatMessage['actions']>) {
   return actions
-    .map((action) => `已完成 ${normalizeToolTitle(action.type)}: ${action.result}`)
+    .map((action) => `已完成 ${normalizeToolTitle(action.type)}：${action.result}`)
     .join('\n')
 }
 
@@ -653,33 +749,42 @@ function buildScenarioWorkspaceStateFromResult(result: { data?: unknown }): Conv
   }
 }
 
-async function fakeStreamAssistantMessage(
+async function fakeStreamIntoAssistantMessage(
+  assistantId: string,
   text: string,
   actions: ChatMessage['actions'],
+  thinking: string | undefined,
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>,
   shouldContinue?: () => boolean,
-  assistantIdRef?: React.MutableRefObject<string | null>,
 ) {
-  const assistantId = crypto.randomUUID()
-  if (assistantIdRef) assistantIdRef.current = assistantId
+  const applySnapshot = (content: string) => {
+    setMessages((prev) =>
+      prev.map((message) =>
+        message.id === assistantId
+          ? {
+              ...message,
+              content,
+              ...(actions ? { actions } : {}),
+              ...(thinking ? { thinking } : {}),
+            }
+          : message,
+      ),
+    )
+  }
+
   if (!text) {
-    setMessages((prev) => [...prev, { id: assistantId, role: 'assistant', content: '', ...(actions ? { actions } : {}) }])
+    applySnapshot('')
     return
   }
 
-  setMessages((prev) => [...prev, { id: assistantId, role: 'assistant', content: '', ...(actions ? { actions } : {}) }])
-
-  const chunkSize = Math.max(16, Math.ceil(text.length / 55))
+  const chunkSize = text.length <= 120 ? 1 : text.length <= 360 ? 2 : 3
   let current = ''
+
   for (let i = 0; i < text.length; i += chunkSize) {
     if (shouldContinue && !shouldContinue()) return
     current += text.slice(i, i + chunkSize)
-    setMessages((prev) =>
-      prev.map((message) =>
-        message.id === assistantId ? { ...message, content: current, ...(actions ? { actions } : {}) } : message,
-      ),
-    )
-    await new Promise((resolve) => window.setTimeout(resolve, 18))
+    applySnapshot(current)
+    await new Promise((resolve) => window.setTimeout(resolve, 14))
   }
 }
 
